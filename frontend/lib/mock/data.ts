@@ -155,7 +155,7 @@ export const MOCK_MARKETS: Market[] = [
     handoffSizeRaw: '1800000000',
   }),
   makeMarket('4', {
-    creator: CREATORS.one,
+    creator: MOCK_WALLET_ADDRESS,
     question: 'Will BTC set a new all-time high before August?',
     phase: 'Opened',
     yesPriceRaw: '290000',
@@ -197,7 +197,7 @@ export const MOCK_MARKETS: Market[] = [
     handoffSizeRaw: '1500000000',
   }),
   makeMarket('7', {
-    creator: CREATORS.one,
+    creator: MOCK_WALLET_ADDRESS,
     question: 'Will the Arc testnet process 1 million transactions this week?',
     phase: 'ClosedOut',
     yesPriceRaw: '0',
@@ -213,6 +213,33 @@ export const MOCK_MARKETS: Market[] = [
     handoffSizeRaw: '900000000',
   }),
 ];
+
+export const MOCK_CREATED_MARKET_ID = '8';
+
+interface MockCreatedMarketInput {
+  question: string;
+  seedRaw: string;
+  creator?: Address;
+}
+
+export function buildMockCreatedMarket({
+  question,
+  seedRaw,
+  creator = MOCK_WALLET_ADDRESS,
+}: MockCreatedMarketInput) {
+  return makeMarket(MOCK_CREATED_MARKET_ID, {
+    creator,
+    question,
+    phase: 'Opened',
+    seedRaw,
+    yesPriceRaw: '500000',
+    noPriceRaw: '500000',
+    graduationActivityRaw: '0',
+    tradeCount: 0,
+    volumeRaw: '0',
+    createdAt: MOCK_REFERENCE_TS,
+  });
+}
 
 export const MOCK_RESOLUTIONS: Record<string, Resolution> = {
   '6': {
@@ -289,11 +316,11 @@ export const MOCK_TRADES: Trade[] = [
     venue: 'BOOK',
     account: MOCK_WALLET_ADDRESS,
     outcome: 'YES',
-    side: 'BID',
-    sizeRaw: '45000000',
+    side: 'ASK',
+    sizeRaw: '15000000',
     priceRaw: '730000',
-    costRaw: '32850000',
-    feeRaw: '65700',
+    costRaw: '10928100',
+    feeRaw: '21900',
     txHash: hash('d'),
     logIndex: 5,
     ts: MOCK_REFERENCE_TS - 720,
@@ -312,6 +339,66 @@ export const MOCK_TRADES: Trade[] = [
     txHash: hash('e'),
     logIndex: 3,
     ts: MOCK_REFERENCE_TS - 2_880,
+  },
+  {
+    id: `${hash('f')}:6`,
+    marketId: '1',
+    venue: 'LMSR',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'YES',
+    side: 'BID',
+    sizeRaw: '48000000',
+    priceRaw: '500000',
+    costRaw: '24048000',
+    feeRaw: '48000',
+    txHash: hash('f'),
+    logIndex: 6,
+    ts: MOCK_REFERENCE_TS - 180,
+  },
+  {
+    id: `${hash('8')}:8`,
+    marketId: '3',
+    venue: 'BOOK',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'YES',
+    side: 'BID',
+    sizeRaw: '60000000',
+    priceRaw: '600000',
+    costRaw: '36072000',
+    feeRaw: '72000',
+    txHash: hash('8'),
+    logIndex: 8,
+    ts: MOCK_REFERENCE_TS - 45_000,
+  },
+  {
+    id: `${hash('9')}:3`,
+    marketId: '5',
+    venue: 'BOOK',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'NO',
+    side: 'BID',
+    sizeRaw: '80000000',
+    priceRaw: '420000',
+    costRaw: '33667200',
+    feeRaw: '67200',
+    txHash: hash('9'),
+    logIndex: 3,
+    ts: MOCK_REFERENCE_TS - 2_880,
+  },
+  {
+    id: `${hash('0')}:1`,
+    marketId: '6',
+    venue: 'BOOK',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'YES',
+    side: 'BID',
+    sizeRaw: '120000000',
+    priceRaw: '680000',
+    costRaw: '81763200',
+    feeRaw: '163200',
+    txHash: hash('0'),
+    logIndex: 1,
+    ts: MOCK_REFERENCE_TS - 120_000,
   },
 ];
 
@@ -455,6 +542,41 @@ for (const market of MOCK_MARKETS) {
   }
 }
 
+export function registerMockCreatedMarket(input: MockCreatedMarketInput) {
+  const market = buildMockCreatedMarket(input);
+  const existingIndex = MOCK_MARKETS.findIndex((item) => item.id === market.id);
+
+  if (existingIndex >= 0) {
+    MOCK_MARKETS.splice(existingIndex, 1, market);
+  } else {
+    MOCK_MARKETS.unshift(market);
+  }
+
+  MOCK_PRICE_HISTORY[market.id] = buildPricePoints([500000, 500000]);
+  MOCK_ORDER_BOOKS[market.id] = {
+    marketId: market.id,
+    yes: emptyBook(market, 'YES'),
+    no: emptyBook(market, 'NO'),
+  };
+
+  const createdEvent: ActivityEvent = {
+    id: `${hash('f')}:11`,
+    type: 'MarketCreated',
+    marketId: market.id,
+    account: market.creator,
+    txHash: hash('f'),
+    ts: market.createdAt,
+  };
+  const eventIndex = MOCK_ACTIVITY.findIndex((event) => event.id === createdEvent.id);
+  if (eventIndex >= 0) {
+    MOCK_ACTIVITY.splice(eventIndex, 1, createdEvent);
+  } else {
+    MOCK_ACTIVITY.unshift(createdEvent);
+  }
+
+  return market;
+}
+
 const positions: Position[] = [
   {
     account: MOCK_WALLET_ADDRESS,
@@ -472,11 +594,22 @@ const positions: Position[] = [
     marketId: '3',
     outcome: 'YES',
     qtyRaw: '45000000',
-    costBasisRaw: '32850000',
+    costBasisRaw: '27900000',
     costBasisEstimated: true,
     realizedPnlRaw: '3200000',
-    unrealizedPnlRaw: '0',
+    unrealizedPnlRaw: '4950000',
     updatedAt: MOCK_REFERENCE_TS - 720,
+  },
+  {
+    account: MOCK_WALLET_ADDRESS,
+    marketId: '5',
+    outcome: 'NO',
+    qtyRaw: '80000000',
+    costBasisRaw: '33600000',
+    costBasisEstimated: true,
+    realizedPnlRaw: '0',
+    unrealizedPnlRaw: '-2400000',
+    updatedAt: MOCK_REFERENCE_TS - 2_880,
   },
   {
     account: MOCK_WALLET_ADDRESS,
@@ -502,7 +635,7 @@ export const MOCK_ACCOUNT_RESPONSE: AccountResponse = {
   recentTrades: MOCK_TRADES.filter((trade) => trade.account === MOCK_WALLET_ADDRESS),
   pnl: {
     realizedRaw: '3200000',
-    unrealizedRaw: '39360000',
+    unrealizedRaw: '41910000',
   },
 };
 
@@ -516,6 +649,18 @@ export const MOCK_ACTIVITY: ActivityEvent[] = [
     ts: MOCK_REFERENCE_TS - 120,
   },
   {
+    id: `${hash('f')}:6`,
+    type: 'Trade',
+    marketId: '1',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'YES',
+    side: 'BID',
+    amountRaw: '48000000',
+    priceRaw: '500000',
+    txHash: hash('f'),
+    ts: MOCK_REFERENCE_TS - 180,
+  },
+  {
     id: `${hash('2')}:4`,
     type: 'MarketGraduated',
     marketId: '3',
@@ -523,6 +668,18 @@ export const MOCK_ACTIVITY: ActivityEvent[] = [
     amountRaw: '1800000000',
     txHash: hash('2'),
     ts: MOCK_REFERENCE_TS - 660,
+  },
+  {
+    id: `${hash('d')}:5`,
+    type: 'OrderFilled',
+    marketId: '3',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'YES',
+    side: 'ASK',
+    amountRaw: '15000000',
+    priceRaw: '730000',
+    txHash: hash('d'),
+    ts: MOCK_REFERENCE_TS - 720,
   },
   {
     id: `${hash('3')}:9`,
@@ -557,6 +714,26 @@ export const MOCK_ACTIVITY: ActivityEvent[] = [
     ts: MOCK_REFERENCE_TS - 2_200,
   },
   {
+    id: `${hash('7')}:1`,
+    type: 'MarketCreated',
+    marketId: '4',
+    account: MOCK_WALLET_ADDRESS,
+    txHash: hash('7'),
+    ts: MOCK_REFERENCE_TS - 2_400,
+  },
+  {
+    id: `${hash('9')}:3`,
+    type: 'OrderFilled',
+    marketId: '5',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'NO',
+    side: 'BID',
+    amountRaw: '80000000',
+    priceRaw: '420000',
+    txHash: hash('9'),
+    ts: MOCK_REFERENCE_TS - 2_880,
+  },
+  {
     id: `${hash('6')}:3`,
     type: 'ResolutionObserved',
     marketId: '6',
@@ -573,6 +750,38 @@ export const MOCK_ACTIVITY: ActivityEvent[] = [
     amountRaw: '1200000000',
     txHash: hash('7'),
     ts: MOCK_REFERENCE_TS - 3_600,
+  },
+  {
+    id: `${hash('8')}:4`,
+    type: 'OrderPlaced',
+    marketId: '3',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'YES',
+    side: 'BID',
+    amountRaw: '60000000',
+    priceRaw: '600000',
+    txHash: hash('8'),
+    ts: MOCK_REFERENCE_TS - 45_060,
+  },
+  {
+    id: `${hash('0')}:1`,
+    type: 'Trade',
+    marketId: '6',
+    account: MOCK_WALLET_ADDRESS,
+    outcome: 'YES',
+    side: 'BID',
+    amountRaw: '120000000',
+    priceRaw: '680000',
+    txHash: hash('0'),
+    ts: MOCK_REFERENCE_TS - 120_000,
+  },
+  {
+    id: `${hash('7')}:2`,
+    type: 'MarketCreated',
+    marketId: '7',
+    account: MOCK_WALLET_ADDRESS,
+    txHash: hash('7'),
+    ts: MOCK_REFERENCE_TS - 620_000,
   },
 ];
 

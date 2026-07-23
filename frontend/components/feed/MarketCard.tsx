@@ -42,7 +42,15 @@ function phaseDataValue(market: Market) {
   return 'resolved';
 }
 
-export function MarketCard({ market }: { market: Market }) {
+interface MarketCardProps {
+  market: Market;
+  href?: string | null;
+}
+
+export function MarketCard({
+  market,
+  href = `/market/${market.id}`,
+}: MarketCardProps) {
   const { data: priceHistory } = usePriceHistory(market.id);
   const graduation = graduationPercent(market);
   const isSettled = market.phase === 'ResolvedObserved' || market.phase === 'ClosedOut';
@@ -53,13 +61,8 @@ export function MarketCard({ market }: { market: Market }) {
         ? 'NO'
         : null;
 
-  return (
-    <Link
-      aria-label={`${market.question}, ${market.phase}`}
-      className={styles.link}
-      href={`/market/${market.id}`}
-    >
-      <article className={styles.card} data-phase={phaseDataValue(market)}>
+  const card = (
+    <article className={styles.card} data-phase={phaseDataValue(market)}>
         <div className={styles.top}>
           <PhaseBadge phase={market.phase} surface="feed" />
           <span className={styles.time}>{relativeTime(market.createdAt, MOCK_REFERENCE_TS)}</span>
@@ -126,6 +129,27 @@ export function MarketCard({ market }: { market: Market }) {
           )}
         </div>
       </article>
+  );
+
+  if (href === null) {
+    return (
+      <div
+        aria-label={`${market.question}, ${market.phase} preview`}
+        className={`${styles.link} ${styles.preview}`}
+        role="region"
+      >
+        {card}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      aria-label={`${market.question}, ${market.phase}`}
+      className={styles.link}
+      href={href}
+    >
+      {card}
     </Link>
   );
 }

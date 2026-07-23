@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-import { PortfolioScreen } from '@/components/scaffold/PortfolioScreen';
+import { PortfolioScreen } from '@/components/portfolio/PortfolioScreen';
 
 export const metadata: Metadata = {
   title: 'Portfolio',

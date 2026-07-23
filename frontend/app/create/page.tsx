@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-import { CreateScreen } from '@/components/scaffold/CreateScreen';
+import { CreateScreen } from '@/components/create/CreateScreen';
 
 export const metadata: Metadata = {
   title: 'Create',

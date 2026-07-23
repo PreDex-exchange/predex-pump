@@ -3,6 +3,15 @@
   min-width: 0;
 }
 
+.preview .card {
+  cursor: default;
+}
+
+.preview .card:hover {
+  transform: none;
+  box-shadow: var(--shadow-card);
+}
+
 .card {
   --accent: var(--yes);
   position: relative;

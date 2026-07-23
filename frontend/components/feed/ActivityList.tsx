@@ -13,6 +13,9 @@ function eventKind(event: ActivityEvent) {
   if (event.type === 'ResolutionObserved' || event.type === 'Closeout') {
     return { label: 'Resolved', tone: 'resolved' };
   }
+  if (event.type === 'Redeem') return { label: 'Redeemed', tone: 'resolved' };
+  if (event.type === 'OrderPlaced') return { label: 'Order', tone: 'filled' };
+  if (event.type === 'OrderCancelled') return { label: 'Cancelled', tone: 'created' };
   return { label: event.type === 'OrderFilled' ? 'Filled' : 'Trade', tone: 'filled' };
 }
 
@@ -24,6 +27,12 @@ function eventText(event: ActivityEvent, markets: Market[]) {
   if (event.type === 'ResolutionObserved' || event.type === 'Closeout') {
     return `${market?.question ?? 'Market'} · ${event.outcome ?? 'settled'}`;
   }
+  if (event.type === 'Redeem' && event.amountRaw) {
+    return `${formatRaw(event.amountRaw, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    })} USDC · ${market?.question ?? 'resolved market'}`;
+  }
   if (event.amountRaw && event.outcome && event.priceRaw) {
     return `${formatRaw(event.amountRaw, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${event.outcome} @ ${formatPrice(event.priceRaw)}`;
   }
@@ -33,17 +42,26 @@ function eventText(event: ActivityEvent, markets: Market[]) {
 interface ActivityListProps {
   events: ActivityEvent[];
   markets: Market[];
+  title?: string;
+  emptyMessage?: string;
+  sticky?: boolean;
 }
 
-export function ActivityList({ events, markets }: ActivityListProps) {
+export function ActivityList({
+  events,
+  markets,
+  title = 'Activity',
+  emptyMessage = 'The hatchery is quiet for now.',
+  sticky = true,
+}: ActivityListProps) {
   return (
-    <aside className={styles.activity}>
+    <aside className={`${styles.activity} ${sticky ? '' : styles.static}`}>
       <h2>
         <span aria-hidden="true" />
-        Activity
+        {title}
       </h2>
       {events.length === 0 ? (
-        <p className={styles.empty}>The hatchery is quiet for now.</p>
+        <p className={styles.empty}>{emptyMessage}</p>
       ) : (
         <ul>
           {events.map((event) => {

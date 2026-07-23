@@ -11,6 +11,7 @@ import {
   MOCK_PRICE_HISTORY,
   MOCK_RESOLUTIONS,
   MOCK_TRADES,
+  MOCK_WALLET_ADDRESS,
 } from './data';
 
 const MOCK_DELAY_MS = 90;
@@ -88,6 +89,10 @@ export const mockApiClient: ApiClient = {
         ...position,
         account: normalizedAddress,
       })),
+      recentTrades: MOCK_ACCOUNT_RESPONSE.recentTrades.map((trade) => ({
+        ...trade,
+        account: normalizedAddress,
+      })),
     });
   },
 
@@ -99,11 +104,26 @@ export const mockApiClient: ApiClient = {
     let items = [...MOCK_ACTIVITY];
     if (query.marketId) items = items.filter((event) => event.marketId === query.marketId);
     if (query.account) {
-      items = items.filter(
-        (event) => event.account?.toLowerCase() === query.account?.toLowerCase(),
-      );
+      const normalizedAccount = query.account.toLowerCase();
+      items = items
+        .filter((event) => {
+          const eventAccount = event.account?.toLowerCase();
+          return (
+            eventAccount === normalizedAccount ||
+            eventAccount === MOCK_WALLET_ADDRESS.toLowerCase()
+          );
+        })
+        .map((event) =>
+          event.account?.toLowerCase() === MOCK_WALLET_ADDRESS.toLowerCase()
+            ? {
+                ...event,
+                account: normalizedAccount as AccountResponse['account']['address'],
+              }
+            : event,
+        );
     }
 
+    items.sort((left, right) => right.ts - left.ts);
     const limit = Math.min(query.limit ?? 50, 200);
     return respond({
       items: items.slice(0, limit),

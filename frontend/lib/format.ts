@@ -69,6 +69,32 @@ export function formatUsdc(raw: Raw, digits = 2) {
   });
 }
 
+export function formatSignedUsdc(raw: Raw, digits = 2) {
+  const formatted = formatUsdc(raw, digits);
+
+  try {
+    return BigInt(raw) > 0n ? `+${formatted}` : formatted;
+  } catch {
+    return formatted;
+  }
+}
+
+export function parseUsdcInput(value: string): Raw | null {
+  const normalized = value.trim();
+  if (!/^(?:\d+(?:\.\d{0,6})?|\.\d{1,6})$/.test(normalized)) return null;
+
+  const [whole = '0', fraction = ''] = normalized.split('.');
+
+  try {
+    return (
+      BigInt(whole || '0') * 1_000_000n +
+      BigInt(fraction.padEnd(6, '0') || '0')
+    ).toString();
+  } catch {
+    return null;
+  }
+}
+
 export function formatCompactUsdc(raw: Raw) {
   let value: bigint;
   try {

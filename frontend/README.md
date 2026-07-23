@@ -1,6 +1,6 @@
 # predex-pump frontend
 
-Phase C1 is a mock-first Next.js App Router frontend for the predex market incubator.
+Phase C2 is a mock-first Next.js App Router frontend for the predex market incubator.
 
 ## Run
 
@@ -18,8 +18,8 @@ Open [http://localhost:3000](http://localhost:3000).
 - `/market/3` — Graduated market
 - `/market/6` — Resolved market
 - `/market/7` — Closed-out market
-- `/create` — Create scaffold
-- `/portfolio` — Portfolio scaffold
+- `/create` — Validated market launch flow, live card preview, and stubbed confirmation
+- `/portfolio` — Account summary, positions, history, and stubbed resolved-position redemption
 
 ## Data and chain boundaries
 
@@ -28,7 +28,7 @@ Open [http://localhost:3000](http://localhost:3000).
 - Mock objects in `lib/mock/data.ts` satisfy the shared DTOs and retain raw 6-decimal values as strings.
 - Arc chain configuration and live addresses come from the shared source.
 - `lib/chain/useQuote.ts` demonstrates the ABI-backed critical-read pattern, but defaults to deterministic mock quotes.
-- Create, LMSR trade, book order, and redeem actions stop at preview modals. No on-chain writes are sent in Phase C1.
+- Create, LMSR trade, book order, and redeem actions stop at confirmation modals. No on-chain writes are sent in Phase C2.
 
 ## Checks
 

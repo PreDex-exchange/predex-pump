@@ -8,6 +8,10 @@
   box-shadow: var(--shadow-card);
 }
 
+.static {
+  position: static;
+}
+
 .activity h2 {
   display: flex;
   align-items: center;

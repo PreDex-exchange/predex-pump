@@ -11,7 +11,11 @@ import type {
   PriceHistoryQuery,
   PriceHistoryResponse,
 } from '@predex-pump/shared/rest';
-import type { RegistryConfig } from '@predex-pump/shared/domain';
+import type {
+  Outcome,
+  Position,
+  RegistryConfig,
+} from '@predex-pump/shared/domain';
 import { useQuery, type QueryKey } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
@@ -64,6 +68,24 @@ export function useAccount(address?: string) {
     [address],
   );
   return useApiResource<AccountResponse | null>(['account', address], load);
+}
+
+export function usePosition(
+  address: string | undefined,
+  marketId: string,
+  outcome?: Outcome,
+): ResourceState<Position> {
+  const account = useAccount(address);
+  const position =
+    account.data?.positions.find(
+      (item) =>
+        item.marketId === marketId && (outcome === undefined || item.outcome === outcome),
+    ) ?? null;
+
+  return {
+    ...account,
+    data: position,
+  };
 }
 
 export function useOrderBook(marketId: string) {
