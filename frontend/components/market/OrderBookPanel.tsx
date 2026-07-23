@@ -20,7 +20,7 @@ function Ladder({
   const levels = book[side];
 
   if (levels.length === 0) {
-    return <div className={styles.empty}>No {side} in this preview yet.</div>;
+    return <div className={styles.empty}>No open {side} on-chain.</div>;
   }
 
   return (
@@ -56,7 +56,7 @@ export function OrderBookPanel({ books }: { books: MarketBookResponse }) {
       <div className={styles.header}>
         <div>
           <h2>Order book</h2>
-          <p>Graduated market · mock ladder</p>
+          <p>Graduated market · live MiniCLOB getters</p>
         </div>
         <Tabs
           ariaLabel="Order book outcome"

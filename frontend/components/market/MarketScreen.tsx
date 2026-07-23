@@ -7,7 +7,7 @@ import { PhaseBadge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { StatePanel } from '@/components/ui/StatePanel';
 import {
-  useAccount as useMockAccount,
+  useAccount as useChainAccount,
   useMarket,
   useOrderBook,
   usePriceHistory,
@@ -17,7 +17,6 @@ import {
   relativeTime,
   shortAddress,
 } from '@/lib/format';
-import { MOCK_REFERENCE_TS, MOCK_WALLET_ADDRESS } from '@/lib/mock/data';
 
 import { GraduationPanel } from './GraduationPanel';
 import { LifecycleStepper } from './LifecycleStepper';
@@ -34,17 +33,17 @@ import { TradePanel } from './TradePanel';
 import styles from './MarketScreen.module.css';
 
 export function MarketScreen({ marketId }: { marketId: string }) {
-  const { address, isConnected } = useWalletAccount();
+  const { address } = useWalletAccount();
   const { data: detail, isLoading, error } = useMarket(marketId);
   const { data: priceHistory } = usePriceHistory(marketId);
   const { data: book, isLoading: bookLoading } = useOrderBook(marketId);
-  const { data: account } = useMockAccount(address ?? MOCK_WALLET_ADDRESS);
+  const { data: account } = useChainAccount(address);
 
   if (isLoading) {
     return (
       <main className={styles.state}>
         <StatePanel
-          message="Loading the contract-shaped market snapshot and its mock activity."
+          message="Scanning Arc events and reading the latest contract state."
           title="Checking this egg…"
         />
       </main>
@@ -55,7 +54,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     return (
       <main className={styles.state}>
         <StatePanel
-          message="The local mock request failed. Return to the feed and try this market again."
+          message="The live Arc snapshot could not be assembled. Return to the feed and retry."
           title="This market would not open"
         />
       </main>
@@ -66,7 +65,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     return (
       <main className={styles.state}>
         <StatePanel
-          message="That market ID is not part of the Phase C1 mock set."
+          message="No MarketCreated event with that ID was found in the live deployment."
           title="No egg with that number"
         />
         <Link className={styles.backLink} href="/">
@@ -77,7 +76,9 @@ export function MarketScreen({ marketId }: { marketId: string }) {
   }
 
   const { market, recentTrades, resolution } = detail;
-  const position = account?.positions.find((item) => item.marketId === market.id);
+  const positions = account?.positions.filter(
+    (item) => item.marketId === market.id,
+  );
   const isIncubating = market.phase === 'Opened';
   const isGraduated = market.phase === 'Graduated';
 
@@ -92,7 +93,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
           <span>
             by <code className="mono">{shortAddress(market.creator, 4, 3)}</code>
           </span>
-          <span>opened {relativeTime(market.createdAt, MOCK_REFERENCE_TS)}</span>
+          <span>opened {relativeTime(market.createdAt)}</span>
           <span>trading ends {formatDateTime(market.tradingEndsAt)}</span>
         </div>
         <h1>{market.question}</h1>
@@ -111,8 +112,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
           </div>
           <TradePanel
             market={market}
-            position={position}
-            walletConnected={isConnected}
+            positions={positions}
           />
         </div>
       )}
@@ -124,7 +124,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
             {bookLoading || !book ? (
               <Card>
                 <h2 className={styles.bookLoadingTitle}>Order book</h2>
-                <p className={styles.bookLoading}>Loading the mock ladder…</p>
+                <p className={styles.bookLoading}>Reading live MiniCLOB orders…</p>
               </Card>
             ) : (
               <OrderBookPanel books={book} />
@@ -141,7 +141,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
             <ResolvedOutcomePanel market={market} resolution={resolution} />
             <RecentTrades trades={recentTrades} />
           </div>
-          <RedeemPanel market={market} position={position} />
+          <RedeemPanel market={market} position={positions?.[0]} />
         </div>
       )}
     </main>

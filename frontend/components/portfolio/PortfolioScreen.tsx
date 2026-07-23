@@ -11,7 +11,7 @@ import { useMemo, useState } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
 import { ActivityList } from '@/components/feed/ActivityList';
-import { Badge, OutcomeBadge } from '@/components/ui/Badge';
+import { OutcomeBadge } from '@/components/ui/Badge';
 import { Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -23,9 +23,7 @@ import {
   useMarkets,
 } from '@/lib/api/hooks';
 import {
-  formatPrice,
   formatRaw,
-  formatSignedUsdc,
   formatUsdc,
   phaseLabel,
   shortAddress,
@@ -38,20 +36,11 @@ const RAW_SCALE = 1_000_000n;
 interface PositionRow {
   position: Position;
   market: Market | undefined;
-  markRaw: string;
-  averageCostRaw: string;
   currentValueRaw: string;
-  pnlRaw: string;
 }
 
 function rawProduct(leftRaw: string, rightRaw: string) {
   return ((BigInt(leftRaw) * BigInt(rightRaw)) / RAW_SCALE).toString();
-}
-
-function averageCostRaw(position: Position) {
-  const quantity = BigInt(position.qtyRaw);
-  if (quantity === 0n) return '0';
-  return ((BigInt(position.costBasisRaw) * RAW_SCALE) / quantity).toString();
 }
 
 function tradeToActivity(trade: Trade): ActivityEvent {
@@ -69,15 +58,8 @@ function tradeToActivity(trade: Trade): ActivityEvent {
   };
 }
 
-function pnlClass(raw: string) {
-  if (BigInt(raw) > 0n) return styles.positive;
-  if (BigInt(raw) < 0n) return styles.negative;
-  return styles.flat;
-}
-
 export function PortfolioScreen() {
   const [redeemOpen, setRedeemOpen] = useState(false);
-  const [redeemComplete, setRedeemComplete] = useState(false);
   const { address, isConnected } = useWalletAccount();
   const {
     connect,
@@ -118,12 +100,7 @@ export function PortfolioScreen() {
       return {
         position,
         market,
-        markRaw,
-        averageCostRaw: averageCostRaw(position),
         currentValueRaw: rawProduct(position.qtyRaw, markRaw),
-        pnlRaw: (
-          BigInt(position.realizedPnlRaw) + BigInt(position.unrealizedPnlRaw)
-        ).toString(),
       };
     });
   }, [account?.positions, marketsPage?.items]);
@@ -131,9 +108,6 @@ export function PortfolioScreen() {
   const totalPositionValueRaw = positionRows
     .reduce((total, row) => total + BigInt(row.currentValueRaw), 0n)
     .toString();
-  const totalPnlRaw = account
-    ? (BigInt(account.pnl.realizedRaw) + BigInt(account.pnl.unrealizedRaw)).toString()
-    : '0';
   const marketsHeld = new Set(
     positionRows
       .filter((row) => BigInt(row.position.qtyRaw) > 0n)
@@ -169,8 +143,8 @@ export function PortfolioScreen() {
         <span className={styles.kicker}>Portfolio</span>
         <h1>Your positions, held calmly.</h1>
         <p>
-          Current values use mock marks. Cost basis and every PnL figure are indexed estimates,
-          not settlement balances.
+          Quantities come directly from CTF balanceOf and current values use live marginal or
+          resolved prices. Cost basis and PnL are unknown because the contracts do not store them.
         </p>
       </div>
       {address && (
@@ -204,8 +178,8 @@ export function PortfolioScreen() {
           }
           message={
             connectError
-              ? 'The wallet connection was not completed. Try again, or explore live mock markets first.'
-              : 'Connect a wallet to label this mock account and reveal its positions, value, and history.'
+              ? 'The wallet connection was not completed. Try again, or explore the live market feed.'
+              : 'Connect a wallet to read its live outcome-token balances and Arc activity.'
           }
           title="Connect to open your portfolio"
         />
@@ -218,7 +192,7 @@ export function PortfolioScreen() {
       <main className={styles.page}>
         {header}
         <StatePanel
-          message="Loading contract-shaped positions and marking them against the local market set."
+          message="Reading live CTF balances and marking them against current Arc prices."
           title="Counting your positions…"
         />
       </main>
@@ -241,7 +215,7 @@ export function PortfolioScreen() {
               Try again
             </Button>
           }
-          message="The local account snapshot could not be assembled. Retry the mock requests."
+          message="The live account snapshot could not be assembled. Retry the Arc reads."
           title="This portfolio would not open"
         />
       </main>
@@ -263,7 +237,7 @@ export function PortfolioScreen() {
               </Link>
             </>
           }
-          message="This account has no mock outcome tokens yet. Explore a question and open a position."
+          message="This account holds no outcome tokens for markets in the live deployment."
           title="No positions in this nest yet"
         />
       </main>
@@ -280,17 +254,12 @@ export function PortfolioScreen() {
           <NumberDisplay size="hero">
             {formatUsdc(totalPositionValueRaw)} <small>USDC</small>
           </NumberDisplay>
-          <small>At current mock prices</small>
+          <small>At current live contract prices</small>
         </Card>
         <Card className={styles.summaryCard} quiet>
-          <span>Total PnL (est.)</span>
-          <NumberDisplay
-            className={pnlClass(totalPnlRaw)}
-            size="hero"
-          >
-            {formatSignedUsdc(totalPnlRaw)} <small>USDC</small>
-          </NumberDisplay>
-          <small>Realized + unrealized estimate</small>
+          <span>Cost basis &amp; PnL</span>
+          <NumberDisplay size="hero">Unknown</NumberDisplay>
+          <small>Not stored by the on-chain contracts</small>
         </Card>
         <Card className={styles.summaryCard} quiet>
           <span>Markets held</span>
@@ -310,7 +279,7 @@ export function PortfolioScreen() {
               <NumberDisplay size="body">
                 {formatUsdc(redeemableValueRaw)} USDC
               </NumberDisplay>{' '}
-              is ready to redeem
+              will be redeemable
             </h2>
             <p>
               {redeemableRows.length}{' '}
@@ -318,13 +287,9 @@ export function PortfolioScreen() {
               resolution.
             </p>
           </div>
-          {redeemComplete ? (
-            <Badge tone="yes">Redeem simulated</Badge>
-          ) : (
-            <Button onClick={() => setRedeemOpen(true)} variant="mint">
-              Review redeem
-            </Button>
-          )}
+          <Button onClick={() => setRedeemOpen(true)} variant="mint">
+            Review · coming soon
+          </Button>
         </Card>
       )}
 
@@ -334,13 +299,15 @@ export function PortfolioScreen() {
             <span className={styles.kicker}>Holdings</span>
             <h2>Positions</h2>
           </div>
-          <p id="positions-note">Avg. cost and PnL are estimated from indexed trades.</p>
+          <p id="positions-note">
+            Cost basis and PnL are unavailable in direct-chain mode.
+          </p>
         </div>
 
         <Card className={styles.tableCard} padded={false} quiet>
           <table aria-describedby="positions-note">
             <caption className="sr-only">
-              Outcome-token positions for the connected mock account
+              Live outcome-token positions for the connected Arc account
             </caption>
             <thead>
               <tr>
@@ -384,16 +351,13 @@ export function PortfolioScreen() {
                     })}
                   </td>
                   <td className={styles.numericCell} data-label="Avg. cost">
-                    {formatPrice(row.averageCostRaw, 3)}
+                    <span title="Cost basis is not stored on-chain">Unknown</span>
                   </td>
                   <td className={styles.numericCell} data-label="Current value">
                     {formatUsdc(row.currentValueRaw)} <small>USDC</small>
                   </td>
-                  <td
-                    className={`${styles.numericCell} ${pnlClass(row.pnlRaw)}`}
-                    data-label="PnL (est.)"
-                  >
-                    {formatSignedUsdc(row.pnlRaw)} <small>USDC</small>
+                  <td className={styles.numericCell} data-label="PnL (est.)">
+                    <span title="PnL requires an indexed cost basis">—</span>
                   </td>
                 </tr>
               ))}
@@ -419,14 +383,19 @@ export function PortfolioScreen() {
       </section>
 
       <ConfirmModal
-        confirmLabel="Confirm mock redeem"
+        confirmLabel="Close preview"
         onClose={() => setRedeemOpen(false)}
-        onConfirm={() => setRedeemComplete(true)}
+        onConfirm={() =>
+          console.info('Deferred CTF redemption preview', {
+            markets: redeemableRows.map((row) => row.position.marketId),
+          })
+        }
         open={redeemOpen}
         title="Redeem resolved positions"
       >
         <p className={styles.redeemIntro}>
-          Review the resolved outcome tokens in this mock redemption.
+          Review the resolved outcome tokens. Redemption is coming soon and remains deferred in
+          Phase C3.
         </p>
         <ul className={styles.redeemList}>
           {redeemableRows.map((row) => (
@@ -446,7 +415,7 @@ export function PortfolioScreen() {
           <NumberDisplay size="body">{formatUsdc(redeemableValueRaw)} USDC</NumberDisplay>
         </div>
         <p className={styles.redeemNote}>
-          This confirmation only updates the local UI. No redemption transaction will be sent.
+          Coming soon. No Conditional Tokens redemption transaction will be sent from this preview.
         </p>
       </ConfirmModal>
     </main>

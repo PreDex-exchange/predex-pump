@@ -2,7 +2,6 @@ import type { Trade } from '@predex-pump/shared/domain';
 
 import { Card } from '@/components/ui/Card';
 import { formatPrice, formatRaw, relativeTime, shortAddress } from '@/lib/format';
-import { MOCK_REFERENCE_TS } from '@/lib/mock/data';
 
 import styles from './RecentTrades.module.css';
 
@@ -34,7 +33,7 @@ export function RecentTrades({ trades }: { trades: Trade[] }) {
               </span>
               <span className={`${styles.account} mono`}>{shortAddress(trade.account)}</span>
               <span className={styles.when}>
-                {relativeTime(trade.ts, MOCK_REFERENCE_TS).replace(' ago', '')}
+                {relativeTime(trade.ts).replace(' ago', '')}
               </span>
             </div>
           ))}

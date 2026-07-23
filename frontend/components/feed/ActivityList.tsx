@@ -1,7 +1,6 @@
 import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
 
 import { formatPrice, formatRaw, relativeTime } from '@/lib/format';
-import { MOCK_REFERENCE_TS } from '@/lib/mock/data';
 
 import styles from './ActivityList.module.css';
 
@@ -71,7 +70,7 @@ export function ActivityList({
                 <span className={`${styles.kind} ${styles[kind.tone]}`}>{kind.label}</span>
                 <span className={styles.text}>{eventText(event, markets)}</span>
                 <span className={styles.time}>
-                  {relativeTime(event.ts, MOCK_REFERENCE_TS).replace(' ago', '')}
+                  {relativeTime(event.ts).replace(' ago', '')}
                 </span>
               </li>
             );

@@ -12,8 +12,14 @@ import styles from './PriceOverview.module.css';
 
 type Timeframe = '1h' | '1d' | '1w' | 'all';
 
-function chartPaths(points: PricePoint[]) {
-  const values = points.length > 1 ? points : [{ yesPriceRaw: '500000' }, { yesPriceRaw: '500000' }];
+function chartPaths(points: PricePoint[], currentYesPriceRaw: string) {
+  const values =
+    points.length > 1
+      ? points
+      : [
+          { yesPriceRaw: currentYesPriceRaw },
+          { yesPriceRaw: currentYesPriceRaw },
+        ];
   const rawValues = values.map((point) => Number(point.yesPriceRaw));
   const minimum = Math.min(...rawValues);
   const maximum = Math.max(...rawValues);
@@ -37,7 +43,7 @@ export function PriceOverview({ market, points }: { market: Market; points: Pric
     const count = timeframe === '1h' ? 3 : timeframe === '1d' ? 7 : points.length;
     return points.slice(-count);
   }, [points, timeframe]);
-  const paths = chartPaths(visiblePoints);
+  const paths = chartPaths(visiblePoints, market.yesPriceRaw);
 
   return (
     <Card>
@@ -46,14 +52,14 @@ export function PriceOverview({ market, points }: { market: Market; points: Pric
           <span>YES</span>
           <NumberDisplay size="price">{formatPrice(market.yesPriceRaw)}</NumberDisplay>
           <small className="numeric">
-            {formatImpliedPercent(market.yesPriceRaw)}% implied · +0.03 today
+            {formatImpliedPercent(market.yesPriceRaw)}% implied · live marginal
           </small>
         </div>
         <div className={`${styles.price} ${styles.no}`}>
           <span>NO</span>
           <NumberDisplay size="price">{formatPrice(market.noPriceRaw)}</NumberDisplay>
           <small className="numeric">
-            {formatImpliedPercent(market.noPriceRaw)}% implied · −0.03 today
+            {formatImpliedPercent(market.noPriceRaw)}% implied · live marginal
           </small>
         </div>
       </div>

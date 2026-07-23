@@ -1,6 +1,5 @@
 'use client';
 
-import { formatUnits } from 'viem';
 import {
   useAccount,
   useConnect,
@@ -9,40 +8,31 @@ import {
   useSwitchChain,
 } from 'wagmi';
 
-import { shortAddress } from '@/lib/format';
 import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
+import { collateralErc20Abi } from '@/lib/chain/contracts';
+import { formatUsdc, shortAddress } from '@/lib/format';
 
 import styles from './WalletBar.module.css';
 
-const erc20BalanceAbi = [
-  {
-    type: 'function',
-    name: 'balanceOf',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: '', type: 'uint256' }],
-  },
-] as const;
-
 function formatWalletBalance(balance?: bigint) {
   if (balance === undefined) return '—';
-  const value = Number(formatUnits(balance, 6));
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
+  return formatUsdc(balance.toString(), 2);
 }
 
 export function WalletBar() {
   const { address, chainId, isConnected } = useAccount();
   const { connect, connectors, error: connectError, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
-  const { switchChain, isPending: isSwitching } = useSwitchChain();
+  const {
+    switchChain,
+    error: switchError,
+    isPending: isSwitching,
+  } = useSwitchChain();
   const isWrongNetwork = isConnected && chainId !== arcTestnet.id;
 
   const { data: usdcBalance, isLoading: isBalanceLoading } = useReadContract({
     address: arcAddresses.usdc,
-    abi: erc20BalanceAbi,
+    abi: collateralErc20Abi,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
     chainId: arcTestnet.id,
@@ -83,6 +73,7 @@ export function WalletBar() {
           className={`${styles.wallet} ${styles.switch}`}
           disabled={isSwitching}
           onClick={() => switchChain({ chainId: arcTestnet.id })}
+          title={switchError?.message ?? `Add or switch to chain ${arcTestnet.id}`}
           type="button"
         >
           {isSwitching ? 'Switching…' : 'Switch to Arc'}

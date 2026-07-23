@@ -50,7 +50,7 @@ export function FeedScreen() {
 
   return (
     <main>
-      <Hero />
+      <Hero markets={marketPage?.items ?? []} />
       <section className={styles.discovery} id="how-it-works">
         <div aria-label="Filter markets" className={styles.filters} role="tablist">
           {FILTERS.map((item) => (
@@ -81,13 +81,13 @@ export function FeedScreen() {
         <section aria-label="Markets" className={styles.marketArea}>
           {isLoading && (
             <StatePanel
-              message="Fetching the latest mock markets and warming the bonding curves."
+              message="Scanning MarketCreated logs and reading live bonding-curve state."
               title="Warming the nest…"
             />
           )}
           {!isLoading && error && (
             <StatePanel
-              message="The mock data layer could not load. Refresh to try the local request again."
+              message="The live Arc read could not complete. Refresh to retry the RPC request."
               title="The nest needs a reset"
             />
           )}

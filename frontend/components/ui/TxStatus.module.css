@@ -1,0 +1,83 @@
+.status {
+  padding: 12px 14px;
+  margin-top: var(--space-4);
+  border: 2px solid var(--hairline);
+  border-radius: var(--radius-input);
+  background: #fbf7f0;
+  color: var(--ink);
+  font-size: 0.75rem;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-transform: capitalize;
+}
+
+.heading > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--info);
+}
+
+.heading strong {
+  font-size: 0.72rem;
+}
+
+.status p {
+  margin: 5px 0 0;
+  color: var(--muted);
+}
+
+.status code {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 0.68rem;
+}
+
+.status pre {
+  overflow-wrap: anywhere;
+  margin: var(--space-2) 0 0;
+  color: var(--error);
+  font-family: var(--font-nunito), sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.approval-pending .heading > span,
+.pending .heading > span,
+.awaiting-approval .heading > span,
+.awaiting-signature .heading > span,
+.checking .heading > span {
+  animation: tx-pulse 1.2s ease-in-out infinite;
+}
+
+.confirmed {
+  border-color: var(--yes);
+  background: var(--yes-soft);
+}
+
+.confirmed .heading > span {
+  background: var(--yes);
+}
+
+.reverted {
+  border-color: var(--error);
+  background: var(--error-soft);
+}
+
+.reverted .heading > span {
+  background: var(--error);
+}
+
+@keyframes tx-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}

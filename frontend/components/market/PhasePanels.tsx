@@ -96,12 +96,14 @@ export function BookActionPanel({ market }: { market: Market }) {
         >
           Preview order
         </Button>
-        <p className={styles.note}>Order writes are stubbed in Phase C1.</p>
+        <p className={styles.note}>
+          Coming soon — MiniCLOB place, fill, and cancel writes are deferred after Phase C3.
+        </p>
       </Card>
       <ConfirmModal
         onClose={() => setOpen(false)}
         onConfirm={() =>
-          console.info('Phase C1 place-order stub', {
+          console.info('Deferred MiniCLOB place-order preview', {
             marketId: market.id,
             outcome,
             orderSide,
@@ -110,7 +112,10 @@ export function BookActionPanel({ market }: { market: Market }) {
         open={open}
         title="Order preview"
       >
-        <p>No approval or place-order transaction will be sent in this foundation build.</p>
+        <p>
+          Coming soon. This preview does not request MiniCLOB approval or submit a place
+          transaction.
+        </p>
       </ConfirmModal>
     </aside>
   );
@@ -196,16 +201,21 @@ export function RedeemPanel({
           {closed ? 'Redemption closed' : position ? 'Preview redeem' : 'No position to redeem'}
         </Button>
         <p className={styles.note}>
-          {closed ? 'This market has completed closeout.' : 'Redeem writes are stubbed in Phase C1.'}
+          {closed
+            ? 'This market has completed closeout.'
+            : 'Coming soon — committee resolve, redeem, and closeout writes remain deferred.'}
         </p>
       </Card>
       <ConfirmModal
         onClose={() => setOpen(false)}
-        onConfirm={() => console.info('Phase C1 redeem stub', { marketId: market.id })}
+        onConfirm={() => console.info('Deferred CTF redeem preview', { marketId: market.id })}
         open={open}
         title="Redemption preview"
       >
-        <p>This preview does not call Conditional Tokens or submit a wallet transaction.</p>
+        <p>
+          Coming soon. This preview does not call Conditional Tokens or submit a wallet
+          transaction.
+        </p>
       </ConfirmModal>
     </aside>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import type { Address, Market } from '@predex-pump/shared/domain';
+import type { Address, Market, RegistryConfig } from '@predex-pump/shared/domain';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useMemo, useState, type FormEvent } from 'react';
@@ -13,12 +13,16 @@ import { Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
+import { TxStatus } from '@/components/ui/TxStatus';
 import { useConfig } from '@/lib/api/hooks';
-import { formatUsdc, parseUsdcInput } from '@/lib/format';
+import { arcTestnet } from '@/lib/chain/arc';
+import { clearChainReadCache } from '@/lib/chain/client';
 import {
-  buildMockCreatedMarket,
-  registerMockCreatedMarket,
-} from '@/lib/mock/data';
+  buildMarketMetadata,
+  createMarketOnArc,
+} from '@/lib/chain/transactions';
+import { useTxFlow } from '@/lib/chain/useTxFlow';
+import { formatUsdc, parseUsdcInput } from '@/lib/format';
 
 import styles from './CreateScreen.module.css';
 
@@ -68,18 +72,74 @@ function formatFeeBps(bps?: number) {
   })}%`;
 }
 
+function buildPreviewMarket({
+  address,
+  config,
+  question,
+  seedRaw,
+}: {
+  address?: Address;
+  config: RegistryConfig | null;
+  question: string;
+  seedRaw: string;
+}): Market {
+  const now = Math.floor(Date.now() / 1_000);
+  return {
+    id: 'preview',
+    creator:
+      address ??
+      ('0x0000000000000000000000000000000000000000' as Address),
+    question: question || 'Your market question will appear here.',
+    phase: 'Opened',
+    conditionId: 'Pending creation',
+    questionId: 'Pending creation',
+    yesTokenId: '0',
+    noTokenId: '0',
+    seedRaw,
+    // A newly opened binary LMSR starts symmetrically. All final identifiers and
+    // parameter snapshots come from the confirmed MarketCreated transaction.
+    yesPriceRaw: '500000',
+    noPriceRaw: '500000',
+    graduationActivityRaw: '0',
+    bookAddress: null,
+    frozenYesPriceRaw: null,
+    handoffSizeRaw: null,
+    tradeCount: 0,
+    volumeRaw: '0',
+    params: {
+      seedFloorRaw: config?.seedFloorRaw ?? '0',
+      seedCapRaw: config?.seedCapRaw ?? '0',
+      fCapRaw: '0',
+      graduationMoneyInThresholdRaw: '1',
+      graduationTollRaw: config?.graduationTollRaw ?? '0',
+      inventoryTargetRaw: '0',
+      protocolFeeBps: config?.protocolFeeBps ?? 0,
+      depthFeeBps: 0,
+      tradingWindowSeconds: 0,
+      minimumTimeOpenSeconds: 0,
+    },
+    createdAt: now,
+    tradingEndsAt: now,
+    graduatedAt: null,
+    resolvedAt: null,
+  };
+}
+
 export function CreateScreen() {
   const [question, setQuestion] = useState('');
-  const [seed, setSeed] = useState('500.00');
+  const [seed, setSeed] = useState('1.00');
   const [category, setCategory] = useState('');
   const [questionTouched, setQuestionTouched] = useState(false);
   const [seedTouched, setSeedTouched] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [createdMarket, setCreatedMarket] = useState<Market | null>(null);
+  const [createdMarketId, setCreatedMarketId] = useState<string | null | undefined>(
+    undefined,
+  );
 
   const queryClient = useQueryClient();
-  const { address, isConnected } = useWalletAccount();
+  const { address, chainId, isConnected } = useWalletAccount();
+  const tx = useTxFlow();
   const {
     connect,
     connectors,
@@ -105,6 +165,7 @@ export function CreateScreen() {
   const showSeedError = (seedTouched || submitted) && seedError;
   const categoryLabel =
     CATEGORIES.find((item) => item.value === category)?.label ?? 'No category';
+  const isWrongNetwork = isConnected && chainId !== arcTestnet.id;
   const canLaunch =
     Boolean(config) &&
     !configError &&
@@ -112,27 +173,17 @@ export function CreateScreen() {
     !seedError &&
     seedRaw !== null &&
     isConnected &&
+    !isWrongNetwork &&
     Boolean(address);
 
   const previewMarket = useMemo(() => {
-    const market = buildMockCreatedMarket({
-      question: question.trim() || 'Your market question will appear here.',
-      seedRaw: seedRaw ?? config?.seedFloorRaw ?? '500000000',
+    return buildPreviewMarket({
+      address: address?.toLowerCase() as Address | undefined,
+      config,
+      question: question.trim(),
+      seedRaw: seedRaw ?? config?.seedFloorRaw ?? '0',
     });
-
-    if (!config) return market;
-
-    return {
-      ...market,
-      params: {
-        ...market.params,
-        seedFloorRaw: config.seedFloorRaw,
-        seedCapRaw: config.seedCapRaw,
-        graduationTollRaw: config.graduationTollRaw,
-        protocolFeeBps: config.protocolFeeBps,
-      },
-    };
-  }, [config, question, seedRaw]);
+  }, [address, config, question, seedRaw]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -143,31 +194,44 @@ export function CreateScreen() {
     if (canLaunch) setConfirmOpen(true);
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     if (!address || !config || !seedRaw || questionError || seedError) return;
 
-    const market = registerMockCreatedMarket({
-      creator: address as Address,
-      question: question.trim(),
-      seedRaw,
-    });
-    setCreatedMarket(market);
+    const metadata = buildMarketMetadata(question);
+    const result = await tx.execute((report) =>
+      createMarketOnArc({
+        account: address,
+        ancillaryData: metadata.ancillaryData,
+        metadataHash: metadata.metadataHash,
+        seedRaw: BigInt(seedRaw),
+        report,
+      }),
+    );
+    if (!result) return;
+
+    clearChainReadCache();
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['markets'] }),
+      queryClient.invalidateQueries({ queryKey: ['activity'] }),
+      queryClient.invalidateQueries({ queryKey: ['config'] }),
+    ]).catch(() => undefined);
+    setCreatedMarketId(result.marketId);
     setSubmitted(false);
-    void queryClient.invalidateQueries({ queryKey: ['markets'] });
-    void queryClient.invalidateQueries({ queryKey: ['activity'] });
+    setConfirmOpen(false);
   }
 
   function resetDraft() {
     setQuestion('');
-    setSeed('500.00');
+    setSeed('1.00');
     setCategory('');
     setQuestionTouched(false);
     setSeedTouched(false);
     setSubmitted(false);
-    setCreatedMarket(null);
+    setCreatedMarketId(undefined);
+    tx.reset();
   }
 
-  if (createdMarket) {
+  if (createdMarketId !== undefined) {
     return (
       <main className={`${styles.page} ${styles.successPage}`}>
         <Card className={styles.successCard}>
@@ -175,27 +239,34 @@ export function CreateScreen() {
             <HatchingChick decorative />
           </div>
           <div className={styles.successCopy}>
-            <Badge tone="yes">Mock launch complete</Badge>
+            <Badge tone="yes">Arc transaction confirmed</Badge>
             <h1>Your market is incubating.</h1>
             <p>
-              The draft has joined this session&apos;s mock hatchery. No approval, USDC transfer,
-              or registry transaction was sent.
+              The registry created this market on Arc and transferred the six-decimal ERC-20 seed
+              into the LMSR.
             </p>
             <div className={styles.successMarket}>
               <span>{categoryLabel}</span>
-              <strong>{createdMarket.question}</strong>
+              <strong>{question.trim()}</strong>
               <NumberDisplay size="body">
-                {formatUsdc(createdMarket.seedRaw)} USDC seeded
+                {formatUsdc(seedRaw ?? '0')} USDC seeded
               </NumberDisplay>
             </div>
             <div className={styles.successActions}>
-              <Link
-                className={buttonClassName('coral', 'large')}
-                href={`/market/${createdMarket.id}`}
-              >
-                View mock market
-                <span aria-hidden="true">→</span>
-              </Link>
+              {createdMarketId ? (
+                <Link
+                  className={buttonClassName('coral', 'large')}
+                  href={`/market/${createdMarketId}`}
+                >
+                  View live market
+                  <span aria-hidden="true">→</span>
+                </Link>
+              ) : (
+                <Link className={buttonClassName('coral', 'large')} href="/">
+                  View live feed
+                  <span aria-hidden="true">→</span>
+                </Link>
+              )}
               <Button onClick={resetDraft} size="large" variant="neutral">
                 Launch another
               </Button>
@@ -216,7 +287,7 @@ export function CreateScreen() {
           <h1>Give a good question somewhere to hatch.</h1>
           <p>
             Set the question and starting liquidity. You&apos;ll review every number before this
-            mock launch enters the incubator.
+            launch is signed and submitted to the live Arc registry.
           </p>
         </div>
         <CrackingEgg progress={34} />
@@ -229,7 +300,7 @@ export function CreateScreen() {
               <span className={styles.step}>Draft</span>
               <h2>Market details</h2>
             </div>
-            <Badge tone="neutral">Mock only</Badge>
+            <Badge tone="yes">Live Arc</Badge>
           </div>
 
           <form noValidate onSubmit={handleSubmit}>
@@ -290,9 +361,9 @@ export function CreateScreen() {
                   ? `${formatUsdc(config.seedFloorRaw, 0)}–${formatUsdc(
                       config.seedCapRaw,
                       0,
-                    )} USDC from the mock registry.`
+                    )} USDC from the live registry.`
                   : configLoading
-                    ? 'Reading the mock registry range…'
+                    ? 'Reading the live registry range…'
                     : 'Registry range unavailable.'}
               </span>
               {showSeedError && (
@@ -331,12 +402,12 @@ export function CreateScreen() {
                 Arc committee · {config?.committee.threshold ?? '—'} of{' '}
                 {config?.committee.signers.length ?? '—'}
               </strong>
-              <small>Fixed by the mock registry configuration.</small>
+              <small>Read from the deployed committee oracle.</small>
             </div>
 
             {configError && (
               <div className={styles.configError} role="alert">
-                <span>The mock registry rules could not load.</span>
+                <span>The live registry rules could not load.</span>
                 <Button onClick={refetchConfig} size="small" variant="ghost">
                   Try again
                 </Button>
@@ -347,9 +418,7 @@ export function CreateScreen() {
               <div className={styles.walletNotice}>
                 <div>
                   <strong>Connect a wallet to launch</strong>
-                  <span>
-                    The address labels the mock creator; confirming still sends no transaction.
-                  </span>
+                  <span>The connected address will create and seed the market on Arc.</span>
                 </div>
                 <Button
                   disabled={!connector || isConnecting}
@@ -370,6 +439,11 @@ export function CreateScreen() {
                 Wallet connection was not completed. You can also use the control in the header.
               </p>
             )}
+            {isWrongNetwork && (
+              <p className={styles.connectError} role="alert">
+                Switch the wallet to Arc Testnet in the header before launching.
+              </p>
+            )}
 
             <Button
               disabled={!canLaunch}
@@ -382,7 +456,7 @@ export function CreateScreen() {
               <span aria-hidden="true">→</span>
             </Button>
             <p className={styles.stubNote}>
-              Preview build: confirmation records only a local mock market for this session.
+              Uses ERC-20 USDC only. The wallet may request a Registry approval before createMarket.
             </p>
           </form>
         </Card>
@@ -396,7 +470,7 @@ export function CreateScreen() {
               </div>
               <span className={styles.liveDot}>
                 <span aria-hidden="true" />
-                Mock config
+                Live config
               </span>
             </div>
             <dl className={styles.rules}>
@@ -454,8 +528,18 @@ export function CreateScreen() {
       </div>
 
       <ConfirmModal
-        confirmLabel="Confirm mock launch"
-        onClose={() => setConfirmOpen(false)}
+        closeDisabled={tx.isBusy}
+        closeOnConfirm={false}
+        confirmDisabled={tx.isBusy || tx.state.phase === 'confirmed'}
+        confirmLabel={
+          tx.state.phase === 'reverted' ? 'Retry live launch' : 'Approve & launch'
+        }
+        kicker="Live Arc transaction"
+        onClose={() => {
+          if (tx.isBusy) return;
+          setConfirmOpen(false);
+          tx.reset();
+        }}
         onConfirm={handleConfirm}
         open={confirmOpen}
         title="Review your market"
@@ -484,8 +568,10 @@ export function CreateScreen() {
           </div>
         </dl>
         <p className={styles.confirmNote}>
-          This is a UI stub. Confirming will not request an approval or send a transaction.
+          Transaction state is re-read immediately before signing. If needed, approve Registry
+          spending first; then sign createMarket. No native value is sent.
         </p>
+        <TxStatus state={tx.state} />
       </ConfirmModal>
     </main>
   );

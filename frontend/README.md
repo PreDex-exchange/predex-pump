@@ -1,6 +1,6 @@
 # predex-pump frontend
 
-Phase C2 is a mock-first Next.js App Router frontend for the predex market incubator.
+Phase C3 is a live Arc Next.js App Router frontend for the predex market incubator.
 
 ## Run
 
@@ -14,21 +14,21 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Routes
 
 - `/` — Feed
-- `/market/1` — Incubating market
-- `/market/3` — Graduated market
-- `/market/6` — Resolved market
-- `/market/7` — Closed-out market
-- `/create` — Validated market launch flow, live card preview, and stubbed confirmation
-- `/portfolio` — Account summary, positions, history, and stubbed resolved-position redemption
+- `/market/:id` — Live market lifecycle, prices, positions, activity, and graduated book
+- `/create` — Validated live Registry create flow
+- `/portfolio` — Direct CTF holdings and live Arc activity (redemption remains deferred)
 
 ## Data and chain boundaries
 
-- UI hooks live in `lib/api/hooks.ts`.
-- `lib/api/client.ts` is the one-file switch point from the current mock client to a future REST client.
-- Mock objects in `lib/mock/data.ts` satisfy the shared DTOs and retain raw 6-decimal values as strings.
-- Arc chain configuration and live addresses come from the shared source.
-- `lib/chain/useQuote.ts` demonstrates the ABI-backed critical-read pattern, but defaults to deterministic mock quotes.
-- Create, LMSR trade, book order, and redeem actions stop at confirmation modals. No on-chain writes are sent in Phase C2.
+- UI hook interfaces remain in `lib/api/hooks.ts`; `lib/chain/client.ts` now implements them with
+  chunked event scans and direct contract/multicall reads.
+- Arc chain configuration, deployment addresses, and `DEPLOY_BLOCK` come from the shared source.
+- Wallet writes are live for Registry create, LMSR buy/sell, and Registry graduation. Every flow
+  refreshes transaction-critical state, obtains ERC-20/ERC-1155 approval when needed, and waits for
+  receipts.
+- All collateral and CTF sizes use six-decimal raw integers. No flow sends native `value`.
+- MiniCLOB place/fill/cancel and committee resolve/redeem/closeout remain preview-only.
+- Set `NEXT_PUBLIC_USE_MOCK_DATA=true` only for local visual development; live Arc is the default.
 
 ## Checks
 

@@ -57,6 +57,22 @@
   text-align: right;
 }
 
+.action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+
+.action > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 @media (max-width: 560px) {
   .card {
     align-items: flex-start;
@@ -74,5 +90,10 @@
 
   .row span {
     text-align: left;
+  }
+
+  .action {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

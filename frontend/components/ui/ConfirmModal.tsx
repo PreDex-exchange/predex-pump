@@ -10,8 +10,12 @@ interface ConfirmModalProps {
   title: string;
   children: ReactNode;
   confirmLabel?: string;
+  confirmDisabled?: boolean;
+  closeDisabled?: boolean;
+  closeOnConfirm?: boolean;
+  kicker?: string;
   onClose: () => void;
-  onConfirm?: () => void;
+  onConfirm?: () => void | Promise<void>;
 }
 
 export function ConfirmModal({
@@ -19,6 +23,10 @@ export function ConfirmModal({
   title,
   children,
   confirmLabel = 'Got it',
+  confirmDisabled = false,
+  closeDisabled = false,
+  closeOnConfirm = true,
+  kicker = 'Preview mode',
   onClose,
   onConfirm,
 }: ConfirmModalProps) {
@@ -26,17 +34,22 @@ export function ConfirmModal({
     if (!open) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape' && !closeDisabled) onClose();
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, open]);
+  }, [closeDisabled, onClose, open]);
 
   if (!open) return null;
 
   return (
-    <div className={styles.backdrop} onMouseDown={onClose}>
+    <div
+      className={styles.backdrop}
+      onMouseDown={() => {
+        if (!closeDisabled) onClose();
+      }}
+    >
       <div
         aria-labelledby="confirm-title"
         aria-modal="true"
@@ -44,17 +57,18 @@ export function ConfirmModal({
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
       >
-        <div className={styles.kicker}>Preview mode</div>
+        <div className={styles.kicker}>{kicker}</div>
         <h2 id="confirm-title">{title}</h2>
         <div className={styles.body}>{children}</div>
         <div className={styles.actions}>
-          <Button onClick={onClose} variant="ghost">
+          <Button disabled={closeDisabled} onClick={onClose} variant="ghost">
             Cancel
           </Button>
           <Button
+            disabled={confirmDisabled}
             onClick={() => {
-              onConfirm?.();
-              onClose();
+              void onConfirm?.();
+              if (closeOnConfirm) onClose();
             }}
             variant="coral"
           >

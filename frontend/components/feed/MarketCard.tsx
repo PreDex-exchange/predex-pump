@@ -13,7 +13,6 @@ import {
   graduationPercent,
   relativeTime,
 } from '@/lib/format';
-import { MOCK_REFERENCE_TS } from '@/lib/mock/data';
 
 import styles from './MarketCard.module.css';
 
@@ -65,7 +64,7 @@ export function MarketCard({
     <article className={styles.card} data-phase={phaseDataValue(market)}>
         <div className={styles.top}>
           <PhaseBadge phase={market.phase} surface="feed" />
-          <span className={styles.time}>{relativeTime(market.createdAt, MOCK_REFERENCE_TS)}</span>
+          <span className={styles.time}>{relativeTime(market.createdAt)}</span>
         </div>
         <h2>{market.question}</h2>
         <div className={`${styles.prices} ${isSettled ? styles.settled : ''}`}>

@@ -113,7 +113,10 @@ export function useConfig() {
 export function usePriceHistory(marketId: string, query: PriceHistoryQuery = {}) {
   const { fromTs, limit } = query;
   const load = useCallback(
-    () => apiClient.getPriceHistory(marketId, { fromTs, limit }),
+    () =>
+      marketId === 'preview'
+        ? Promise.resolve({ marketId, points: [] })
+        : apiClient.getPriceHistory(marketId, { fromTs, limit }),
     [fromTs, limit, marketId],
   );
   return useApiResource<PriceHistoryResponse>(

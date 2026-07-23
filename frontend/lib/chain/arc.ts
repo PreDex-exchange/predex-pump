@@ -11,6 +11,13 @@ export const arcTestnet = defineChain({
       http: [...ARC.rpcUrls],
     },
   },
+  contracts: {
+    // Canonical Multicall3 deployment, verified on Arc testnet. Keeping this in the
+    // frontend chain definition lets viem batch the per-market getter reads.
+    multicall3: {
+      address: '0xcA11bde05977b3631167028862bE2a173976CA11',
+    },
+  },
   testnet: true,
 });
 

@@ -1,13 +1,11 @@
 'use client';
 
-import incubatorLmsrAbiJson from '@predex-pump/shared/abis/IncubatorLMSR.json';
 import { useMemo } from 'react';
-import type { Abi } from 'viem';
+import { maxUint256 } from 'viem';
 import { useReadContract } from 'wagmi';
 
 import { arcAddresses, arcTestnet } from './arc';
-
-const incubatorLmsrAbi = incubatorLmsrAbiJson as Abi;
+import { incubatorLmsrAbi } from './contracts';
 
 export interface QuoteRequest {
   marketId: string;
@@ -19,12 +17,26 @@ export interface QuoteRequest {
   live?: boolean;
 }
 
-export interface MockQuote {
+export interface QuoteView {
   avgPriceRaw: string;
   sharesRaw: string;
   feeRaw: string;
   totalRaw: string;
   maxOrMinRaw: string;
+}
+
+interface BuyQuote {
+  baseCostRaw: bigint;
+  protocolFeeRaw: bigint;
+  depthContributionRaw: bigint;
+  totalCostRaw: bigint;
+}
+
+interface SellQuote {
+  grossBaseProceedsRaw: bigint;
+  protocolFeeRaw: bigint;
+  depthContributionRaw: bigint;
+  netProceedsRaw: bigint;
 }
 
 function safeBigInt(value: string) {
@@ -35,49 +47,22 @@ function safeBigInt(value: string) {
   }
 }
 
-/**
- * Tx-critical read pattern.
- *
- * Phase C1 returns a deterministic UI quote by default. Setting `live: true` enables
- * the ABI-backed `quoteBuy`/`quoteSell` read against Arc. A later write flow should
- * always re-read immediately before wallet confirmation and pass the resulting
- * max-cost/min-proceeds plus a fresh deadline to the contract.
- */
+function addSlippage(raw: bigint, bps: bigint) {
+  return (raw * (10_000n + bps) + 9_999n) / 10_000n;
+}
+
+function subtractSlippage(raw: bigint, bps: bigint) {
+  return (raw * (10_000n - bps)) / 10_000n;
+}
+
 export function useQuote({
   marketId,
   outcome,
   mode,
   amountRaw,
-  priceRaw,
   slippageBps = 50,
-  live = false,
 }: QuoteRequest) {
   const amount = safeBigInt(amountRaw);
-  const mockPrice = safeBigInt(priceRaw ?? (outcome === 'YES' ? '520000' : '480000'));
-  const gross = mode === 'buy' ? amount : (amount * mockPrice) / 1_000_000n;
-  const fee = (gross * 20n) / 10_000n;
-  const shares =
-    mode === 'buy' ? (mockPrice === 0n ? 0n : (amount * 1_000_000n) / mockPrice) : amount;
-  const total = mode === 'buy' ? amount : gross > fee ? gross - fee : 0n;
-  const slippage = (total * BigInt(slippageBps)) / 10_000n;
-  // Far-future read-only deadline for the Phase C1 pattern. A write flow must replace
-  // this with a fresh, short-lived deadline immediately before confirmation.
-  const deadline = 4_102_444_800n;
-
-  const mockQuote = useMemo<MockQuote>(
-    () => ({
-      avgPriceRaw: mockPrice.toString(),
-      sharesRaw: shares.toString(),
-      feeRaw: fee.toString(),
-      totalRaw: total.toString(),
-      maxOrMinRaw:
-        mode === 'buy'
-          ? (total + slippage).toString()
-          : (total > slippage ? total - slippage : 0n).toString(),
-    }),
-    [fee, mockPrice, mode, shares, slippage, total],
-  );
-
   const read = useReadContract({
     address: arcAddresses.lmsr,
     abi: incubatorLmsrAbi,
@@ -86,20 +71,56 @@ export function useQuote({
       safeBigInt(marketId),
       outcome === 'YES' ? 0 : 1,
       amount,
-      safeBigInt(mockQuote.maxOrMinRaw),
-      deadline,
+      mode === 'buy' ? maxUint256 : 0n,
+      maxUint256,
     ],
     chainId: arcTestnet.id,
     query: {
-      enabled: live && amount > 0n,
+      enabled: amount > 0n,
+      refetchInterval: 8_000,
+      staleTime: 4_000,
     },
   });
 
+  const quote = useMemo<QuoteView | null>(() => {
+    if (!read.data || amount === 0n) return null;
+    const slippage = BigInt(slippageBps);
+    if (mode === 'buy') {
+      const value = read.data as BuyQuote;
+      return {
+        avgPriceRaw: ((value.baseCostRaw * 1_000_000n) / amount).toString(),
+        sharesRaw: amount.toString(),
+        feeRaw: (
+          value.protocolFeeRaw + value.depthContributionRaw
+        ).toString(),
+        totalRaw: value.totalCostRaw.toString(),
+        maxOrMinRaw: addSlippage(value.totalCostRaw, slippage).toString(),
+      };
+    }
+    const value = read.data as SellQuote;
+    return {
+      avgPriceRaw: (
+        (value.grossBaseProceedsRaw * 1_000_000n) /
+        amount
+      ).toString(),
+      sharesRaw: amount.toString(),
+      feeRaw: (
+        value.protocolFeeRaw + value.depthContributionRaw
+      ).toString(),
+      totalRaw: value.netProceedsRaw.toString(),
+      maxOrMinRaw: subtractSlippage(
+        value.netProceedsRaw,
+        slippage,
+      ).toString(),
+    };
+  }, [amount, mode, read.data, slippageBps]);
+
   return {
-    quote: mockQuote,
-    source: live ? ('chain' as const) : ('mock' as const),
+    quote,
+    source: 'chain' as const,
     chainQuote: read.data,
-    isLoading: live && read.isLoading,
+    isLoading: read.isLoading && !read.data,
+    isRefreshing: read.isFetching && Boolean(read.data),
     error: read.error,
     refetch: read.refetch,
   };

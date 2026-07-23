@@ -1,14 +1,21 @@
+import type { Market } from '@predex-pump/shared/domain';
 import Link from 'next/link';
 
 import { HatchingChick } from '@/components/mascot/HatchingChick';
 import { buttonClassName } from '@/components/ui/Button';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { formatUsdc } from '@/lib/format';
-import { MOCK_FEED_STATS } from '@/lib/mock/data';
 
 import styles from './Hero.module.css';
 
-export function Hero() {
+export function Hero({ markets }: { markets: Market[] }) {
+  const graduated = markets.filter(
+    (market) => market.phase !== 'Opened',
+  ).length;
+  const volumeRaw = markets
+    .reduce((total, market) => total + BigInt(market.volumeRaw), 0n)
+    .toString();
+
   return (
     <section className={styles.hero}>
       <div className={styles.copy}>
@@ -32,18 +39,18 @@ export function Hero() {
         </div>
         <ul className={styles.stats} aria-label="Platform statistics">
           <li>
-            <NumberDisplay size="hero">{MOCK_FEED_STATS.markets}</NumberDisplay>
+            <NumberDisplay size="hero">{markets.length}</NumberDisplay>
             markets
           </li>
           <li>
             <NumberDisplay size="hero" tone="yes">
-              {MOCK_FEED_STATS.graduated}
+              {graduated}
             </NumberDisplay>
             graduated
           </li>
           <li>
             <NumberDisplay size="hero" tone="no">
-              ${formatUsdc(MOCK_FEED_STATS.volumeRaw, 0)}
+              ${formatUsdc(volumeRaw, 0)}
             </NumberDisplay>
             volume
           </li>
