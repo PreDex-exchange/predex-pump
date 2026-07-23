@@ -1,0 +1,82 @@
+:root {
+  /* Base colors */
+  --bg: #fff7ee;
+  --surface: #ffffff;
+  --ink: #2b2440;
+  --muted: #6e6a7c;
+  --hairline: #efe7da;
+  --outline: #2b2440;
+
+  /* Brand and accents */
+  --brand: #ff6b57;
+  --brand-ink: #c6432f;
+  --reward: #ffc24b;
+
+  /* Market sides */
+  --yes: #17b890;
+  --yes-soft: #e4f6f0;
+  --no: #3e8fe0;
+  --no-soft: #e6f0fb;
+
+  /* Reserved statuses */
+  --success: #17b890;
+  --warning: #ffc24b;
+  --error: #e5484d;
+  --info: #3e8fe0;
+
+  /* Derived colors */
+  --ink-70: rgb(43 36 64 / 70%);
+  --ink-55: rgb(43 36 64 / 55%);
+  --ink-40: rgb(43 36 64 / 40%);
+  --yes-ink: #0f785e;
+  --no-ink: #2869aa;
+  --reward-soft: #fff2d8;
+  --brand-soft: #ffece7;
+  --error-soft: #ffeaeb;
+
+  /* 4px spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Type scale */
+  --text-display: 2.5rem;
+  --text-h1: 2rem;
+  --text-h2: 1.5rem;
+  --text-h3: 1.25rem;
+  --text-body: 1rem;
+  --text-small: 0.875rem;
+  --text-micro: 0.75rem;
+  --text-price: clamp(2rem, 5vw, 2.5rem);
+
+  /* Shape */
+  --radius-input: 12px;
+  --radius-pill: 999px;
+  --radius-card: 20px;
+  --radius-sheet: 24px;
+
+  /* Shadows */
+  --shadow-chunky: 0 4px 0 rgb(43 36 64 / 10%);
+  --shadow-card:
+    0 4px 0 rgb(43 36 64 / 10%),
+    0 18px 32px -20px rgb(43 36 64 / 34%);
+  --shadow-card-hover:
+    0 8px 0 rgb(43 36 64 / 10%),
+    0 24px 38px -20px rgb(43 36 64 / 38%);
+  --shadow-button: 0 4px 0 var(--outline);
+  --shadow-focus: 0 0 0 4px rgb(62 143 224 / 22%);
+
+  /* Motion */
+  --duration-micro: 80ms;
+  --duration-short: 180ms;
+  --duration-medium: 300ms;
+  --ease-enter: ease-out;
+  --ease-exit: ease-in;
+
+  --content-max: 1300px;
+}

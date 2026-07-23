@@ -1,0 +1,43 @@
+.number {
+  font-family: var(--font-nunito), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.small {
+  font-size: var(--text-small);
+}
+
+.body {
+  font-size: var(--text-body);
+}
+
+.price {
+  font-size: var(--text-price);
+  line-height: 1;
+}
+
+.hero {
+  font-size: var(--text-h1);
+  line-height: 1;
+}
+
+.default {
+  color: var(--ink);
+}
+
+.yes {
+  color: var(--yes-ink);
+}
+
+.no {
+  color: var(--no-ink);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--error);
+}

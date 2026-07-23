@@ -1,0 +1,25 @@
+.chick {
+  display: block;
+  width: 100%;
+  height: auto;
+  transform-origin: 50% 90%;
+  animation: idle-bob 3.4s ease-in-out infinite;
+}
+
+.egg {
+  display: block;
+  width: 92px;
+  height: auto;
+  filter: drop-shadow(0 4px 0 rgb(43 36 64 / 10%));
+}
+
+@keyframes idle-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-0.4deg);
+  }
+
+  50% {
+    transform: translateY(-5px) rotate(0.4deg);
+  }
+}

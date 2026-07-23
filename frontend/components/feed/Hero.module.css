@@ -1,0 +1,133 @@
+.hero {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  align-items: center;
+  gap: 40px;
+  width: calc(100% - 32px);
+  max-width: var(--content-max);
+  margin: var(--space-12) auto 0;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 18px;
+  padding: 6px 14px;
+  border: 2px solid var(--yes);
+  border-radius: var(--radius-pill);
+  background: var(--yes-soft);
+  color: var(--yes-ink);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.eyebrow span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--yes);
+}
+
+.copy h1 {
+  margin-bottom: 18px;
+  font-family: var(--font-fredoka), sans-serif;
+  font-size: clamp(2.2rem, 5vw, 3.5rem);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.04;
+  text-wrap: balance;
+}
+
+.subtitle {
+  max-width: 47ch;
+  margin-bottom: 28px;
+  color: var(--ink-70);
+  font-size: 1.12rem;
+  line-height: 1.6;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 30px;
+  margin: var(--space-8) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stats li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--ink-55);
+  font-size: var(--text-small);
+  font-weight: 800;
+}
+
+.stats li:first-child > span {
+  color: var(--brand);
+}
+
+.art {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.art::before {
+  position: absolute;
+  z-index: -1;
+  width: 78%;
+  border-radius: 50%;
+  aspect-ratio: 1;
+  background: radial-gradient(circle, rgb(255 194 75 / 30%), rgb(23 184 144 / 14%) 55%, transparent 72%);
+  content: '';
+  filter: blur(4px);
+}
+
+.art svg {
+  width: 100%;
+  max-width: 440px;
+}
+
+@media (max-width: 860px) {
+  .hero {
+    grid-template-columns: 1fr;
+    gap: var(--space-6);
+  }
+
+  .art {
+    order: -1;
+  }
+
+  .art svg {
+    max-width: 310px;
+  }
+}
+
+@media (max-width: 520px) {
+  .hero {
+    margin-top: var(--space-8);
+  }
+
+  .art svg {
+    max-width: 250px;
+  }
+
+  .copy h1 {
+    font-size: 2.35rem;
+  }
+
+  .actions a {
+    width: 100%;
+  }
+}

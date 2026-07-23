@@ -1,0 +1,58 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 5px 12px;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 2px 0 rgb(43 36 64 / 14%);
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.incubating {
+  background: var(--reward);
+}
+
+.incubatingFeed {
+  border-color: var(--outline);
+  background: var(--yes);
+}
+
+.graduated {
+  background: var(--brand);
+}
+
+.resolved {
+  background: var(--no);
+  color: #fff;
+}
+
+.closed {
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.yes {
+  border-color: var(--yes);
+  background: var(--yes-soft);
+  color: var(--yes-ink);
+}
+
+.no {
+  border-color: var(--no);
+  background: var(--no-soft);
+  color: var(--no-ink);
+}
+
+.neutral {
+  border-color: var(--hairline);
+  background: var(--surface);
+  color: var(--muted);
+}

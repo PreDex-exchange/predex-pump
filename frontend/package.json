@@ -1,0 +1,30 @@
+{
+  "name": "@predex-pump/frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@predex-pump/shared": "file:../shared",
+    "@tanstack/react-query": "^5.90.5",
+    "next": "16.2.11",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "viem": "2.55.8",
+    "wagmi": "3.7.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "16.2.11",
+    "typescript": "6.0.3"
+  },
+  "packageManager": "pnpm@10.29.2"
+}

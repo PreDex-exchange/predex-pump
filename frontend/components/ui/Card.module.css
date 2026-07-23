@@ -1,0 +1,32 @@
+.card {
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.padded {
+  padding: var(--space-6);
+}
+
+.quiet {
+  border-color: var(--hairline);
+  box-shadow: none;
+}
+
+.interactive {
+  transition:
+    transform var(--duration-short) var(--ease-enter),
+    box-shadow var(--duration-short) var(--ease-enter);
+}
+
+.interactive:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+@media (max-width: 560px) {
+  .padded {
+    padding: var(--space-4);
+  }
+}

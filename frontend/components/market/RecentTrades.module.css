@@ -1,0 +1,76 @@
+.title {
+  margin-bottom: 14px;
+  font-family: var(--font-fredoka), sans-serif;
+  font-size: 1.06rem;
+  font-weight: 600;
+}
+
+.trade {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px dashed var(--hairline);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.trade:first-child {
+  border-top: 0;
+}
+
+.tag {
+  min-width: 49px;
+  padding: 2px 8px;
+  border: 2px solid;
+  border-radius: var(--radius-pill);
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.yes {
+  border-color: var(--yes);
+  background: var(--yes-soft);
+  color: var(--yes-ink);
+}
+
+.no {
+  border-color: var(--no);
+  background: var(--no-soft);
+  color: var(--no-ink);
+}
+
+.summary {
+  flex: 1;
+}
+
+.account {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.when {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.empty {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+}
+
+@media (max-width: 560px) {
+  .trade {
+    flex-wrap: wrap;
+  }
+
+  .summary {
+    min-width: calc(100% - 60px);
+  }
+
+  .account {
+    margin-left: 60px;
+  }
+}

@@ -1,0 +1,269 @@
+.hatched {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: 150px;
+  padding: var(--space-4) var(--space-6);
+  margin-bottom: 22px;
+  overflow: hidden;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-card);
+  background: linear-gradient(110deg, var(--reward-soft), var(--yes-soft));
+  box-shadow: var(--shadow-card);
+}
+
+.hatched > svg {
+  width: 142px;
+  flex: none;
+  margin-block: -32px;
+}
+
+.hatched h2 {
+  margin: 1px 0 4px;
+  font-family: var(--font-fredoka), sans-serif;
+  font-size: var(--text-h2);
+  font-weight: 600;
+}
+
+.hatched p {
+  max-width: 62ch;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+}
+
+.kicker,
+.settledKicker {
+  color: var(--brand-ink);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 6px 12px;
+  border: 2px solid var(--yes);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--yes-ink);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.live span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--yes);
+}
+
+.actionSticky {
+  position: sticky;
+  top: 104px;
+}
+
+.actionTitle {
+  margin-bottom: var(--space-4);
+  font-family: var(--font-fredoka), sans-serif;
+  font-size: 1.08rem;
+  font-weight: 600;
+}
+
+.actionSticky > div > div:nth-child(2) {
+  width: 100%;
+}
+
+.outcomeTabs {
+  display: flex;
+  gap: 10px;
+  margin: var(--space-4) 0;
+}
+
+.outcomeButton {
+  display: flex;
+  flex: 1;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 2px solid;
+  border-radius: var(--radius-input);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: var(--text-small);
+  font-weight: 800;
+}
+
+.outcomeButton.yes {
+  border-color: var(--yes);
+  color: var(--yes-ink);
+}
+
+.outcomeButton.no {
+  border-color: var(--no);
+  color: var(--no-ink);
+}
+
+.outcomeButton.yes.outcomeSelected {
+  background: var(--yes-soft);
+}
+
+.outcomeButton.no.outcomeSelected {
+  background: var(--no-soft);
+}
+
+.bookField {
+  display: block;
+  margin-bottom: var(--space-3);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.bookField > span {
+  display: flex;
+  align-items: center;
+  margin-top: 5px;
+  padding: 9px 12px;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-input);
+}
+
+.bookField input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.bookField b {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.orderTotal {
+  display: flex;
+  justify-content: space-between;
+  padding: 11px 0;
+  margin-bottom: var(--space-3);
+  border-top: 2px dashed var(--hairline);
+  font-size: var(--text-small);
+}
+
+.orderTotal span {
+  color: var(--muted);
+}
+
+.note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.resolvedCard {
+  padding: var(--space-8);
+  background: linear-gradient(145deg, var(--surface), var(--no-soft));
+}
+
+.resolvedHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: var(--space-3) 0 var(--space-6);
+}
+
+.resolvedCard h2 {
+  max-width: 22ch;
+  margin-bottom: var(--space-3);
+  font-family: var(--font-fredoka), sans-serif;
+  font-size: var(--text-h1);
+  font-weight: 600;
+  line-height: 1.18;
+  text-wrap: balance;
+}
+
+.resolvedCard > p {
+  max-width: 62ch;
+  color: var(--muted);
+}
+
+.invalid {
+  padding: 6px 12px;
+  border: 2px solid var(--warning);
+  border-radius: var(--radius-pill);
+  background: var(--reward-soft);
+  font-weight: 800;
+}
+
+.resolutionMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  margin-top: var(--space-6);
+  border-top: 2px dashed rgb(43 36 64 / 14%);
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.resolutionMeta code {
+  color: var(--ink);
+}
+
+.redeemRows {
+  padding: 12px 14px;
+  margin-bottom: var(--space-4);
+  border: 2px solid var(--hairline);
+  border-radius: var(--radius-input);
+  background: #fbf7f0;
+}
+
+.redeemRows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 5px 0;
+  font-size: var(--text-small);
+}
+
+.redeemRows span {
+  color: var(--muted);
+}
+
+@media (max-width: 980px) {
+  .actionSticky {
+    position: static;
+  }
+}
+
+@media (max-width: 620px) {
+  .hatched {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: var(--space-4);
+  }
+
+  .hatched > svg {
+    width: 100px;
+  }
+
+  .live {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+  }
+
+  .resolvedCard {
+    padding: var(--space-6) var(--space-4);
+  }
+}

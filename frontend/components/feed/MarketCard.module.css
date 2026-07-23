@@ -1,0 +1,297 @@
+.link {
+  display: block;
+  min-width: 0;
+}
+
+.card {
+  --accent: var(--yes);
+  position: relative;
+  height: 100%;
+  min-height: 352px;
+  padding: 22px 20px 18px;
+  overflow: hidden;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition:
+    transform var(--duration-short) var(--ease-enter),
+    box-shadow var(--duration-short) var(--ease-enter);
+}
+
+.card::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 8px;
+  background: var(--accent);
+  content: '';
+}
+
+.card[data-phase='graduated'] {
+  --accent: var(--brand);
+}
+
+.card[data-phase='resolved'] {
+  --accent: var(--no);
+}
+
+.card[data-phase='closed'] {
+  --accent: var(--muted);
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.time {
+  color: var(--ink-40);
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.card h2 {
+  min-height: 2.6em;
+  margin: 14px 0 16px;
+  font-family: var(--font-nunito), system-ui, sans-serif;
+  font-size: 1.08rem;
+  font-weight: 800;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.prices {
+  display: flex;
+  gap: 10px;
+}
+
+.price {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 13px;
+  border: 2px solid;
+  border-radius: var(--radius-input);
+}
+
+.yes {
+  border-color: var(--yes);
+  background: var(--yes-soft);
+}
+
+.no {
+  border-color: var(--no);
+  background: var(--no-soft);
+}
+
+.priceLabel {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.yes .priceLabel {
+  color: var(--yes-ink);
+}
+
+.no .priceLabel {
+  color: var(--no-ink);
+}
+
+.priceValue {
+  font-size: 1.5rem;
+}
+
+.settled .price:not(.winner) {
+  border-color: var(--hairline);
+  background: #f4f1f6;
+  opacity: 0.6;
+}
+
+.settled .winner {
+  color: #fff;
+}
+
+.settled .winner.yes {
+  border-color: var(--yes-ink);
+  background: var(--yes);
+}
+
+.settled .winner.no {
+  border-color: var(--no-ink);
+  background: var(--no);
+}
+
+.settled .winner .priceLabel,
+.settled .winner .priceValue {
+  color: #fff;
+}
+
+.winner::after {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 2px solid var(--outline);
+  border-radius: 50%;
+  background: inherit;
+  box-shadow: 0 2px 0 rgb(43 36 64 / 20%);
+  color: #fff;
+  content: '✓';
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 38px;
+  margin: 16px 0 2px;
+  overflow: visible;
+}
+
+.sparkline polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-top: 15px;
+  padding-top: 14px;
+  border-top: 2px dashed rgb(43 36 64 / 14%);
+}
+
+.volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-70);
+  font-size: 0.82rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.volume > span:first-child {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--outline);
+  border-radius: 50%;
+  background: var(--reward);
+}
+
+.graduation {
+  display: flex;
+  flex: 1 1 175px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.graduationLabel {
+  color: var(--ink-40);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.bar {
+  position: relative;
+  flex: 1;
+  max-width: 105px;
+  height: 14px;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: #f3ece1;
+}
+
+.bar > span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  min-width: 15px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--reward), var(--yes));
+}
+
+.bar svg {
+  position: absolute;
+  top: 50%;
+  right: -7px;
+  width: 18px;
+  transform: translateY(-50%);
+  filter: none;
+}
+
+.percent {
+  min-width: 34px;
+  text-align: right;
+}
+
+.bookLive,
+.resolvedTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 5px 11px;
+  border: 2px solid;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.bookLive {
+  border-color: var(--yes);
+  background: var(--yes-soft);
+  color: var(--yes-ink);
+}
+
+.bookLive span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--yes);
+}
+
+.resolvedTag {
+  border-color: var(--no);
+  background: var(--no-soft);
+  color: var(--no-ink);
+}
+
+@media (max-width: 420px) {
+  .card {
+    min-height: 0;
+  }
+
+  .card h2 {
+    min-height: 0;
+  }
+}

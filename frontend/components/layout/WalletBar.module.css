@@ -1,0 +1,126 @@
+.group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.network {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 10px;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-chunky);
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--yes);
+  animation: pulse 2.2s infinite;
+}
+
+.wrong {
+  border-color: var(--error);
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.wrong .dot {
+  background: var(--error);
+  animation: none;
+}
+
+.wallet {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 6px 8px 6px 14px;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: 0 4px 0 var(--outline);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 800;
+  transition:
+    transform var(--duration-micro),
+    box-shadow var(--duration-micro);
+  white-space: nowrap;
+}
+
+.wallet:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 var(--outline);
+}
+
+.wallet:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 var(--outline);
+}
+
+.wallet:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.address {
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.balance {
+  padding: 3px 9px;
+  border: 1.5px solid var(--yes);
+  border-radius: var(--radius-pill);
+  background: var(--yes-soft);
+  color: var(--yes-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.switch {
+  border-color: var(--error);
+  box-shadow: 0 4px 0 var(--error);
+  color: var(--error);
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(23 184 144 / 55%);
+  }
+
+  70% {
+    box-shadow: 0 0 0 7px rgb(23 184 144 / 0%);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgb(23 184 144 / 0%);
+  }
+}
+
+@media (max-width: 620px) {
+  .group {
+    width: 100%;
+  }
+
+  .wallet {
+    min-width: 0;
+    flex: 1;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 390px) {
+  .balance {
+    display: none;
+  }
+}

@@ -1,0 +1,119 @@
+.discovery {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: calc(100% - 32px);
+  max-width: var(--content-max);
+  margin: 44px auto 0;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.filters button,
+.sort {
+  min-height: 42px;
+  padding: 9px 17px;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-chunky);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: var(--text-small);
+  font-weight: 800;
+  transition:
+    transform var(--duration-micro),
+    box-shadow var(--duration-micro);
+}
+
+.filters button:hover,
+.sort:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 rgb(43 36 64 / 12%);
+}
+
+.filters button:active,
+.sort:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 rgb(43 36 64 / 12%);
+}
+
+.filters button.active {
+  background: var(--brand);
+  box-shadow: 0 4px 0 var(--outline);
+  color: #fff;
+}
+
+.sort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.sort select {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-weight: inherit;
+  appearance: none;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+  gap: 26px;
+  width: calc(100% - 32px);
+  max-width: var(--content-max);
+  margin: 22px auto 90px;
+}
+
+.marketArea {
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+@media (max-width: 1040px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .discovery {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .filters button {
+    padding-inline: 10px;
+  }
+
+  .sort {
+    justify-content: space-between;
+    margin-left: 0;
+  }
+}
