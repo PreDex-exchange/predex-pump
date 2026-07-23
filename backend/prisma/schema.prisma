@@ -1,0 +1,182 @@
+// predex-pump backend — Postgres schema (non-custodial read model over Arc).
+// Raw on-chain uints are stored as exact decimal STRINGS (Prisma has no uint256).
+// Unix-second timestamps are Int; `indexedAt` is row bookkeeping.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Market {
+  id                     String   @id // marketId (decimal string)
+  creator                String
+  question               String
+  phase                  String // Opened | Graduated | ResolvedObserved | ClosedOut
+  conditionId            String   @unique
+  questionId             String
+  yesTokenId             String   @unique
+  noTokenId              String   @unique
+  seedRaw                String
+  yesPriceRaw            String
+  noPriceRaw             String
+  graduationActivityRaw  String   @default("0")
+  bookAddress            String?
+  frozenYesPriceRaw      String?
+  handoffSizeRaw         String?
+  tradeCount             Int      @default(0)
+  volumeRaw              String   @default("0")
+  // params snapshot (immutable per market)
+  seedFloorRaw           String
+  seedCapRaw             String
+  fCapRaw                String
+  graduationThresholdRaw String
+  graduationTollRaw      String
+  inventoryTargetRaw     String
+  protocolFeeBps         Int
+  depthFeeBps            Int
+  tradingWindowSeconds   Int
+  minimumTimeOpenSeconds Int
+  createdAt              Int
+  tradingEndsAt          Int
+  graduatedAt            Int?
+  resolvedAt             Int?
+  indexedAt              DateTime @default(now())
+
+  trades     Trade[]
+  orders     Order[]
+  fills      Fill[]
+  positions  Position[]
+  resolution Resolution?
+
+  @@index([phase])
+  @@index([creator])
+  @@index([createdAt])
+}
+
+model Trade {
+  id       String @id // `${txHash}:${logIndex}`
+  marketId String
+  venue    String // LMSR | BOOK
+  account  String
+  outcome  String // YES | NO
+  side     String // BID | ASK
+  sizeRaw  String
+  priceRaw String
+  costRaw  String
+  feeRaw   String
+  txHash   String
+  logIndex Int
+  ts       Int
+  market   Market @relation(fields: [marketId], references: [id])
+
+  @@index([marketId, ts])
+  @@index([account, ts])
+}
+
+model Order {
+  orderId     String  @id // MiniCLOB uint256 order id
+  marketId    String
+  conditionId String
+  tokenId     String
+  outcome     String // YES | NO
+  maker       String
+  side        String // BID | ASK
+  priceRaw    String
+  sizeRaw     String
+  filledRaw   String  @default("0")
+  remainingRaw String
+  open        Boolean @default(true)
+  isSeed      Boolean @default(false)
+  createdAt   Int
+  updatedAt   Int
+  market      Market  @relation(fields: [marketId], references: [id])
+  fills       Fill[]
+
+  @@index([marketId, outcome, open])
+  @@index([tokenId, open])
+  @@index([maker])
+}
+
+model Fill {
+  id             String  @id // `${txHash}:${logIndex}`
+  orderId        String
+  marketId       String
+  taker          String
+  maker          String
+  outcome        String
+  fillSizeRaw    String
+  paymentRaw     String
+  filledAfterRaw String
+  openAfter      Boolean
+  txHash         String
+  logIndex       Int
+  ts             Int
+  order          Order   @relation(fields: [orderId], references: [orderId])
+  market         Market  @relation(fields: [marketId], references: [id])
+
+  @@index([marketId, ts])
+  @@index([taker, ts])
+}
+
+model Position {
+  account          String
+  marketId         String
+  outcome          String // YES | NO
+  qtyRaw           String @default("0")
+  costBasisRaw     String @default("0") // ESTIMATED
+  realizedPnlRaw   String @default("0")
+  unrealizedPnlRaw String @default("0")
+  updatedAt        Int
+  market           Market @relation(fields: [marketId], references: [id])
+
+  @@id([account, marketId, outcome])
+  @@index([account])
+}
+
+model Resolution {
+  marketId    String  @id
+  conditionId String
+  outcome     String // YES | NO | INVALID
+  payoutYes   Int
+  payoutNo    Int
+  denominator Int
+  resolvedAt  Int
+  observedAt  Int?
+  market      Market  @relation(fields: [marketId], references: [id])
+}
+
+model Account {
+  address        String @id
+  firstSeenAt    Int
+  marketsCreated Int    @default(0)
+  tradeCount     Int    @default(0)
+}
+
+model ActivityEvent {
+  id       String  @id // `${txHash}:${logIndex}`
+  type     String
+  marketId String?
+  account  String?
+  outcome  String?
+  side     String?
+  amountRaw String?
+  priceRaw String?
+  txHash   String
+  ts       Int
+
+  @@index([ts])
+  @@index([marketId, ts])
+  @@index([account, ts])
+}
+
+// Singleton: indexer replay cursor + chain-lag reporting.
+model IndexerState {
+  id        Int      @id @default(1)
+  lastBlock Int
+  headBlock Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
