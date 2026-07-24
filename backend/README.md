@@ -1,8 +1,9 @@
-# predex-pump backend indexer
+# predex-pump backend
 
 Non-custodial Arc read model: a TypeScript/viem indexer reads the deployed incubator's logs and
-writes a replay-safe Postgres projection through Prisma. This phase intentionally has no REST or
-WebSocket server.
+writes a replay-safe Postgres projection through Prisma. A Fastify serving layer exposes the
+shared REST contract and a subscription WebSocket from the same process. It contains no wallet,
+private-key, or transaction-signing code.
 
 ## Run locally
 
@@ -13,10 +14,18 @@ pnpm install
 cp .env.example .env
 pnpm db:up
 pnpm db:migrate
-pnpm indexer
+pnpm start
 ```
 
-Useful one-shot and inspection commands:
+`pnpm start` runs the indexer, REST API, and WebSocket together:
+
+- REST: `http://localhost:3001`
+- WebSocket: `ws://localhost:3001/ws`
+- Override the listener with `API_HOST` / `API_PORT`.
+- CORS is open for local frontend development.
+
+`pnpm dev` runs the same entrypoint under the `tsx` file watcher. Useful one-shot and inspection
+commands:
 
 ```sh
 pnpm indexer:once
@@ -29,6 +38,38 @@ pnpm test
 `ARC.rpcUrls[0]`; the other RPC URL from `shared` is an automatic read-only failover. The indexer
 starts at shared `DEPLOY_BLOCK` (`53405070`), resumes at `IndexerState.lastBlock + 1`, and follows
 the head. `SIGINT`/`SIGTERM` stop it after the current transactional range.
+
+`pnpm test` uses `TEST_DATABASE_URL`, defaulting to the isolated `contract_test` schema in the
+local Compose Postgres. It applies the Prisma schema before running the REST contract and
+ingest-to-WebSocket tests; it does not truncate the development schema.
+
+## Serving contract
+
+Every route is declared in `shared/src/rest.ts`:
+
+| Method | Path | Response |
+| --- | --- | --- |
+| GET | `/markets` | Keyset-paginated markets (`phase`, `creator`, `limit`, `cursor`) |
+| GET | `/markets/:id` | Market, recent trades, resolution |
+| GET | `/markets/:id/book` | YES and NO books |
+| GET | `/markets/:id/prices` | Indexed price curve (`fromTs`, `limit`) |
+| GET | `/orderbook/:tokenId` | One token's aggregated ladder and open orders |
+| GET | `/accounts/:addr` | Account, positions, recent trades, estimated PnL |
+| GET | `/activity` | Keyset-paginated activity (`marketId`, `account`, `limit`, `cursor`) |
+| GET | `/config` | Registry params, addresses, trading-window bounds, committee |
+| GET | `/health` | Indexed block, Arc head, and lag |
+
+WebSocket clients send:
+
+```json
+{"type":"subscribe","channels":["markets","market:1","book:1","account:0x...","activity"]}
+```
+
+`unsubscribe` uses the same envelope. The server acknowledges the current channel set, then sends
+the `ServerMessage` envelope from `shared/src/ws.ts` for `market.created`, `market.updated`,
+`market.graduated`, `price.tick`, `trade`, order placement/fill/cancellation, `book.seeded`,
+`position.updated`, `resolution`, and activity events. Indexer notifications are published only
+after their database transaction commits.
 
 For an explicit idempotency audit, replay an already indexed range without rewinding the durable
 cursor:
@@ -92,9 +133,20 @@ backend/
 │   │   ├── handlers.ts
 │   │   ├── runner.ts
 │   │   └── types.ts
+│   ├── api/
+│   │   ├── dto.ts
+│   │   ├── input.ts
+│   │   ├── queries.ts
+│   │   ├── routes.ts
+│   │   ├── server.ts
+│   │   └── websocket.ts
+│   ├── events/
+│   │   ├── bus.ts
+│   │   └── projector.ts
 │   ├── config.ts
 │   ├── db.ts
 │   ├── indexer.ts
+│   ├── start.ts
 │   └── summary.ts
 ├── tests/
 ├── docker-compose.yml

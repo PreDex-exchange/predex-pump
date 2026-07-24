@@ -10,6 +10,8 @@ import type {
   OrderBook,
   Pnl,
   Position,
+  PricePoint,
+  RegistryConfig,
   Resolution,
   Trade,
 } from './domain';
@@ -48,6 +50,19 @@ export interface MarketBookResponse {
 // GET /orderbook/:tokenId  → single-token ladder (plan-specified path)
 export type OrderBookResponse = OrderBook;
 
+// GET /markets/:id/prices?fromTs=&limit=  → price curve, derived from the TradeState stream
+export interface PriceHistoryQuery {
+  fromTs?: number;
+  limit?: number; // default 500, max 2000
+}
+export interface PriceHistoryResponse {
+  marketId: string;
+  points: PricePoint[];
+}
+
+// GET /config  → registry-level params + committee set (needed before a market exists)
+export type ConfigResponse = RegistryConfig;
+
 // GET /accounts/:addr
 export interface AccountResponse {
   account: Account;
@@ -79,8 +94,10 @@ export const routes = {
   markets: () => `/markets`,
   market: (id: string) => `/markets/${id}`,
   marketBook: (id: string) => `/markets/${id}/book`,
+  marketPrices: (id: string) => `/markets/${id}/prices`,
   orderbook: (tokenId: string) => `/orderbook/${tokenId}`,
   account: (addr: string) => `/accounts/${addr}`,
   activity: () => `/activity`,
+  config: () => `/config`,
   health: () => `/health`,
 } as const;

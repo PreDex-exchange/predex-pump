@@ -231,7 +231,9 @@ export interface RegistryConfig {
   seedCapRaw: Raw;
   graduationTollRaw: Raw;
   protocolFeeBps: number;
+  /** Optional only so older serialized config payloads remain assignable. Live Arc reads always set it. */
   minTradingWindowSeconds?: number;
+  /** Optional only so older serialized config payloads remain assignable. Live Arc reads always set it. */
   maxTradingWindowSeconds?: number;
   committee: CommitteeInfo;
 }

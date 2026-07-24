@@ -22,6 +22,8 @@ export interface RuntimeConfig {
   deployBlock: number;
   blockChunk: number;
   pollMs: number;
+  apiHost: string;
+  apiPort: number;
 }
 
 export function loadRuntimeConfig(): RuntimeConfig {
@@ -29,11 +31,18 @@ export function loadRuntimeConfig(): RuntimeConfig {
   // Prisma reads this variable itself, so also set the local default in-process.
   process.env.DATABASE_URL ??= databaseUrl;
 
+  const apiPort = positiveInteger('API_PORT', 3_001);
+  if (apiPort > 65_535) {
+    throw new Error(`API_PORT must be at most 65535, received ${apiPort}`);
+  }
+
   return {
     databaseUrl,
     rpcUrl: process.env.ARC_RPC_URL ?? ARC.rpcUrls[0],
     deployBlock: DEPLOY_BLOCK,
     blockChunk: positiveInteger('INDEXER_BLOCK_CHUNK', 2_000),
     pollMs: positiveInteger('INDEXER_POLL_MS', 2_000),
+    apiHost: process.env.API_HOST ?? '0.0.0.0',
+    apiPort,
   };
 }

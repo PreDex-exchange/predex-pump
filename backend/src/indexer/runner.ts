@@ -33,6 +33,7 @@ const arc = defineChain({
 export interface IndexerOptions {
   once: boolean;
   replayFrom?: number;
+  onEvents?: (events: readonly DecodedEvent[]) => Promise<void>;
 }
 
 export interface RangeResult {
@@ -134,21 +135,20 @@ async function decodedEventsForRange(
   });
 }
 
-async function ingestRange(
+export async function applyDecodedEvents(
   prisma: PrismaClient,
-  client: PublicClient,
-  fromBlock: number,
+  events: readonly DecodedEvent[],
   toBlock: number,
   headBlock: number,
-): Promise<RangeResult> {
-  const events = await decodedEventsForRange(client, fromBlock, toBlock);
-  const newlyAppliedLogs = await prisma.$transaction(
+  onEvents?: (events: readonly DecodedEvent[]) => Promise<void>,
+): Promise<number> {
+  const newlyAppliedEvents = await prisma.$transaction(
     async (tx) => {
       await preloadMarketIdentities(tx, events);
-      let applied = 0;
+      const applied: DecodedEvent[] = [];
       for (const event of events) {
         if (await handleDecodedEvent(tx, event)) {
-          applied += 1;
+          applied.push(event);
         }
       }
 
@@ -168,6 +168,30 @@ async function ingestRange(
       timeout: 120_000,
       isolationLevel: 'Serializable',
     },
+  );
+
+  if (newlyAppliedEvents.length > 0 && onEvents !== undefined) {
+    // The WebSocket projection observes only committed database state.
+    await onEvents(newlyAppliedEvents);
+  }
+  return newlyAppliedEvents.length;
+}
+
+async function ingestRange(
+  prisma: PrismaClient,
+  client: PublicClient,
+  fromBlock: number,
+  toBlock: number,
+  headBlock: number,
+  onEvents?: (events: readonly DecodedEvent[]) => Promise<void>,
+): Promise<RangeResult> {
+  const events = await decodedEventsForRange(client, fromBlock, toBlock);
+  const newlyAppliedLogs = await applyDecodedEvents(
+    prisma,
+    events,
+    toBlock,
+    headBlock,
+    onEvents,
   );
 
   return {
@@ -241,7 +265,14 @@ export async function runIndexer(
 
       while (nextBlock <= head && !stopping) {
         const toBlock = Math.min(head, nextBlock + config.blockChunk - 1);
-        const result = await ingestRange(prisma, client, nextBlock, toBlock, head);
+        const result = await ingestRange(
+          prisma,
+          client,
+          nextBlock,
+          toBlock,
+          head,
+          options.onEvents,
+        );
         console.info(
           `[indexer] ${result.fromBlock}-${result.toBlock} ` +
             `decoded=${result.decodedLogs} applied=${result.newlyAppliedLogs}`,
