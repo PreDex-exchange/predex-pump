@@ -89,6 +89,8 @@ interface MarketParamsStruct {
   inventoryHighRaw: bigint;
   freeCollateralBufferRaw: bigint;
   tradingWindow: number;
+  minTradingWindowSeconds: number;
+  maxTradingWindowSeconds: number;
   minimumTimeOpen: number;
   protocolFeeBps: number;
   depthFeeBps: number;
@@ -1193,6 +1195,8 @@ async function readConfig(): Promise<RegistryConfig> {
     seedCapRaw: params.seedCapRaw.toString(),
     graduationTollRaw: params.graduationTollRaw.toString(),
     protocolFeeBps: params.protocolFeeBps,
+    minTradingWindowSeconds: params.minTradingWindowSeconds,
+    maxTradingWindowSeconds: params.maxTradingWindowSeconds,
     committee: {
       oracle: normalizeAddress(ADDRESSES.oracle),
       signers,

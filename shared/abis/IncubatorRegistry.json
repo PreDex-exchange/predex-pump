@@ -118,6 +118,16 @@
             "internalType": "uint32"
           },
           {
+            "name": "minTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
             "name": "minimumTimeOpen",
             "type": "uint32",
             "internalType": "uint32"
@@ -211,6 +221,11 @@
       },
       {
         "name": "maxOpeningFeeRaw",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tradingWindowSeconds",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -322,6 +337,16 @@
           },
           {
             "name": "tradingWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxTradingWindowSeconds",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -666,6 +691,16 @@
             "internalType": "uint32"
           },
           {
+            "name": "minTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
             "name": "minimumTimeOpen",
             "type": "uint32",
             "internalType": "uint32"
@@ -889,6 +924,16 @@
             "internalType": "uint32"
           },
           {
+            "name": "minTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
             "name": "minimumTimeOpen",
             "type": "uint32",
             "internalType": "uint32"
@@ -1030,6 +1075,16 @@
           },
           {
             "name": "tradingWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxTradingWindowSeconds",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -1364,6 +1419,12 @@
       },
       {
         "name": "minimumTimeOpen",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "tradingWindowSeconds",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

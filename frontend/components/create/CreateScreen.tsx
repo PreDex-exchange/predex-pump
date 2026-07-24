@@ -4,7 +4,7 @@ import type { Address, Market, RegistryConfig } from '@predex-pump/shared/domain
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
 import { MarketCard } from '@/components/feed/MarketCard';
@@ -26,7 +26,7 @@ import {
   createMarketOnArc,
 } from '@/lib/chain/transactions';
 import { useTxFlow } from '@/lib/chain/useTxFlow';
-import { formatUsdc, parseUsdcInput } from '@/lib/format';
+import { formatDateTime, formatUsdc, parseUsdcInput } from '@/lib/format';
 
 import styles from './CreateScreen.module.css';
 
@@ -40,6 +40,20 @@ const CATEGORIES = [
   { value: 'culture', label: 'Culture' },
   { value: 'climate', label: 'Climate' },
 ] as const;
+const DEFAULT_TRADING_WINDOW_SECONDS = 86_400n;
+const TRADING_WINDOW_PRESETS = [
+  { label: '1 hour', seconds: 3_600n },
+  { label: '6 hours', seconds: 21_600n },
+  { label: '1 day', seconds: DEFAULT_TRADING_WINDOW_SECONDS },
+  { label: '3 days', seconds: 259_200n },
+  { label: '1 week', seconds: 604_800n },
+] as const;
+const CUSTOM_WINDOW_UNITS = [
+  { label: 'minutes', seconds: 60n, value: 'minutes' },
+  { label: 'hours', seconds: 3_600n, value: 'hours' },
+  { label: 'days', seconds: 86_400n, value: 'days' },
+] as const;
+type CustomWindowUnit = (typeof CUSTOM_WINDOW_UNITS)[number]['value'];
 
 function scheduleMarketDiscoveryRefresh(queryClient: QueryClient) {
   const refetch = () => {
@@ -84,6 +98,71 @@ function validateSeed(
   return null;
 }
 
+function registryWindowBound(value?: number) {
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0
+    ? BigInt(value)
+    : null;
+}
+
+function parseCustomTradingWindow(value: string, unit: CustomWindowUnit) {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return null;
+
+  const amount = BigInt(normalized);
+  if (amount <= 0n) return null;
+  const unitSeconds =
+    CUSTOM_WINDOW_UNITS.find((candidate) => candidate.value === unit)?.seconds ??
+    1n;
+  return amount * unitSeconds;
+}
+
+function formatDurationSeconds(seconds: bigint) {
+  const units = [
+    { label: 'day', seconds: 86_400n },
+    { label: 'hour', seconds: 3_600n },
+    { label: 'minute', seconds: 60n },
+  ] as const;
+
+  for (const unit of units) {
+    if (seconds >= unit.seconds && seconds % unit.seconds === 0n) {
+      const amount = seconds / unit.seconds;
+      return `${amount} ${unit.label}${amount === 1n ? '' : 's'}`;
+    }
+  }
+
+  return `${seconds} second${seconds === 1n ? '' : 's'}`;
+}
+
+function validateTradingWindow({
+  choice,
+  customValue,
+  seconds,
+  minimum,
+  maximum,
+}: {
+  choice: string;
+  customValue: string;
+  seconds: bigint | null;
+  minimum: bigint | null;
+  maximum: bigint | null;
+}) {
+  if (choice === 'custom' && !customValue.trim()) {
+    return 'Enter a custom resolution window.';
+  }
+  if (seconds === null) {
+    return 'Use a positive whole number of minutes, hours, or days.';
+  }
+  if (minimum === null || maximum === null) {
+    return 'The live registry trading-window bounds are unavailable.';
+  }
+  if (seconds < minimum || seconds > maximum) {
+    return `Choose a window between ${formatDurationSeconds(
+      minimum,
+    )} and ${formatDurationSeconds(maximum)}.`;
+  }
+  return null;
+}
+
 function formatFeeBps(bps?: number) {
   if (bps === undefined) return '—';
   return `${(bps / 100).toLocaleString('en-US', {
@@ -97,11 +176,13 @@ function buildPreviewMarket({
   config,
   question,
   seedRaw,
+  tradingWindowSeconds,
 }: {
   address?: Address;
   config: RegistryConfig | null;
   question: string;
   seedRaw: string;
+  tradingWindowSeconds: number;
 }): Market {
   const now = Math.floor(Date.now() / 1_000);
   return {
@@ -135,11 +216,11 @@ function buildPreviewMarket({
       inventoryTargetRaw: '0',
       protocolFeeBps: config?.protocolFeeBps ?? 0,
       depthFeeBps: 0,
-      tradingWindowSeconds: 0,
+      tradingWindowSeconds,
       minimumTimeOpenSeconds: 0,
     },
     createdAt: now,
-    tradingEndsAt: now,
+    tradingEndsAt: now + tradingWindowSeconds,
     graduatedAt: null,
     resolvedAt: null,
   };
@@ -148,9 +229,16 @@ function buildPreviewMarket({
 export function CreateScreen() {
   const [question, setQuestion] = useState('');
   const [seed, setSeed] = useState('1.00');
+  const [tradingWindowChoice, setTradingWindowChoice] = useState(
+    DEFAULT_TRADING_WINDOW_SECONDS.toString(),
+  );
+  const [customWindow, setCustomWindow] = useState('24');
+  const [customWindowUnit, setCustomWindowUnit] =
+    useState<CustomWindowUnit>('hours');
   const [category, setCategory] = useState('');
   const [questionTouched, setQuestionTouched] = useState(false);
   const [seedTouched, setSeedTouched] = useState(false);
+  const [windowTouched, setWindowTouched] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [createdMarketId, setCreatedMarketId] = useState<string | null | undefined>(
@@ -175,6 +263,16 @@ export function CreateScreen() {
   } = useConfig();
 
   const seedRaw = parseUsdcInput(seed);
+  const minTradingWindowSeconds = registryWindowBound(
+    config?.minTradingWindowSeconds,
+  );
+  const maxTradingWindowSeconds = registryWindowBound(
+    config?.maxTradingWindowSeconds,
+  );
+  const tradingWindowSeconds =
+    tradingWindowChoice === 'custom'
+      ? parseCustomTradingWindow(customWindow, customWindowUnit)
+      : BigInt(tradingWindowChoice);
   const questionError = validateQuestion(question);
   const seedError = validateSeed(
     seed,
@@ -182,8 +280,16 @@ export function CreateScreen() {
     config?.seedFloorRaw,
     config?.seedCapRaw,
   );
+  const windowError = validateTradingWindow({
+    choice: tradingWindowChoice,
+    customValue: customWindow,
+    seconds: tradingWindowSeconds,
+    minimum: minTradingWindowSeconds,
+    maximum: maxTradingWindowSeconds,
+  });
   const showQuestionError = (questionTouched || submitted) && questionError;
   const showSeedError = (seedTouched || submitted) && seedError;
+  const showWindowError = (windowTouched || submitted) && windowError;
   const categoryLabel =
     CATEGORIES.find((item) => item.value === category)?.label ?? 'No category';
   const isWrongNetwork = isConnected && chainId !== arcTestnet.id;
@@ -192,31 +298,48 @@ export function CreateScreen() {
     !configError &&
     !questionError &&
     !seedError &&
+    !windowError &&
     seedRaw !== null &&
+    tradingWindowSeconds !== null &&
     isConnected &&
     !isWrongNetwork &&
     Boolean(address);
+  const canPreviewTradingWindow =
+    tradingWindowSeconds !== null &&
+    tradingWindowSeconds <= BigInt(Number.MAX_SAFE_INTEGER);
 
-  const previewMarket = useMemo(() => {
-    return buildPreviewMarket({
-      address: address?.toLowerCase() as Address | undefined,
-      config,
-      question: question.trim(),
-      seedRaw: seedRaw ?? config?.seedFloorRaw ?? '0',
-    });
-  }, [address, config, question, seedRaw]);
+  const previewMarket = buildPreviewMarket({
+    address: address?.toLowerCase() as Address | undefined,
+    config,
+    question: question.trim(),
+    seedRaw: seedRaw ?? config?.seedFloorRaw ?? '0',
+    tradingWindowSeconds: canPreviewTradingWindow
+      ? Number(tradingWindowSeconds)
+      : 0,
+  });
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitted(true);
     setQuestionTouched(true);
     setSeedTouched(true);
+    setWindowTouched(true);
 
     if (canLaunch) setConfirmOpen(true);
   }
 
   async function handleConfirm() {
-    if (!address || !config || !seedRaw || questionError || seedError) return;
+    if (
+      !address ||
+      !config ||
+      !seedRaw ||
+      tradingWindowSeconds === null ||
+      questionError ||
+      seedError ||
+      windowError
+    ) {
+      return;
+    }
 
     const metadata = buildMarketMetadata(question);
     const result = await tx.execute((report) =>
@@ -225,6 +348,7 @@ export function CreateScreen() {
         ancillaryData: metadata.ancillaryData,
         metadataHash: metadata.metadataHash,
         seedRaw: BigInt(seedRaw),
+        tradingWindowSeconds,
         report,
       }),
     );
@@ -248,9 +372,13 @@ export function CreateScreen() {
   function resetDraft() {
     setQuestion('');
     setSeed('1.00');
+    setTradingWindowChoice(DEFAULT_TRADING_WINDOW_SECONDS.toString());
+    setCustomWindow('24');
+    setCustomWindowUnit('hours');
     setCategory('');
     setQuestionTouched(false);
     setSeedTouched(false);
+    setWindowTouched(false);
     setSubmitted(false);
     setCreatedMarketId(undefined);
     tx.reset();
@@ -311,8 +439,8 @@ export function CreateScreen() {
           <span className={styles.kicker}>Create a market</span>
           <h1>Give a good question somewhere to hatch.</h1>
           <p>
-            Set the question and starting liquidity. You&apos;ll review every number before this
-            launch is signed and submitted to the live Arc registry.
+            Set the question, starting liquidity, and resolution window. You&apos;ll review every
+            number before this launch is signed and submitted to the live Arc registry.
           </p>
         </div>
         <CrackingEgg progress={34} />
@@ -359,6 +487,105 @@ export function CreateScreen() {
                 </span>
               )}
             </label>
+
+            <fieldset className={`${styles.field} ${styles.durationField}`}>
+              <legend className={styles.labelRow}>
+                <span>Resolves in</span>
+                <span>Required</span>
+              </legend>
+              <div className={styles.durationOptions}>
+                {TRADING_WINDOW_PRESETS.map((preset) => {
+                  const value = preset.seconds.toString();
+                  const disabled =
+                    minTradingWindowSeconds !== null &&
+                    maxTradingWindowSeconds !== null &&
+                    (preset.seconds < minTradingWindowSeconds ||
+                      preset.seconds > maxTradingWindowSeconds);
+
+                  return (
+                    <label className={styles.durationOption} key={value}>
+                      <input
+                        aria-describedby="window-help window-error"
+                        checked={tradingWindowChoice === value}
+                        disabled={disabled}
+                        name="trading-window"
+                        onChange={() => {
+                          setTradingWindowChoice(value);
+                          setWindowTouched(true);
+                        }}
+                        type="radio"
+                        value={value}
+                      />
+                      <span>{preset.label}</span>
+                    </label>
+                  );
+                })}
+                <label className={styles.durationOption}>
+                  <input
+                    aria-describedby="window-help window-error"
+                    checked={tradingWindowChoice === 'custom'}
+                    name="trading-window"
+                    onChange={() => {
+                      setTradingWindowChoice('custom');
+                      setWindowTouched(true);
+                    }}
+                    type="radio"
+                    value="custom"
+                  />
+                  <span>Custom</span>
+                </label>
+              </div>
+              {tradingWindowChoice === 'custom' && (
+                <span
+                  className={`${styles.customDuration} ${
+                    showWindowError ? styles.invalid : ''
+                  }`}
+                >
+                  <input
+                    aria-describedby="window-help window-error"
+                    aria-invalid={Boolean(showWindowError)}
+                    autoComplete="off"
+                    inputMode="numeric"
+                    min="1"
+                    onBlur={() => setWindowTouched(true)}
+                    onChange={(event) => setCustomWindow(event.target.value)}
+                    step="1"
+                    type="number"
+                    value={customWindow}
+                  />
+                  <select
+                    aria-label="Custom resolution window unit"
+                    onChange={(event) =>
+                      setCustomWindowUnit(event.target.value as CustomWindowUnit)
+                    }
+                    value={customWindowUnit}
+                  >
+                    {CUSTOM_WINDOW_UNITS.map((unit) => (
+                      <option key={unit.value} value={unit.value}>
+                        {unit.label}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              )}
+              <span className={styles.help} id="window-help">
+                {minTradingWindowSeconds !== null &&
+                maxTradingWindowSeconds !== null
+                  ? `${formatDurationSeconds(
+                      minTradingWindowSeconds,
+                    )}–${formatDurationSeconds(
+                      maxTradingWindowSeconds,
+                    )} from the live registry.`
+                  : configLoading
+                    ? 'Reading the live registry window bounds…'
+                    : 'Registry window bounds unavailable.'}
+              </span>
+              {showWindowError && (
+                <span className={styles.error} id="window-error" role="alert">
+                  {windowError}
+                </span>
+              )}
+            </fieldset>
 
             <label className={styles.field}>
               <span className={styles.labelRow}>
@@ -547,6 +774,19 @@ export function CreateScreen() {
                 </NumberDisplay>
               </div>
             </div>
+            <div className={styles.previewResolution}>
+              <span>Resolves</span>
+              <strong>
+                {canPreviewTradingWindow
+                  ? formatDateTime(previewMarket.tradingEndsAt)
+                  : 'Choose a valid window'}
+              </strong>
+              {canPreviewTradingWindow && (
+                <small>
+                  {formatDurationSeconds(tradingWindowSeconds)} after creation
+                </small>
+              )}
+            </div>
             <MarketCard href={null} market={previewMarket} />
           </section>
         </div>
@@ -579,6 +819,22 @@ export function CreateScreen() {
             <dt>Seed</dt>
             <dd className="numeric">
               {seedRaw ? formatUsdc(seedRaw) : '—'} USDC
+            </dd>
+          </div>
+          <div>
+            <dt>Resolves in</dt>
+            <dd className="numeric">
+              {tradingWindowSeconds !== null
+                ? formatDurationSeconds(tradingWindowSeconds)
+                : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt>Estimated end</dt>
+            <dd className="numeric">
+              {!windowError && tradingWindowSeconds !== null
+                ? formatDateTime(previewMarket.tradingEndsAt)
+                : '—'}
             </dd>
           </div>
           <div>

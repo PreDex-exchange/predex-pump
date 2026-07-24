@@ -54,6 +54,8 @@ interface MarketParamsStruct {
   seedFloorRaw: bigint;
   seedCapRaw: bigint;
   graduationTollRaw: bigint;
+  minTradingWindowSeconds: number;
+  maxTradingWindowSeconds: number;
 }
 
 interface BuyQuote {
@@ -75,6 +77,7 @@ interface CreateMarketInput {
   ancillaryData: Hex;
   metadataHash: Hex;
   seedRaw: bigint;
+  tradingWindowSeconds: bigint;
   report: TxReporter;
 }
 
@@ -251,9 +254,13 @@ export async function createMarketOnArc({
   ancillaryData,
   metadataHash,
   seedRaw,
+  tradingWindowSeconds,
   report,
 }: CreateMarketInput) {
   if (seedRaw <= 0n) throw new Error('The seed must be greater than zero.');
+  if (tradingWindowSeconds <= 0n) {
+    throw new Error('The trading window must be greater than zero.');
+  }
   assertConnectedAccount(account);
   report({
     phase: 'checking',
@@ -271,6 +278,14 @@ export async function createMarketOnArc({
     if (seedRaw < params.seedFloorRaw || seedRaw > params.seedCapRaw) {
       throw new Error(
         `The live registry seed range changed. Required raw range: ${params.seedFloorRaw}–${params.seedCapRaw}.`,
+      );
+    }
+    if (
+      tradingWindowSeconds < BigInt(params.minTradingWindowSeconds) ||
+      tradingWindowSeconds > BigInt(params.maxTradingWindowSeconds)
+    ) {
+      throw new Error(
+        `The live registry trading-window range changed. Required seconds range: ${params.minTradingWindowSeconds}–${params.maxTradingWindowSeconds}.`,
       );
     }
     const requiredRaw = seedRaw + params.openingFeeRaw;
@@ -304,7 +319,13 @@ export async function createMarketOnArc({
       address: ADDRESSES.registry,
       abi: incubatorRegistryAbi,
       functionName: 'createMarket',
-      args: [ancillaryData, seedRaw, params.openingFeeRaw, metadataHash],
+      args: [
+        ancillaryData,
+        seedRaw,
+        params.openingFeeRaw,
+        tradingWindowSeconds,
+        metadataHash,
+      ],
     },
     {
       awaiting: 'Confirm createMarket in the injected wallet.',

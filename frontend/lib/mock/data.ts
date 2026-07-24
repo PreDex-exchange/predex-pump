@@ -800,6 +800,8 @@ export const MOCK_CONFIG: ConfigResponse = {
   seedCapRaw: DEFAULT_PARAMS.seedCapRaw,
   graduationTollRaw: DEFAULT_PARAMS.graduationTollRaw,
   protocolFeeBps: DEFAULT_PARAMS.protocolFeeBps,
+  minTradingWindowSeconds: 300,
+  maxTradingWindowSeconds: 7_776_000,
   committee: {
     oracle: ADDRESSES.oracle,
     signers: [CREATORS.one, CREATORS.two, CREATORS.three],
