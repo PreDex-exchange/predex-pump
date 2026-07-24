@@ -1,7 +1,6 @@
 import websocket from '@fastify/websocket';
 import type {
   Channel,
-  ServerMessage,
   WsInbound,
   WsOutbound,
 } from '@predex-pump/shared';
@@ -77,15 +76,10 @@ export async function registerWebsocketRoute(
   app.get('/ws', { websocket: true }, (socket) => {
     const channels = new Set<Channel>();
     const unsubscribeByChannel = new Map<Channel, () => void>();
-    const deliver = ({ event, ts }: PublishedServerEvent): void => {
-      const message: ServerMessage = {
-        type: 'update',
-        channel: event.channel,
-        event: event.event,
-        data: event.data,
-        ts,
-      };
-      send(socket, message);
+    const deliver = ({ serializedMessage }: PublishedServerEvent): void => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(serializedMessage);
+      }
     };
 
     socket.on('message', (raw) => {

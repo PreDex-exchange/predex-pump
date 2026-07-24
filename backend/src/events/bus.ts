@@ -3,6 +3,7 @@ import type { Channel, ServerEvent } from '@predex-pump/shared';
 export interface PublishedServerEvent {
   event: ServerEvent;
   ts: number;
+  serializedMessage: string;
 }
 
 type EventListener = (published: PublishedServerEvent) => void;
@@ -33,9 +34,19 @@ export class ServerEventBus {
   }
 
   publish(event: ServerEvent, ts: number): void {
-    const published = { event, ts };
     const listeners = this.#listenersByChannel.get(event.channel);
     if (listeners === undefined) return;
+    const published = {
+      event,
+      ts,
+      serializedMessage: JSON.stringify({
+        type: 'update',
+        channel: event.channel,
+        event: event.event,
+        data: event.data,
+        ts,
+      }),
+    };
     for (const listener of listeners) {
       try {
         listener(published);
