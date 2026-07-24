@@ -20,6 +20,9 @@
     "indexer": "tsx src/indexer.ts",
     "indexer:once": "tsx src/indexer.ts --once",
     "summary": "tsx src/summary.ts",
+    "bench:seed": "tsx bench/seed.ts",
+    "bench:run": "tsx bench/run.ts",
+    "bench:teardown": "tsx bench/seed.ts --teardown",
     "postinstall": "prisma generate"
   },
   "dependencies": {
