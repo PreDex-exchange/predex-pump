@@ -39,9 +39,34 @@ pnpm test
 starts at shared `DEPLOY_BLOCK` (`53405070`), resumes at `IndexerState.lastBlock + 1`, and follows
 the head. `SIGINT`/`SIGTERM` stop it after the current transactional range.
 
+The Prisma pool is explicitly bounded by `DATABASE_POOL_SIZE` (default 32) with
+`DATABASE_POOL_TIMEOUT_SECONDS` (default 10). Existing `connection_limit` / `pool_timeout` URL
+parameters take precedence.
+
 `pnpm test` uses `TEST_DATABASE_URL`, defaulting to the isolated `contract_test` schema in the
 local Compose Postgres. It applies the Prisma schema before running the REST contract and
 ingest-to-WebSocket tests; it does not truncate the development schema.
+
+## Performance benchmark
+
+The benchmark always requires a schema named `perf_bench` or prefixed `perf_bench_`; it refuses
+development/production schemas. The default deterministic synthetic scale is 2,000 markets,
+20,000 accounts, 200,000 trades, 100,000 positions, 50,000 orders, 25,000 fills, 200,000 price
+points, and 1,000,000 activity events.
+
+```sh
+pnpm bench:seed
+pnpm bench:run --label=after --output=bench/results/after.json
+pnpm bench:teardown
+```
+
+`bench:seed` drops and recreates only the selected benchmark schema. Every count can be overridden
+with flags such as `--markets=200` or `--activity-events=100000`; `BENCH_DATABASE_URL` selects a
+different safely named benchmark schema. `bench:run` measures every REST route at fixed
+concurrency, emits JSON `EXPLAIN (ANALYZE, BUFFERS)` plans, runs a transactional synthetic
+TradeState ingest fixture, and measures channel-selective fan-out with many real WebSocket
+connections. Its explicit targets are REST p95 below 100 ms, at least 20 indexed price ticks/sec
+when each tick re-marks 100 positions, and WebSocket publish p95 below 250 µs with 500 clients.
 
 ## Serving contract
 

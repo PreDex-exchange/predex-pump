@@ -75,9 +75,10 @@ model Market {
   resolution  Resolution?
   closeout    Closeout?
 
-  @@index([phase])
-  @@index([creator])
-  @@index([createdAt])
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([phase, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([creator, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([phase, creator, createdAt(sort: Desc), id(sort: Desc)])
   @@index([questionId])
 }
 
@@ -105,8 +106,8 @@ model Trade {
   market               Market @relation(fields: [marketId], references: [id])
 
   @@unique([txHash, logIndex])
-  @@index([marketId, ts])
-  @@index([account, ts])
+  @@index([marketId, blockNumber(sort: Desc), logIndex(sort: Desc)])
+  @@index([account, blockNumber(sort: Desc), logIndex(sort: Desc)])
 }
 
 model PricePoint {
@@ -124,7 +125,7 @@ model PricePoint {
   market      Market @relation(fields: [marketId], references: [id])
 
   @@unique([txHash, logIndex])
-  @@index([marketId, ts])
+  @@index([marketId, ts, blockNumber, logIndex])
 }
 
 model Order {
@@ -150,7 +151,7 @@ model Order {
   market       Market  @relation(fields: [marketId], references: [id])
   fills        Fill[]
 
-  @@index([marketId, outcome, open])
+  @@index([marketId, open])
   @@index([tokenId, open])
   @@index([maker])
 }
@@ -191,7 +192,8 @@ model Position {
   market             Market  @relation(fields: [marketId], references: [id])
 
   @@id([account, marketId, outcome])
-  @@index([account])
+  @@index([account, updatedAt(sort: Desc), marketId(sort: Desc), outcome])
+  @@index([marketId, outcome, account])
 }
 
 model Resolution {
@@ -228,10 +230,12 @@ model Closeout {
 }
 
 model Account {
-  address        String @id
-  firstSeenAt    Int
-  marketsCreated Int    @default(0)
-  tradeCount     Int    @default(0)
+  address          String @id
+  firstSeenAt      Int
+  marketsCreated   Int    @default(0)
+  tradeCount       Int    @default(0)
+  realizedPnlRaw   String @default("0")
+  unrealizedPnlRaw String @default("0")
 }
 
 // One row for every decoded contract event. This is also the atomic per-log
@@ -254,9 +258,10 @@ model ActivityEvent {
   data        Json
 
   @@unique([txHash, logIndex])
-  @@index([ts])
-  @@index([marketId, ts])
-  @@index([account, ts])
+  @@index([blockNumber(sort: Desc), logIndex(sort: Desc)])
+  @@index([marketId, blockNumber(sort: Desc), logIndex(sort: Desc)])
+  @@index([account, blockNumber(sort: Desc), logIndex(sort: Desc)])
+  @@index([marketId, account, blockNumber(sort: Desc), logIndex(sort: Desc)])
 }
 
 model RegistryConfig {

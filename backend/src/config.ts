@@ -24,6 +24,8 @@ export interface RuntimeConfig {
   pollMs: number;
   apiHost: string;
   apiPort: number;
+  databasePoolSize: number;
+  databasePoolTimeoutSeconds: number;
 }
 
 export function loadRuntimeConfig(): RuntimeConfig {
@@ -44,5 +46,7 @@ export function loadRuntimeConfig(): RuntimeConfig {
     pollMs: positiveInteger('INDEXER_POLL_MS', 2_000),
     apiHost: process.env.API_HOST ?? '0.0.0.0',
     apiPort,
+    databasePoolSize: positiveInteger('DATABASE_POOL_SIZE', 32),
+    databasePoolTimeoutSeconds: positiveInteger('DATABASE_POOL_TIMEOUT_SECONDS', 10),
   };
 }

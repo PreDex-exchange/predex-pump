@@ -75,6 +75,8 @@ export async function seedContractData(): Promise<void> {
         firstSeenAt: 1_700_000_010,
         marketsCreated: 0,
         tradeCount: 1,
+        realizedPnlRaw: '100000',
+        unrealizedPnlRaw: '500000',
       },
       {
         address: OTHER_CREATOR,
@@ -235,7 +237,7 @@ export async function seedContractData(): Promise<void> {
       costBasisRaw: '700000',
       costBasisEstimated: true,
       realizedPnlRaw: '100000',
-      unrealizedPnlRaw: '0',
+      unrealizedPnlRaw: '500000',
       updatedAt: 1_700_000_020,
     },
   });

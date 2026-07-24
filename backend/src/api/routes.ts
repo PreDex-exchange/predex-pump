@@ -24,8 +24,8 @@ import {
   parsePositiveInteger,
 } from './input.js';
 import {
+  createCachedConfigReader,
   getAccount,
-  getConfig,
   getHealth,
   getMarketBook,
   getMarketDetail,
@@ -74,6 +74,8 @@ export function registerRestRoutes(
   app: FastifyInstance,
   prisma: PrismaClient,
 ): void {
+  const readConfig = createCachedConfigReader(prisma);
+
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof HttpError) {
       void reply.code(error.statusCode).send({ error: error.message });
@@ -169,7 +171,7 @@ export function registerRestRoutes(
   );
 
   app.get(routes.config(), async (): Promise<ConfigResponse> => {
-    const response = await getConfig(prisma);
+    const response = await readConfig();
     if (response === null) {
       throw new HttpError(503, 'Registry config has not been indexed yet');
     }

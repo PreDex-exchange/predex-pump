@@ -2,6 +2,11 @@ import { spawnSync } from 'node:child_process';
 
 import { PrismaClient } from '@prisma/client';
 
+import {
+  DEFAULT_DATABASE_POOL_OPTIONS,
+  withDatabasePool,
+} from '../src/database-url.js';
+
 export const DEFAULT_BENCH_DATABASE_URL =
   'postgresql://predex:predex@localhost:5432/predex_pump?schema=perf_bench';
 
@@ -102,7 +107,9 @@ export function assertSafeBenchDatabase(databaseUrl: string): void {
 
 export function makePrisma(databaseUrl: string): PrismaClient {
   assertSafeBenchDatabase(databaseUrl);
-  return new PrismaClient({ datasourceUrl: databaseUrl });
+  return new PrismaClient({
+    datasourceUrl: withDatabasePool(databaseUrl, DEFAULT_DATABASE_POOL_OPTIONS),
+  });
 }
 
 export async function dropBenchSchema(databaseUrl: string): Promise<void> {

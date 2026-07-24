@@ -11,18 +11,18 @@ import type {
   OrderBookResponse,
   PriceHistoryResponse,
 } from '@predex-pump/shared';
-import type {
-  Fill as DbFill,
-  Market as DbMarket,
-  Order as DbOrder,
+import {
   Prisma,
-  PrismaClient,
-  Trade as DbTrade,
+  type Fill as DbFill,
+  type Market as DbMarket,
+  type PrismaClient,
 } from '@prisma/client';
 
 import {
   ACTIVITY_TYPES,
-  sumPnl,
+  type ActivityDtoRow,
+  type MarketDtoRow,
+  type OrderDtoRow,
   toAccountDto,
   toActivityDto,
   toFillDto,
@@ -38,6 +38,111 @@ import {
   encodeActivityCursor,
   encodeMarketCursor,
 } from './input.js';
+
+const MARKET_SELECT = {
+  id: true,
+  creator: true,
+  question: true,
+  phase: true,
+  conditionId: true,
+  questionId: true,
+  yesTokenId: true,
+  noTokenId: true,
+  seedRaw: true,
+  yesPriceRaw: true,
+  noPriceRaw: true,
+  graduationActivityRaw: true,
+  bookAddress: true,
+  frozenYesPriceRaw: true,
+  handoffSizeRaw: true,
+  tradeCount: true,
+  volumeRaw: true,
+  seedFloorRaw: true,
+  seedCapRaw: true,
+  fCapRaw: true,
+  graduationThresholdRaw: true,
+  graduationTollRaw: true,
+  inventoryTargetRaw: true,
+  protocolFeeBps: true,
+  depthFeeBps: true,
+  tradingWindowSeconds: true,
+  minimumTimeOpenSeconds: true,
+  createdAt: true,
+  tradingEndsAt: true,
+  graduatedAt: true,
+  resolvedAt: true,
+} as const satisfies Prisma.MarketSelect;
+
+const TRADE_SELECT = {
+  id: true,
+  marketId: true,
+  venue: true,
+  account: true,
+  outcome: true,
+  side: true,
+  sizeRaw: true,
+  priceRaw: true,
+  costRaw: true,
+  feeRaw: true,
+  txHash: true,
+  logIndex: true,
+  ts: true,
+} as const satisfies Prisma.TradeSelect;
+
+const ORDER_SELECT = {
+  orderId: true,
+  marketId: true,
+  conditionId: true,
+  tokenId: true,
+  outcome: true,
+  maker: true,
+  side: true,
+  priceRaw: true,
+  sizeRaw: true,
+  filledRaw: true,
+  remainingRaw: true,
+  open: true,
+  isSeed: true,
+  createdAt: true,
+  updatedAt: true,
+} as const satisfies Prisma.OrderSelect;
+
+const POSITION_SELECT = {
+  account: true,
+  marketId: true,
+  outcome: true,
+  qtyRaw: true,
+  costBasisRaw: true,
+  realizedPnlRaw: true,
+  unrealizedPnlRaw: true,
+  updatedAt: true,
+} as const satisfies Prisma.PositionSelect;
+
+const ACTIVITY_SELECT = {
+  id: true,
+  type: true,
+  marketId: true,
+  account: true,
+  outcome: true,
+  side: true,
+  amountRaw: true,
+  priceRaw: true,
+  txHash: true,
+  blockNumber: true,
+  logIndex: true,
+  ts: true,
+} as const satisfies Prisma.ActivityEventSelect;
+
+function selectedColumns(select: Readonly<Record<string, true>>): Prisma.Sql {
+  return Prisma.raw(
+    Object.keys(select)
+      .map((column) => `"${column}"`)
+      .join(', '),
+  );
+}
+
+const MARKET_COLUMNS_SQL = selectedColumns(MARKET_SELECT);
+const ACTIVITY_COLUMNS_SQL = selectedColumns(ACTIVITY_SELECT);
 
 export interface ListMarketsInput {
   phase?: string;
@@ -63,11 +168,32 @@ export async function listMarkets(
           ],
         }),
   };
-  const rows = await prisma.market.findMany({
-    where,
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: input.limit + 1,
-  });
+  const rows: MarketDtoRow[] =
+    cursor === undefined
+      ? await prisma.market.findMany({
+          where,
+          select: MARKET_SELECT,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: input.limit + 1,
+        })
+      : await prisma.$queryRaw<MarketDtoRow[]>(Prisma.sql`
+          SELECT ${MARKET_COLUMNS_SQL}
+          FROM "Market"
+          WHERE
+            ${
+              input.phase === undefined
+                ? Prisma.sql`TRUE`
+                : Prisma.sql`"phase" = ${input.phase}`
+            }
+            AND ${
+              input.creator === undefined
+                ? Prisma.sql`TRUE`
+                : Prisma.sql`"creator" = ${input.creator}`
+            }
+            AND ("createdAt", "id") < (${cursor.createdAt}, ${cursor.id})
+          ORDER BY "createdAt" DESC, "id" DESC
+          LIMIT ${input.limit + 1}
+        `);
   const hasNextPage = rows.length > input.limit;
   const pageRows = rows.slice(0, input.limit);
   const last = pageRows.at(-1);
@@ -84,7 +210,10 @@ export async function getMarketDto(
   prisma: PrismaClient,
   marketId: string,
 ): Promise<ReturnType<typeof toMarketDto> | null> {
-  const market = await prisma.market.findUnique({ where: { id: marketId } });
+  const market = await prisma.market.findUnique({
+    where: { id: marketId },
+    select: MARKET_SELECT,
+  });
   return market === null ? null : toMarketDto(market);
 }
 
@@ -92,16 +221,19 @@ export async function getMarketDetail(
   prisma: PrismaClient,
   marketId: string,
 ): Promise<MarketDetailResponse | null> {
-  const market = await prisma.market.findUnique({
-    where: { id: marketId },
-    include: { resolution: true },
-  });
+  const [market, trades] = await Promise.all([
+    prisma.market.findUnique({
+      where: { id: marketId },
+      select: { ...MARKET_SELECT, resolution: true },
+    }),
+    prisma.trade.findMany({
+      where: { marketId },
+      select: TRADE_SELECT,
+      orderBy: [{ blockNumber: 'desc' }, { logIndex: 'desc' }],
+      take: 50,
+    }),
+  ]);
   if (market === null) return null;
-  const trades = await prisma.trade.findMany({
-    where: { marketId },
-    orderBy: [{ blockNumber: 'desc' }, { logIndex: 'desc' }],
-    take: 50,
-  });
   return {
     market: toMarketDto(market),
     recentTrades: trades.map(toTradeDto),
@@ -115,7 +247,7 @@ function compareRaw(left: string, right: string): number {
   return leftRaw < rightRaw ? -1 : leftRaw > rightRaw ? 1 : 0;
 }
 
-function buildLevels(orders: readonly DbOrder[], side: 'BID' | 'ASK') {
+function buildLevels(orders: readonly OrderDtoRow[], side: 'BID' | 'ASK') {
   const sizeByPrice = new Map<string, { sizeRaw: bigint; orderCount: number }>();
   for (const order of orders) {
     if (order.side !== side) continue;
@@ -143,7 +275,7 @@ function buildOrderBook(
   marketId: string,
   outcome: 'YES' | 'NO',
   tokenId: string,
-  rows: readonly DbOrder[],
+  rows: readonly OrderDtoRow[],
 ): OrderBook {
   const orders = rows
     .filter((row) => row.tokenId === tokenId)
@@ -169,11 +301,17 @@ export async function getMarketBook(
   prisma: PrismaClient,
   marketId: string,
 ): Promise<MarketBookResponse | null> {
-  const market = await prisma.market.findUnique({ where: { id: marketId } });
+  const [market, orders] = await Promise.all([
+    prisma.market.findUnique({
+      where: { id: marketId },
+      select: { id: true, yesTokenId: true, noTokenId: true },
+    }),
+    prisma.order.findMany({
+      where: { marketId, open: true },
+      select: ORDER_SELECT,
+    }),
+  ]);
   if (market === null) return null;
-  const orders = await prisma.order.findMany({
-    where: { marketId, open: true },
-  });
   return {
     marketId,
     yes: buildOrderBook(marketId, 'YES', market.yesTokenId ?? '', orders),
@@ -187,11 +325,13 @@ export async function getOrderBook(
 ): Promise<OrderBookResponse | null> {
   const market = await prisma.market.findFirst({
     where: { OR: [{ yesTokenId: tokenId }, { noTokenId: tokenId }] },
+    select: { id: true, yesTokenId: true, noTokenId: true },
   });
   if (market === null) return null;
   const outcome = market.yesTokenId === tokenId ? 'YES' : 'NO';
   const orders = await prisma.order.findMany({
     where: { tokenId, open: true },
+    select: ORDER_SELECT,
   });
   return buildOrderBook(market.id, outcome, tokenId, orders);
 }
@@ -212,6 +352,7 @@ export async function getPriceHistory(
       marketId,
       ...(fromTs === undefined ? {} : { ts: { gte: fromTs } }),
     },
+    select: { ts: true, yesPriceRaw: true, noPriceRaw: true },
     orderBy: [{ ts: 'asc' }, { blockNumber: 'asc' }, { logIndex: 'asc' }],
     take: limit,
   });
@@ -230,14 +371,25 @@ export async function getAccount(
   accountAddress: string,
 ): Promise<AccountResponse> {
   const [account, positionRows, tradeRows] = await Promise.all([
-    prisma.account.findUnique({ where: { address: accountAddress } }),
+    prisma.account.findUnique({
+      where: { address: accountAddress },
+      select: {
+        address: true,
+        firstSeenAt: true,
+        marketsCreated: true,
+        tradeCount: true,
+        realizedPnlRaw: true,
+        unrealizedPnlRaw: true,
+      },
+    }),
     prisma.position.findMany({
       where: { account: accountAddress },
-      include: { market: { include: { resolution: true } } },
+      select: POSITION_SELECT,
       orderBy: [{ updatedAt: 'desc' }, { marketId: 'desc' }, { outcome: 'asc' }],
     }),
     prisma.trade.findMany({
       where: { account: accountAddress },
+      select: TRADE_SELECT,
       orderBy: [{ blockNumber: 'desc' }, { logIndex: 'desc' }],
       take: 50,
     }),
@@ -255,7 +407,13 @@ export async function getAccount(
         : toAccountDto(account),
     positions,
     recentTrades: tradeRows.map(toTradeDto),
-    pnl: sumPnl(positions),
+    pnl:
+      account === null
+        ? { realizedRaw: '0', unrealizedRaw: '0' }
+        : {
+            realizedRaw: account.realizedPnlRaw,
+            unrealizedRaw: account.unrealizedPnlRaw,
+          },
   };
 }
 
@@ -288,11 +446,34 @@ export async function listActivity(
           ],
         }),
   };
-  const rows = await prisma.activityEvent.findMany({
-    where,
-    orderBy: [{ blockNumber: 'desc' }, { logIndex: 'desc' }],
-    take: input.limit + 1,
-  });
+  const rows: ActivityDtoRow[] =
+    cursor === undefined
+      ? await prisma.activityEvent.findMany({
+          where,
+          select: ACTIVITY_SELECT,
+          orderBy: [{ blockNumber: 'desc' }, { logIndex: 'desc' }],
+          take: input.limit + 1,
+        })
+      : await prisma.$queryRaw<ActivityDtoRow[]>(Prisma.sql`
+          SELECT ${ACTIVITY_COLUMNS_SQL}
+          FROM "ActivityEvent"
+          WHERE
+            "type" IN (${Prisma.join([...ACTIVITY_TYPES])})
+            AND ${
+              input.marketId === undefined
+                ? Prisma.sql`TRUE`
+                : Prisma.sql`"marketId" = ${input.marketId}`
+            }
+            AND ${
+              input.account === undefined
+                ? Prisma.sql`TRUE`
+                : Prisma.sql`"account" = ${input.account}`
+            }
+            AND ("blockNumber", "logIndex") <
+              (${cursor.blockNumber}, ${cursor.logIndex})
+          ORDER BY "blockNumber" DESC, "logIndex" DESC
+          LIMIT ${input.limit + 1}
+        `);
   const hasNextPage = rows.length > input.limit;
   const pageRows = rows.slice(0, input.limit);
   const items = pageRows.flatMap((row) => {
@@ -317,6 +498,7 @@ export async function getConfig(prisma: PrismaClient): Promise<ConfigResponse | 
     prisma.registryConfig.findUnique({ where: { id: 1 } }),
     prisma.committeeMember.findMany({
       where: { active: true },
+      select: { address: true },
       orderBy: { address: 'asc' },
     }),
   ]);
@@ -346,6 +528,32 @@ export async function getConfig(prisma: PrismaClient): Promise<ConfigResponse | 
   };
 }
 
+export function createCachedConfigReader(
+  prisma: PrismaClient,
+  ttlMs = 5_000,
+): () => Promise<ConfigResponse | null> {
+  let cached: { value: ConfigResponse; expiresAt: number } | null = null;
+  let pending: Promise<ConfigResponse | null> | null = null;
+
+  return async () => {
+    const now = Date.now();
+    if (cached !== null && cached.expiresAt > now) return cached.value;
+    if (pending !== null) return pending;
+
+    pending = getConfig(prisma)
+      .then((value) => {
+        if (value !== null) {
+          cached = { value, expiresAt: Date.now() + ttlMs };
+        }
+        return value;
+      })
+      .finally(() => {
+        pending = null;
+      });
+    return pending;
+  };
+}
+
 export async function getHealth(prisma: PrismaClient): Promise<HealthResponse> {
   const state = await prisma.indexerState.findUnique({ where: { id: 1 } });
   if (state === null) {
@@ -370,7 +578,10 @@ export async function getTradeDto(
   prisma: PrismaClient,
   id: string,
 ): Promise<ReturnType<typeof toTradeDto> | null> {
-  const trade: DbTrade | null = await prisma.trade.findUnique({ where: { id } });
+  const trade = await prisma.trade.findUnique({
+    where: { id },
+    select: TRADE_SELECT,
+  });
   return trade === null ? null : toTradeDto(trade);
 }
 
@@ -378,7 +589,10 @@ export async function getOrderDto(
   prisma: PrismaClient,
   orderId: string,
 ): Promise<ReturnType<typeof toOrderDto> | null> {
-  const order: DbOrder | null = await prisma.order.findUnique({ where: { orderId } });
+  const order = await prisma.order.findUnique({
+    where: { orderId },
+    select: ORDER_SELECT,
+  });
   return order === null ? null : toOrderDto(order);
 }
 
@@ -398,7 +612,7 @@ export async function getPositionDto(
 ): Promise<ReturnType<typeof toPositionDto> | null> {
   const position = await prisma.position.findUnique({
     where: { account_marketId_outcome: { account, marketId, outcome } },
-    include: { market: { include: { resolution: true } } },
+    select: POSITION_SELECT,
   });
   return position === null ? null : toPositionDto(position);
 }
@@ -425,6 +639,7 @@ export async function getSeedOrders(
 ): Promise<ReturnType<typeof toOrderDto>[]> {
   const orders = await prisma.order.findMany({
     where: { marketId, isSeed: true },
+    select: ORDER_SELECT,
     orderBy: { orderId: 'asc' },
   });
   return orders.map(toOrderDto);
@@ -433,9 +648,13 @@ export async function getSeedOrders(
 export async function findMarketForToken(
   prisma: PrismaClient,
   tokenId: string,
-): Promise<{ market: DbMarket; outcome: 'YES' | 'NO' } | null> {
+): Promise<{
+  market: Pick<DbMarket, 'id' | 'yesTokenId' | 'noTokenId'>;
+  outcome: 'YES' | 'NO';
+} | null> {
   const market = await prisma.market.findFirst({
     where: { OR: [{ yesTokenId: tokenId }, { noTokenId: tokenId }] },
+    select: { id: true, yesTokenId: true, noTokenId: true },
   });
   if (market === null) return null;
   return {

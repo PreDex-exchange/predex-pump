@@ -72,6 +72,7 @@ async function publishMarketUpdated(
   marketId: string,
   ts: number,
 ): Promise<void> {
+  if (!eventBus.hasSubscribers('markets')) return;
   const market = await getMarketDto(prisma, marketId);
   if (market !== null) {
     publish(
@@ -91,12 +92,14 @@ async function publishPosition(
   ts: number,
 ): Promise<void> {
   if (account === ZERO_ADDRESS) return;
+  const channel = `account:${account}` as const;
+  if (!eventBus.hasSubscribers(channel)) return;
   const position = await getPositionDto(prisma, account, marketId, outcome);
   if (position === null) return;
   publish(
     eventBus,
     {
-      channel: `account:${account}`,
+      channel,
       event: 'position.updated',
       data: position,
     },
@@ -109,6 +112,12 @@ async function publishTransferPositions(
   eventBus: ServerEventBus,
   event: DecodedEvent,
 ): Promise<void> {
+  const subscribedAccounts = new Set(
+    eventBus
+      .subscribedChannels('account:')
+      .map((channel) => channel.slice('account:'.length)),
+  );
+  if (subscribedAccounts.size === 0) return;
   const tokenIds =
     event.eventName === 'TransferBatch'
       ? bigintArrayArg(event.args, 'ids')
@@ -116,7 +125,8 @@ async function publishTransferPositions(
   const accounts = [
     lowerAddress(stringArg(event.args, 'from')),
     lowerAddress(stringArg(event.args, 'to')),
-  ];
+  ].filter((account) => subscribedAccounts.has(account));
+  if (accounts.length === 0) return;
   const published = new Set<string>();
   for (const tokenId of tokenIds) {
     const binding = await findMarketForToken(prisma, tokenId.toString());
@@ -143,8 +153,12 @@ async function publishMarketPositions(
   marketId: string,
   ts: number,
 ): Promise<void> {
+  const subscribedAccounts = eventBus
+    .subscribedChannels('account:')
+    .map((channel) => channel.slice('account:'.length));
+  if (subscribedAccounts.length === 0) return;
   const positions = await prisma.position.findMany({
-    where: { marketId },
+    where: { marketId, account: { in: subscribedAccounts } },
     select: { account: true, outcome: true },
   });
   for (const position of positions) {
@@ -183,7 +197,11 @@ async function publishSpecificEvent(
   const key = eventKey(indexedEvent);
   const marketId = await marketIdForEvent(prisma, indexedEvent);
 
-  if (key === 'REGISTRY.MarketCreated' && marketId !== null) {
+  if (
+    key === 'REGISTRY.MarketCreated' &&
+    marketId !== null &&
+    eventBus.hasSubscribers('markets')
+  ) {
     const market = await getMarketDto(prisma, marketId);
     if (market !== null) {
       publish(
@@ -194,7 +212,12 @@ async function publishSpecificEvent(
     }
   }
 
-  if (key === 'REGISTRY.MarketGraduated' && marketId !== null) {
+  if (
+    key === 'REGISTRY.MarketGraduated' &&
+    marketId !== null &&
+    (eventBus.hasSubscribers('markets') ||
+      eventBus.hasSubscribers(`market:${marketId}`))
+  ) {
     const market = await getMarketDto(prisma, marketId);
     if (market !== null) {
       publish(
@@ -217,24 +240,26 @@ async function publishSpecificEvent(
   }
 
   if (key === 'LMSR.TradeState' && marketId !== null) {
-    const point = await prisma.pricePoint.findUnique({
-      where: { id: eventId(indexedEvent) },
-    });
-    if (point !== null) {
-      publish(
-        eventBus,
-        {
-          channel: `market:${marketId}`,
-          event: 'price.tick',
-          data: {
-            marketId,
-            yesPriceRaw: point.yesPriceRaw,
-            noPriceRaw: point.noPriceRaw,
-            ts: point.ts,
+    if (eventBus.hasSubscribers(`market:${marketId}`)) {
+      const point = await prisma.pricePoint.findUnique({
+        where: { id: eventId(indexedEvent) },
+      });
+      if (point !== null) {
+        publish(
+          eventBus,
+          {
+            channel: `market:${marketId}`,
+            event: 'price.tick',
+            data: {
+              marketId,
+              yesPriceRaw: point.yesPriceRaw,
+              noPriceRaw: point.noPriceRaw,
+              ts: point.ts,
+            },
           },
-        },
-        indexedEvent.ts,
-      );
+          indexedEvent.ts,
+        );
+      }
     }
     await publishMarketPositions(prisma, eventBus, marketId, indexedEvent.ts);
   }
@@ -243,7 +268,15 @@ async function publishSpecificEvent(
     (key === 'LMSR.TradeExecuted' || key === 'MINI_CLOB.OrderFilled') &&
     marketId !== null
   ) {
-    const trade = await getTradeDto(prisma, eventId(indexedEvent));
+    const candidateAccount =
+      key === 'LMSR.TradeExecuted'
+        ? lowerAddress(stringArg(indexedEvent.args, 'trader'))
+        : lowerAddress(stringArg(indexedEvent.args, 'taker'));
+    const trade =
+      eventBus.hasSubscribers(`market:${marketId}`) ||
+      eventBus.hasSubscribers(`account:${candidateAccount}`)
+        ? await getTradeDto(prisma, eventId(indexedEvent))
+        : null;
     if (trade !== null) {
       publish(
         eventBus,
@@ -262,7 +295,11 @@ async function publishSpecificEvent(
     }
   }
 
-  if (key === 'MINI_CLOB.OrderPlaced' && marketId !== null) {
+  if (
+    key === 'MINI_CLOB.OrderPlaced' &&
+    marketId !== null &&
+    eventBus.hasSubscribers(`book:${marketId}`)
+  ) {
     const order = await getOrderDto(
       prisma,
       bigintArg(indexedEvent.args, 'orderId').toString(),
@@ -280,7 +317,11 @@ async function publishSpecificEvent(
     }
   }
 
-  if (key === 'MINI_CLOB.OrderFilled' && marketId !== null) {
+  if (
+    key === 'MINI_CLOB.OrderFilled' &&
+    marketId !== null &&
+    eventBus.hasSubscribers(`book:${marketId}`)
+  ) {
     const fill = await getFillDto(prisma, eventId(indexedEvent));
     if (fill !== null) {
       publish(
@@ -295,7 +336,11 @@ async function publishSpecificEvent(
     }
   }
 
-  if (key === 'MINI_CLOB.OrderCancelled' && marketId !== null) {
+  if (
+    key === 'MINI_CLOB.OrderCancelled' &&
+    marketId !== null &&
+    eventBus.hasSubscribers(`book:${marketId}`)
+  ) {
     const order = await getOrderDto(
       prisma,
       bigintArg(indexedEvent.args, 'orderId').toString(),
@@ -313,7 +358,11 @@ async function publishSpecificEvent(
     }
   }
 
-  if (key === 'REGISTRY.MarketGraduationBookSeeded' && marketId !== null) {
+  if (
+    key === 'REGISTRY.MarketGraduationBookSeeded' &&
+    marketId !== null &&
+    eventBus.hasSubscribers(`book:${marketId}`)
+  ) {
     publish(
       eventBus,
       {
@@ -338,22 +387,26 @@ async function publishSpecificEvent(
       key === 'CTF.ConditionResolution' ||
       key === 'LMSR.ResolutionObserved')
   ) {
-    const resolution = await getResolutionForMarket(prisma, marketId);
-    if (resolution !== null) {
-      publish(
-        eventBus,
-        {
-          channel: `market:${marketId}`,
-          event: 'resolution',
-          data: resolution,
-        },
-        indexedEvent.ts,
-      );
-      await publishMarketPositions(prisma, eventBus, marketId, indexedEvent.ts);
+    if (eventBus.hasSubscribers(`market:${marketId}`)) {
+      const resolution = await getResolutionForMarket(prisma, marketId);
+      if (resolution !== null) {
+        publish(
+          eventBus,
+          {
+            channel: `market:${marketId}`,
+            event: 'resolution',
+            data: resolution,
+          },
+          indexedEvent.ts,
+        );
+      }
     }
+    await publishMarketPositions(prisma, eventBus, marketId, indexedEvent.ts);
   }
 
-  const activity = await getActivityById(prisma, eventId(indexedEvent));
+  const activity = eventBus.hasSubscribers('activity')
+    ? await getActivityById(prisma, eventId(indexedEvent))
+    : null;
   if (activity !== null) {
     publish(
       eventBus,

@@ -118,6 +118,29 @@ describe('WebSocket indexer bridge', () => {
           where: { id: `${indexedEvent.txHash}:7` },
         }),
       ).not.toBeNull();
+      expect(
+        await testPrisma.position.findUnique({
+          where: {
+            account_marketId_outcome: {
+              account: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              marketId: '1',
+              outcome: 'YES',
+            },
+          },
+          select: { unrealizedPnlRaw: true },
+        }),
+      ).toEqual({ unrealizedPnlRaw: '334642' });
+      expect(
+        await testPrisma.account.findUnique({
+          where: {
+            address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          },
+          select: { realizedPnlRaw: true, unrealizedPnlRaw: true },
+        }),
+      ).toEqual({
+        realizedPnlRaw: '100000',
+        unrealizedPnlRaw: '334642',
+      });
     } finally {
       await waitForClose(socket);
       await app.close();

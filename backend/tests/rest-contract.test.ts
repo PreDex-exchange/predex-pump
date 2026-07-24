@@ -337,6 +337,14 @@ describe('REST shared contract', () => {
         threshold: 2,
       },
     });
+
+    await testPrisma.$transaction([
+      testPrisma.committeeMember.deleteMany(),
+      testPrisma.registryConfig.delete({ where: { id: 1 } }),
+    ]);
+    expect(
+      (await app.inject({ method: 'GET', url: '/config' })).json<ConfigResponse>(),
+    ).toEqual(body);
   });
 
   it('GET /health returns the durable indexer cursor and chain lag', async () => {

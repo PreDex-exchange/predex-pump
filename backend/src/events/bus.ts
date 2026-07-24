@@ -1,4 +1,4 @@
-import type { ServerEvent } from '@predex-pump/shared';
+import type { Channel, ServerEvent } from '@predex-pump/shared';
 
 export interface PublishedServerEvent {
   event: ServerEvent;
@@ -8,18 +8,35 @@ export interface PublishedServerEvent {
 type EventListener = (published: PublishedServerEvent) => void;
 
 export class ServerEventBus {
-  readonly #listeners = new Set<EventListener>();
+  readonly #listenersByChannel = new Map<Channel, Set<EventListener>>();
 
-  subscribe(listener: EventListener): () => void {
-    this.#listeners.add(listener);
+  hasSubscribers(channel: Channel): boolean {
+    return (this.#listenersByChannel.get(channel)?.size ?? 0) > 0;
+  }
+
+  subscribedChannels(prefix: 'account:'): Channel[] {
+    return [...this.#listenersByChannel.keys()].filter((channel) =>
+      channel.startsWith(prefix),
+    );
+  }
+
+  subscribe(channel: Channel, listener: EventListener): () => void {
+    const listeners = this.#listenersByChannel.get(channel) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.#listenersByChannel.set(channel, listeners);
     return () => {
-      this.#listeners.delete(listener);
+      listeners.delete(listener);
+      if (listeners.size === 0) {
+        this.#listenersByChannel.delete(channel);
+      }
     };
   }
 
   publish(event: ServerEvent, ts: number): void {
     const published = { event, ts };
-    for (const listener of this.#listeners) {
+    const listeners = this.#listenersByChannel.get(event.channel);
+    if (listeners === undefined) return;
+    for (const listener of listeners) {
       try {
         listener(published);
       } catch (error) {

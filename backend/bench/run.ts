@@ -278,9 +278,9 @@ async function collectPlans(
     },
     {
       name: 'markets.deep-keyset',
-      sql: `SELECT * FROM "Market" WHERE ("createdAt" < ${BASE_TS + 60_000} OR ("createdAt" = ${
+      sql: `SELECT * FROM "Market" WHERE ("createdAt", "id") < (${
         BASE_TS + 60_000
-      } AND "id" < '1001')) ORDER BY "createdAt" DESC, "id" DESC LIMIT 51`,
+      }, '1001') ORDER BY "createdAt" DESC, "id" DESC LIMIT 51`,
     },
     {
       name: 'market.recent-trades',
@@ -310,7 +310,7 @@ async function collectPlans(
     },
     {
       name: 'activity.market-deep-keyset',
-      sql: `SELECT * FROM "ActivityEvent" WHERE "type" IN (${supportedTypes}) AND "marketId" = '1' AND ("blockNumber" < ${activityMidBlock} OR ("blockNumber" = ${activityMidBlock} AND "logIndex" < 5)) ORDER BY "blockNumber" DESC, "logIndex" DESC LIMIT 51`,
+      sql: `SELECT * FROM "ActivityEvent" WHERE "type" IN (${supportedTypes}) AND "marketId" = '1' AND ("blockNumber", "logIndex") < (${activityMidBlock}, 5) ORDER BY "blockNumber" DESC, "logIndex" DESC LIMIT 51`,
     },
   ];
   const results: ExplainResult[] = [];

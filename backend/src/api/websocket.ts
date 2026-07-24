@@ -8,7 +8,10 @@ import type {
 import type { FastifyInstance } from 'fastify';
 import { WebSocket } from 'ws';
 
-import type { ServerEventBus } from '../events/bus.js';
+import type {
+  PublishedServerEvent,
+  ServerEventBus,
+} from '../events/bus.js';
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 
@@ -73,8 +76,8 @@ export async function registerWebsocketRoute(
 
   app.get('/ws', { websocket: true }, (socket) => {
     const channels = new Set<Channel>();
-    const unsubscribe = eventBus.subscribe(({ event, ts }) => {
-      if (!channels.has(event.channel)) return;
+    const unsubscribeByChannel = new Map<Channel, () => void>();
+    const deliver = ({ event, ts }: PublishedServerEvent): void => {
       const message: ServerMessage = {
         type: 'update',
         channel: event.channel,
@@ -83,16 +86,24 @@ export async function registerWebsocketRoute(
         ts,
       };
       send(socket, message);
-    });
+    };
 
     socket.on('message', (raw) => {
       try {
         const message = parseInbound(raw.toString());
         for (const channel of message.channels) {
           if (message.type === 'subscribe') {
+            if (!channels.has(channel)) {
+              unsubscribeByChannel.set(
+                channel,
+                eventBus.subscribe(channel, deliver),
+              );
+            }
             channels.add(channel);
           } else {
             channels.delete(channel);
+            unsubscribeByChannel.get(channel)?.();
+            unsubscribeByChannel.delete(channel);
           }
         }
         send(socket, { type: 'ack', channels: [...channels] });
@@ -104,7 +115,12 @@ export async function registerWebsocketRoute(
       }
     });
 
-    socket.once('close', unsubscribe);
-    socket.once('error', unsubscribe);
+    const unsubscribeAll = (): void => {
+      for (const unsubscribe of unsubscribeByChannel.values()) unsubscribe();
+      unsubscribeByChannel.clear();
+      channels.clear();
+    };
+    socket.once('close', unsubscribeAll);
+    socket.once('error', unsubscribeAll);
   });
 }

@@ -20,7 +20,6 @@ import type {
   Order,
   OrderSide,
   Outcome,
-  Pnl,
   Position,
   Resolution,
   ResolutionOutcome,
@@ -42,7 +41,105 @@ export const ACTIVITY_TYPES = [
 ] as const satisfies readonly ActivityType[];
 
 const activityTypeSet = new Set<string>(ACTIVITY_TYPES);
-const PRICE_SCALE = 1_000_000n;
+
+export type MarketDtoRow = Pick<
+  DbMarket,
+  | 'id'
+  | 'creator'
+  | 'question'
+  | 'phase'
+  | 'conditionId'
+  | 'questionId'
+  | 'yesTokenId'
+  | 'noTokenId'
+  | 'seedRaw'
+  | 'yesPriceRaw'
+  | 'noPriceRaw'
+  | 'graduationActivityRaw'
+  | 'bookAddress'
+  | 'frozenYesPriceRaw'
+  | 'handoffSizeRaw'
+  | 'tradeCount'
+  | 'volumeRaw'
+  | 'seedFloorRaw'
+  | 'seedCapRaw'
+  | 'fCapRaw'
+  | 'graduationThresholdRaw'
+  | 'graduationTollRaw'
+  | 'inventoryTargetRaw'
+  | 'protocolFeeBps'
+  | 'depthFeeBps'
+  | 'tradingWindowSeconds'
+  | 'minimumTimeOpenSeconds'
+  | 'createdAt'
+  | 'tradingEndsAt'
+  | 'graduatedAt'
+  | 'resolvedAt'
+>;
+
+export type TradeDtoRow = Pick<
+  DbTrade,
+  | 'id'
+  | 'marketId'
+  | 'venue'
+  | 'account'
+  | 'outcome'
+  | 'side'
+  | 'sizeRaw'
+  | 'priceRaw'
+  | 'costRaw'
+  | 'feeRaw'
+  | 'txHash'
+  | 'logIndex'
+  | 'ts'
+>;
+
+export type OrderDtoRow = Pick<
+  DbOrder,
+  | 'orderId'
+  | 'marketId'
+  | 'conditionId'
+  | 'tokenId'
+  | 'outcome'
+  | 'maker'
+  | 'side'
+  | 'priceRaw'
+  | 'sizeRaw'
+  | 'filledRaw'
+  | 'remainingRaw'
+  | 'open'
+  | 'isSeed'
+  | 'createdAt'
+  | 'updatedAt'
+>;
+
+export type PositionDtoRow = Pick<
+  DbPosition,
+  | 'account'
+  | 'marketId'
+  | 'outcome'
+  | 'qtyRaw'
+  | 'costBasisRaw'
+  | 'realizedPnlRaw'
+  | 'unrealizedPnlRaw'
+  | 'updatedAt'
+>;
+
+export type ActivityDtoRow = Pick<
+  DbActivityEvent,
+  | 'id'
+  | 'type'
+  | 'marketId'
+  | 'account'
+  | 'outcome'
+  | 'side'
+  | 'amountRaw'
+  | 'priceRaw'
+  | 'txHash'
+  | 'blockNumber'
+  | 'logIndex'
+  | 'ts'
+>;
 
 export function isActivityType(value: string): value is ActivityType {
   return activityTypeSet.has(value);
@@ -56,7 +153,7 @@ function hash(value: string): Hash {
   return value as Hash;
 }
 
-export function toMarketDto(market: DbMarket): Market {
+export function toMarketDto(market: MarketDtoRow): Market {
   return {
     id: market.id,
     creator: address(market.creator),
@@ -94,7 +191,7 @@ export function toMarketDto(market: DbMarket): Market {
   };
 }
 
-export function toTradeDto(trade: DbTrade): Trade {
+export function toTradeDto(trade: TradeDtoRow): Trade {
   return {
     id: trade.id,
     marketId: trade.marketId,
@@ -112,7 +209,7 @@ export function toTradeDto(trade: DbTrade): Trade {
   };
 }
 
-export function toOrderDto(order: DbOrder): Order {
+export function toOrderDto(order: OrderDtoRow): Order {
   return {
     orderId: order.orderId,
     marketId: order.marketId,
@@ -172,27 +269,7 @@ export function toAccountDto(account: DbAccount): Account {
   };
 }
 
-interface PositionWithMarket extends DbPosition {
-  market: DbMarket & { resolution: DbResolution | null };
-}
-
-export function toPositionDto(position: PositionWithMarket): Position {
-  const resolution = position.market.resolution;
-  const markPriceRaw =
-    resolution === null
-      ? BigInt(
-          position.outcome === 'YES'
-            ? position.market.yesPriceRaw
-            : position.market.noPriceRaw,
-        )
-      : (BigInt(
-          position.outcome === 'YES' ? resolution.payoutYes : resolution.payoutNo,
-        ) *
-          PRICE_SCALE) /
-        BigInt(resolution.denominator);
-  const markedValueRaw = (BigInt(position.qtyRaw) * markPriceRaw) / PRICE_SCALE;
-  const unrealizedPnlRaw = markedValueRaw - BigInt(position.costBasisRaw);
-
+export function toPositionDto(position: PositionDtoRow): Position {
   return {
     account: address(position.account),
     marketId: position.marketId,
@@ -201,25 +278,12 @@ export function toPositionDto(position: PositionWithMarket): Position {
     costBasisRaw: position.costBasisRaw,
     costBasisEstimated: true,
     realizedPnlRaw: position.realizedPnlRaw,
-    unrealizedPnlRaw: unrealizedPnlRaw.toString(),
+    unrealizedPnlRaw: position.unrealizedPnlRaw,
     updatedAt: position.updatedAt,
   };
 }
 
-export function sumPnl(positions: readonly Position[]): Pnl {
-  let realized = 0n;
-  let unrealized = 0n;
-  for (const position of positions) {
-    realized += BigInt(position.realizedPnlRaw);
-    unrealized += BigInt(position.unrealizedPnlRaw);
-  }
-  return {
-    realizedRaw: realized.toString(),
-    unrealizedRaw: unrealized.toString(),
-  };
-}
-
-export function toActivityDto(activity: DbActivityEvent): ActivityEvent | null {
+export function toActivityDto(activity: ActivityDtoRow): ActivityEvent | null {
   if (!isActivityType(activity.type)) return null;
 
   return {

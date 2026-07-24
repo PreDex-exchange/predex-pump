@@ -372,42 +372,154 @@ async function insertActivityGuard(tx: Tx, event: DecodedEvent): Promise<boolean
   return result.count === 1;
 }
 
-async function markPosition(
+interface MarkPrices {
+  yesPriceRaw: string;
+  noPriceRaw: string;
+}
+
+async function currentMarkPrices(
+  tx: Tx,
+  marketId: string,
+  fallback?: MarkPrices,
+): Promise<MarkPrices> {
+  const resolution = await tx.resolution.findUnique({ where: { marketId } });
+  if (resolution !== null) {
+    return {
+      yesPriceRaw: (
+        (BigInt(resolution.payoutYes) * PRICE_SCALE) /
+        BigInt(resolution.denominator)
+      ).toString(),
+      noPriceRaw: (
+        (BigInt(resolution.payoutNo) * PRICE_SCALE) /
+        BigInt(resolution.denominator)
+      ).toString(),
+    };
+  }
+  if (fallback !== undefined) return fallback;
+  const market = await marketById(tx, marketId);
+  return {
+    yesPriceRaw: market.yesPriceRaw,
+    noPriceRaw: market.noPriceRaw,
+  };
+}
+
+async function adjustAccountPnl(
+  tx: Tx,
+  account: string,
+  realizedDelta: bigint,
+  unrealizedDelta: bigint,
+): Promise<void> {
+  if (realizedDelta === 0n && unrealizedDelta === 0n) return;
+  const updated = await tx.$executeRaw`
+    UPDATE "Account"
+    SET
+      "realizedPnlRaw" = (
+        ("realizedPnlRaw")::numeric + ${realizedDelta.toString()}::numeric
+      )::text,
+      "unrealizedPnlRaw" = (
+        ("unrealizedPnlRaw")::numeric + ${unrealizedDelta.toString()}::numeric
+      )::text
+    WHERE "address" = ${account}
+  `;
+  if (updated !== 1) {
+    throw new Error(`Cannot update PnL rollup for unknown account ${account}`);
+  }
+}
+
+async function markPositionAtPrices(
   tx: Tx,
   account: string,
   marketId: string,
   outcome: Outcome,
+  prices: MarkPrices,
 ): Promise<void> {
   const position = await tx.position.findUnique({
     where: { account_marketId_outcome: { account, marketId, outcome } },
   });
   if (position === null) return;
 
-  const market = await marketById(tx, marketId);
-  const resolution = await tx.resolution.findUnique({ where: { marketId } });
-  let markPriceRaw: bigint;
-  if (resolution !== null) {
-    const numerator = outcome === 'YES' ? resolution.payoutYes : resolution.payoutNo;
-    markPriceRaw = (BigInt(numerator) * PRICE_SCALE) / BigInt(resolution.denominator);
-  } else {
-    markPriceRaw = BigInt(outcome === 'YES' ? market.yesPriceRaw : market.noPriceRaw);
-  }
+  const markPriceRaw = BigInt(
+    outcome === 'YES' ? prices.yesPriceRaw : prices.noPriceRaw,
+  );
   const markedValue = (BigInt(position.qtyRaw) * markPriceRaw) / PRICE_SCALE;
   const unrealized = markedValue - BigInt(position.costBasisRaw);
+  const previous = BigInt(position.unrealizedPnlRaw);
+  if (unrealized === previous) return;
   await tx.position.update({
     where: { account_marketId_outcome: { account, marketId, outcome } },
     data: { unrealizedPnlRaw: unrealized.toString() },
   });
+  await adjustAccountPnl(tx, account, 0n, unrealized - previous);
 }
 
-async function markMarketPositions(tx: Tx, marketId: string): Promise<void> {
-  const positions = await tx.position.findMany({
-    where: { marketId },
-    select: { account: true, outcome: true },
-  });
-  for (const position of positions) {
-    await markPosition(tx, position.account, marketId, position.outcome as Outcome);
-  }
+async function markPosition(
+  tx: Tx,
+  account: string,
+  marketId: string,
+  outcome: Outcome,
+): Promise<void> {
+  await markPositionAtPrices(
+    tx,
+    account,
+    marketId,
+    outcome,
+    await currentMarkPrices(tx, marketId),
+  );
+}
+
+async function markMarketPositions(
+  tx: Tx,
+  marketId: string,
+  fallback?: MarkPrices,
+): Promise<void> {
+  const prices = await currentMarkPrices(tx, marketId, fallback);
+  await tx.$executeRaw`
+    WITH recalculated AS MATERIALIZED (
+      SELECT
+        position."account",
+        position."marketId",
+        position."outcome",
+        (position."unrealizedPnlRaw")::numeric AS previous,
+        (
+          div(
+            (position."qtyRaw")::numeric *
+              CASE
+                WHEN position."outcome" = 'YES'
+                  THEN ${prices.yesPriceRaw}::numeric
+                ELSE ${prices.noPriceRaw}::numeric
+              END,
+            ${PRICE_SCALE.toString()}::numeric
+          ) - (position."costBasisRaw")::numeric
+        ) AS next
+      FROM "Position" AS position
+      WHERE position."marketId" = ${marketId}
+    ),
+    updated_positions AS (
+      UPDATE "Position" AS position
+      SET "unrealizedPnlRaw" = recalculated.next::text
+      FROM recalculated
+      WHERE
+        position."account" = recalculated."account"
+        AND position."marketId" = recalculated."marketId"
+        AND position."outcome" = recalculated."outcome"
+        AND recalculated.next <> recalculated.previous
+      RETURNING position."account"
+    ),
+    deltas AS (
+      SELECT
+        recalculated."account",
+        SUM(recalculated.next - recalculated.previous) AS delta
+      FROM recalculated
+      WHERE recalculated.next <> recalculated.previous
+      GROUP BY recalculated."account"
+    )
+    UPDATE "Account" AS account
+    SET "unrealizedPnlRaw" = (
+      (account."unrealizedPnlRaw")::numeric + deltas.delta
+    )::text
+    FROM deltas
+    WHERE account."address" = deltas."account"
+  `;
 }
 
 async function adjustPosition(
@@ -498,6 +610,8 @@ async function applyEstimatedSell(
   const nextBasis = basis - allocatedBasis;
   const nextRealized =
     BigInt(position?.realizedPnlRaw ?? '0') + proceeds - allocatedBasis;
+  const realizedDelta =
+    nextRealized - BigInt(position?.realizedPnlRaw ?? '0');
   await tx.position.upsert({
     where: selector,
     create: {
@@ -514,6 +628,7 @@ async function applyEstimatedSell(
       updatedAt: ts,
     },
   });
+  await adjustAccountPnl(tx, account, realizedDelta, 0n);
   await markPosition(tx, account, marketId, outcome);
 }
 
@@ -729,7 +844,7 @@ async function handleTradeState(tx: Tx, event: DecodedEvent): Promise<void> {
       ts: event.ts,
     },
   });
-  await markMarketPositions(tx, marketId);
+  await markMarketPositions(tx, marketId, prices);
 }
 
 async function handleGraduation(tx: Tx, event: DecodedEvent): Promise<void> {
