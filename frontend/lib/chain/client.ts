@@ -32,6 +32,7 @@ import {
   isAddress,
   type Abi,
   type Hex,
+  type TransactionReceipt,
 } from 'viem';
 
 import type { ApiClient } from '@/lib/api/types';
@@ -135,6 +136,7 @@ interface MulticallResult {
 
 const addressLogCache = new Map<string, TimedPromise<RawChainLog[]>>();
 const blockTimestampCache = new Map<bigint, Promise<number>>();
+const confirmedLogsByAddress = new Map<string, Map<string, RawChainLog>>();
 let snapshotCache: TimedPromise<ChainSnapshot> | null = null;
 
 function cacheIsFresh(entry: TimedPromise<unknown> | null | undefined) {
@@ -146,6 +148,81 @@ export function clearChainReadCache() {
   snapshotCache = null;
 }
 
+function chainLogKey(log: RawChainLog) {
+  if (log.transactionHash === null || log.logIndex === null) return null;
+  return `${log.transactionHash.toLowerCase()}:${log.logIndex}`;
+}
+
+function sortChainLogs(logs: RawChainLog[]) {
+  return logs.sort((left, right) => {
+    const blockDelta = Number(
+      (left.blockNumber ?? 0n) - (right.blockNumber ?? 0n),
+    );
+    if (blockDelta !== 0) return blockDelta;
+    return (left.logIndex ?? 0) - (right.logIndex ?? 0);
+  });
+}
+
+function mergeConfirmedLogs(
+  address: `0x${string}`,
+  indexedLogs: RawChainLog[],
+) {
+  const addressKey = address.toLowerCase();
+  const confirmedLogs = confirmedLogsByAddress.get(addressKey);
+  if (!confirmedLogs?.size) return sortChainLogs(indexedLogs);
+
+  const merged = new Map<string, RawChainLog>();
+  const unkeyed: RawChainLog[] = [];
+  for (const log of indexedLogs) {
+    const key = chainLogKey(log);
+    if (key) merged.set(key, log);
+    else unkeyed.push(log);
+  }
+  for (const [key, log] of confirmedLogs) {
+    if (merged.has(key)) confirmedLogs.delete(key);
+    else merged.set(key, log);
+  }
+  if (confirmedLogs.size === 0) confirmedLogsByAddress.delete(addressKey);
+
+  return sortChainLogs([...unkeyed, ...merged.values()]);
+}
+
+/**
+ * A confirmed receipt can be available briefly before eth_getLogs indexes the
+ * same block. Keep its relevant logs in the discovery stream until the RPC scan
+ * catches up so the creator can open the market immediately.
+ */
+export function rememberConfirmedChainLogs(receipt: TransactionReceipt) {
+  const scannedAddresses = new Set(
+    [ADDRESSES.registry, ADDRESSES.lmsr, ADDRESSES.miniClob].map((address) =>
+      address.toLowerCase(),
+    ),
+  );
+  let added = false;
+
+  for (const log of receipt.logs) {
+    const addressKey = log.address.toLowerCase();
+    if (!scannedAddresses.has(addressKey)) continue;
+    const rawLog: RawChainLog = {
+      address: log.address,
+      blockNumber: log.blockNumber,
+      transactionHash: log.transactionHash,
+      logIndex: log.logIndex,
+      data: log.data,
+      topics: log.topics,
+    };
+    const key = chainLogKey(rawLog);
+    if (!key) continue;
+
+    const logs = confirmedLogsByAddress.get(addressKey) ?? new Map();
+    logs.set(key, rawLog);
+    confirmedLogsByAddress.set(addressKey, logs);
+    added = true;
+  }
+
+  if (added) clearChainReadCache();
+}
+
 async function getAddressLogs(address: `0x${string}`) {
   const key = address.toLowerCase();
   const cached = addressLogCache.get(key);
@@ -154,7 +231,7 @@ async function getAddressLogs(address: `0x${string}`) {
   const promise = (async () => {
     const head = await arcPublicClient.getBlockNumber();
     const firstBlock = BigInt(DEPLOY_BLOCK);
-    if (head < firstBlock) return [];
+    if (head < firstBlock) return mergeConfirmedLogs(address, []);
 
     const ranges: Array<{ fromBlock: bigint; toBlock: bigint }> = [];
     for (let fromBlock = firstBlock; fromBlock <= head; fromBlock += LOG_BLOCK_RANGE) {
@@ -175,11 +252,7 @@ async function getAddressLogs(address: `0x${string}`) {
       ),
     );
 
-    return (chunks.flat() as RawChainLog[]).sort((left, right) => {
-      const blockDelta = Number((left.blockNumber ?? 0n) - (right.blockNumber ?? 0n));
-      if (blockDelta !== 0) return blockDelta;
-      return (left.logIndex ?? 0) - (right.logIndex ?? 0);
-    });
+    return mergeConfirmedLogs(address, chunks.flat() as RawChainLog[]);
   })();
 
   addressLogCache.set(key, { createdAt: Date.now(), promise });

@@ -1,9 +1,12 @@
 import type { Metadata } from 'next';
 import { DM_Mono, Fredoka, Nunito } from 'next/font/google';
+import { headers } from 'next/headers';
 import type { ReactNode } from 'react';
+import { cookieToInitialState } from 'wagmi';
 
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppProviders } from '@/components/providers/AppProviders';
+import { getWagmiConfig } from '@/lib/chain/config';
 
 import './globals.css';
 
@@ -37,11 +40,18 @@ export const metadata: Metadata = {
     'Launch a prediction market from zero, trade it on a bonding curve, and watch it graduate into an order book.',
 };
 
-export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+export default async function RootLayout({
+  children,
+}: Readonly<{ children: ReactNode }>) {
+  const initialState = cookieToInitialState(
+    getWagmiConfig(),
+    (await headers()).get('cookie'),
+  );
+
   return (
     <html lang="en">
       <body className={`${fredoka.variable} ${nunito.variable} ${dmMono.variable}`}>
-        <AppProviders>
+        <AppProviders initialState={initialState}>
           <AppHeader />
           {children}
         </AppProviders>

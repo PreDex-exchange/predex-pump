@@ -21,6 +21,8 @@ import { useCallback } from 'react';
 
 import { apiClient } from './client';
 
+const MARKET_BACKGROUND_REFRESH_MS = 60_000;
+
 interface ResourceState<T> {
   data: T | null;
   isLoading: boolean;
@@ -28,11 +30,21 @@ interface ResourceState<T> {
   refetch: () => void;
 }
 
-function useApiResource<T>(queryKey: QueryKey, load: () => Promise<T>): ResourceState<T> {
+interface ResourceOptions {
+  refetchInterval?: number;
+}
+
+function useApiResource<T>(
+  queryKey: QueryKey,
+  load: () => Promise<T>,
+  options: ResourceOptions = {},
+): ResourceState<T> {
   const query = useQuery<T, Error>({
     queryKey,
     queryFn: load,
     staleTime: 30_000,
+    refetchInterval: options.refetchInterval,
+    refetchIntervalInBackground: false,
   });
 
   return {
@@ -54,6 +66,7 @@ export function useMarkets(query: ListMarketsQuery = {}) {
   return useApiResource<ListMarketsResponse>(
     ['markets', phase, creator, limit, cursor],
     load,
+    { refetchInterval: MARKET_BACKGROUND_REFRESH_MS },
   );
 }
 

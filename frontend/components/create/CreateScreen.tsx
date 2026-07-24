@@ -1,8 +1,9 @@
 'use client';
 
 import type { Address, Market, RegistryConfig } from '@predex-pump/shared/domain';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState, type FormEvent } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
@@ -16,7 +17,10 @@ import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { TxStatus } from '@/components/ui/TxStatus';
 import { useConfig } from '@/lib/api/hooks';
 import { arcTestnet } from '@/lib/chain/arc';
-import { clearChainReadCache } from '@/lib/chain/client';
+import {
+  clearChainReadCache,
+  rememberConfirmedChainLogs,
+} from '@/lib/chain/client';
 import {
   buildMarketMetadata,
   createMarketOnArc,
@@ -27,6 +31,7 @@ import { formatUsdc, parseUsdcInput } from '@/lib/format';
 import styles from './CreateScreen.module.css';
 
 const QUESTION_MAX_LENGTH = 180;
+const MARKET_DISCOVERY_RETRY_DELAYS_MS = [0, 5_000, 15_000] as const;
 const CATEGORIES = [
   { value: '', label: 'No category' },
   { value: 'crypto', label: 'Crypto' },
@@ -35,6 +40,21 @@ const CATEGORIES = [
   { value: 'culture', label: 'Culture' },
   { value: 'climate', label: 'Climate' },
 ] as const;
+
+function scheduleMarketDiscoveryRefresh(queryClient: QueryClient) {
+  const refetch = () => {
+    clearChainReadCache();
+    void Promise.all([
+      queryClient.refetchQueries({ queryKey: ['markets'], type: 'all' }),
+      queryClient.refetchQueries({ queryKey: ['activity'], type: 'all' }),
+    ]).catch(() => undefined);
+  };
+
+  for (const delay of MARKET_DISCOVERY_RETRY_DELAYS_MS) {
+    if (delay === 0) refetch();
+    else window.setTimeout(refetch, delay);
+  }
+}
 
 function validateQuestion(value: string) {
   if (!value.trim()) return 'Enter a question for the market.';
@@ -137,6 +157,7 @@ export function CreateScreen() {
     undefined,
   );
 
+  const router = useRouter();
   const queryClient = useQueryClient();
   const { address, chainId, isConnected } = useWalletAccount();
   const tx = useTxFlow();
@@ -209,15 +230,19 @@ export function CreateScreen() {
     );
     if (!result) return;
 
-    clearChainReadCache();
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['markets'] }),
-      queryClient.invalidateQueries({ queryKey: ['activity'] }),
-      queryClient.invalidateQueries({ queryKey: ['config'] }),
-    ]).catch(() => undefined);
-    setCreatedMarketId(result.marketId);
+    rememberConfirmedChainLogs(result.receipt);
+    scheduleMarketDiscoveryRefresh(queryClient);
+    void queryClient
+      .invalidateQueries({ queryKey: ['config'] })
+      .catch(() => undefined);
     setSubmitted(false);
     setConfirmOpen(false);
+    if (result.marketId) {
+      router.push(`/market/${result.marketId}`);
+      return;
+    }
+
+    setCreatedMarketId(null);
   }
 
   function resetDraft() {
