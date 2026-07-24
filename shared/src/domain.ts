@@ -200,3 +200,38 @@ export interface Pnl {
   realizedRaw: Raw;
   unrealizedRaw: Raw;
 }
+
+/** One point of the price curve, derived from the LMSR `TradeState` stream. */
+export interface PricePoint {
+  ts: number;
+  yesPriceRaw: Raw;
+  noPriceRaw: Raw;
+}
+
+/** Committee (oracle) resolver set — display + gating only; the resolve tx re-checks on-chain. */
+export interface CommitteeInfo {
+  oracle: Address;
+  signers: Address[];
+  threshold: number;
+}
+
+/** Registry-level config a fresh CreateMarket / SettlementPanel needs before any market exists. */
+export interface RegistryConfig {
+  chainId: number;
+  addresses: {
+    usdc: Address;
+    ctf: Address;
+    oracle: Address;
+    lmsr: Address;
+    registry: Address;
+    miniClob: Address;
+  };
+  marketTypeVersion: number;
+  seedFloorRaw: Raw;
+  seedCapRaw: Raw;
+  graduationTollRaw: Raw;
+  protocolFeeBps: number;
+  minTradingWindowSeconds?: number;
+  maxTradingWindowSeconds?: number;
+  committee: CommitteeInfo;
+}

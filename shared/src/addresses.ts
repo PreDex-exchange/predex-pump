@@ -23,15 +23,15 @@ export const ARC = {
 // 2026-07-23 deploy-spike set which lacked MiniCLOB + graduateAndSeedBook).
 export const ADDRESSES = {
   usdc: '0x3600000000000000000000000000000000000000',
-  ctf: '0xd6fcfDb350beaDd944E4eC93a788388d82EF2beb',
-  oracle: '0x8E93440689B3EB393AC359335bEc23F4D2F940E5',
-  lmsr: '0x48ecAe9E1Dc321f9a57970e9919eE3eb42A89ead',
-  registry: '0x8aeB31722A77C866f9F32463B4383d7d3047FEE5',
-  miniClob: '0x8eC37d407FEFfB0b3917c50ffee8FE39A085c22f',
+  ctf: '0x4021798fEcE71F31564251c2D1A9A7467ada7ae7',
+  oracle: '0xd246A354FD469023bfbA2DC5eCf4868Db034fC57',
+  lmsr: '0x33a45f0d31cE4E9bD877c4BBf632df7c5DCeD566',
+  registry: '0x15EE004A3CfD9508EA0b47323762C1780A610Ed3',
+  miniClob: '0xA4f4e20bB706B38C7BbFeB923b63c2d427C9f7a3',
 } as const;
 
 // First block to index from (the registry/stack deployment block). From the broadcast
 // receipt; the indexer replays from here forward.
-export const DEPLOY_BLOCK = 53263311;
+export const DEPLOY_BLOCK = 53405070;
 
 export type Address = `0x${string}`;
