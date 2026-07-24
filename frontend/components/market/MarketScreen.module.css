@@ -74,6 +74,15 @@
   min-width: 0;
 }
 
+.sidebarStack {
+  display: grid;
+  gap: 20px;
+}
+
+.sidebarStack > aside {
+  position: static;
+}
+
 .bookLoadingTitle {
   margin-bottom: var(--space-2);
   font-family: var(--font-fredoka), sans-serif;

@@ -57,9 +57,16 @@ function sameAddress(left?: string, right?: string) {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
 }
 
-function actionTitle(action: SettlementAction | null) {
+function actionTitle(
+  action: SettlementAction | null,
+  resolvingEarly: boolean,
+) {
   if (!action) return 'Settlement action';
-  if (action.kind === 'resolve') return 'Resolve this market';
+  if (action.kind === 'resolve') {
+    return resolvingEarly
+      ? 'Resolve early · end market now'
+      : 'Resolve this market';
+  }
   if (action.kind === 'observe') return 'Observe the resolution';
   if (action.kind === 'redeem') return `Redeem ${action.outcome}`;
   if (action.kind === 'closeout') return 'Close out this market';
@@ -71,11 +78,16 @@ function actionLabel(
   action: SettlementAction | null,
   phase: string,
   outcome: ResolutionChoice,
+  resolvingEarly: boolean,
 ) {
   if (phase === 'reverted') return 'Retry action';
   if (phase === 'confirmed') return 'Confirmed';
   if (!action) return 'Confirm';
-  if (action.kind === 'resolve') return `Sign & resolve ${outcome}`;
+  if (action.kind === 'resolve') {
+    return resolvingEarly
+      ? `Sign & end as ${outcome}`
+      : `Sign & resolve ${outcome}`;
+  }
   if (action.kind === 'observe') return 'Observe resolution';
   if (action.kind === 'redeem') return `Redeem ${action.outcome}`;
   if (action.kind === 'closeout') return 'Close out';
@@ -126,9 +138,14 @@ export function SettlementPanel({ market }: { market: Market }) {
   const { address, chainId, isConnected } = useAccount();
   const config = useConfig();
   const status = useSettlementStatus(market.id, address);
+  const settlement = status.data;
   const queryClient = useQueryClient();
   const tx = useTxFlow();
   const wrongNetwork = isConnected && chainId !== arcTestnet.id;
+  const resolvingEarly =
+    settlement !== undefined &&
+    settlement.lifecycleState < 3 &&
+    settlement.chainTimestamp < settlement.tradingEndsAt;
   const committeeSigner =
     Boolean(address) &&
     Boolean(
@@ -227,8 +244,9 @@ export function SettlementPanel({ market }: { market: Market }) {
             .
           </p>
           <p className={styles.warning}>
-            Resolution is final in Conditional Tokens. Verify the outcome before
-            signing.
+            {resolvingEarly
+              ? 'You are calling a known outcome before the trading deadline. Confirming immediately stops all bonding-curve and order-book trading and settles the outcome in Conditional Tokens. Verify the outcome before signing; resolution is final.'
+              : 'Resolution is final in Conditional Tokens. Verify the outcome before signing.'}
           </p>
         </>
       );
@@ -281,7 +299,7 @@ export function SettlementPanel({ market }: { market: Market }) {
     );
   }
 
-  if (status.isLoading || !status.data) {
+  if (status.isLoading || !settlement) {
     return (
       <aside className={styles.sticky}>
         <Card className={styles.card}>
@@ -296,7 +314,7 @@ export function SettlementPanel({ market }: { market: Market }) {
     );
   }
 
-  const live = status.data;
+  const live = settlement;
   const thresholdOne =
     config.data?.committee.threshold === 1 &&
     live.questionThreshold === 1n;
@@ -304,7 +322,6 @@ export function SettlementPanel({ market }: { market: Market }) {
     committeeSigner &&
     live.snapshotMember &&
     thresholdOne &&
-    live.resolutionEligible &&
     !live.oracleResolved;
   const creator = sameAddress(address, live.creator);
 
@@ -321,7 +338,9 @@ export function SettlementPanel({ market }: { market: Market }) {
                   ? 'Redeem or close out'
                   : live.oracleResolved
                     ? 'Resolution ready to observe'
-                    : 'Resolution pending'}
+                    : resolvingEarly && committeeSigner
+                      ? 'Resolve early'
+                      : 'Resolution pending'}
             </h2>
           </div>
           {live.outcome && <OutcomeMark outcome={live.outcome} />}
@@ -359,11 +378,9 @@ export function SettlementPanel({ market }: { market: Market }) {
         {!live.oracleResolved && live.lifecycleState < 4 && (
           <section className={styles.section}>
             <p className={styles.explainer}>
-              {live.resolutionEligible
-                ? 'Trading has ended or the market has graduated. A committee signer must publish the final payout vector.'
-                : `Resolution opens at the live trading deadline. Arc time is ${formatDateTime(
-                    live.chainTimestamp,
-                  )}.`}
+              {resolvingEarly
+                ? 'When the real-world outcome is already known, a committee signer may end this market ahead of its deadline. Resolving early immediately stops curve and order-book trading and moves the market into settlement.'
+                : 'Trading has ended or the market has graduated. A committee signer must publish the final payout vector.'}
             </p>
             {committeeSigner ? (
               <>
@@ -399,7 +416,9 @@ export function SettlementPanel({ market }: { market: Market }) {
                   }
                   wrongNetwork={wrongNetwork}
                 >
-                  {`Resolve as ${selectedOutcome}`}
+                  {resolvingEarly
+                    ? `End market now · ${selectedOutcome}`
+                    : `Resolve as ${selectedOutcome}`}
                 </ConnectionButton>
                 {!live.snapshotMember && (
                   <p className={styles.readState}>
@@ -620,12 +639,17 @@ export function SettlementPanel({ market }: { market: Market }) {
         closeDisabled={tx.isBusy}
         closeOnConfirm={false}
         confirmDisabled={tx.isBusy || tx.state.phase === 'confirmed'}
-        confirmLabel={actionLabel(action, tx.state.phase, selectedOutcome)}
+        confirmLabel={actionLabel(
+          action,
+          tx.state.phase,
+          selectedOutcome,
+          resolvingEarly,
+        )}
         kicker="Live Arc settlement"
         onClose={closeAction}
         onConfirm={handleAction}
         open={action !== null}
-        title={actionTitle(action)}
+        title={actionTitle(action, resolvingEarly)}
       >
         {modalCopy()}
         <TxStatus state={tx.state} />

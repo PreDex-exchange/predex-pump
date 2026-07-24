@@ -70,6 +70,17 @@
   box-shadow: 0 0 0 4px #ffe9bf;
 }
 
+.skipped {
+  color: var(--muted);
+}
+
+.skipped .icon {
+  border-style: dashed;
+  background: #fbf9f5;
+  filter: grayscale(1);
+  opacity: 0.72;
+}
+
 .line {
   flex: 1;
   min-width: 40px;
@@ -81,6 +92,14 @@
 
 .lineDone {
   background: linear-gradient(90deg, var(--yes), var(--reward));
+}
+
+.lineSkipped {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--yes) 0 7px,
+    transparent 7px 11px
+  );
 }
 
 @media (max-width: 620px) {

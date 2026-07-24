@@ -116,7 +116,10 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <h1>{market.question}</h1>
       </header>
 
-      <LifecycleStepper phase={market.phase} />
+      <LifecycleStepper
+        graduated={market.graduatedAt !== null}
+        phase={market.phase}
+      />
 
       {isIncubating && !settlementReady && (
         <div className={styles.grid}>
@@ -125,10 +128,13 @@ export function MarketScreen({ marketId }: { marketId: string }) {
             <GraduationPanel market={market} />
             <RecentTrades trades={recentTrades} />
           </div>
-          <TradePanel
-            market={market}
-            positions={positions}
-          />
+          <div className={styles.sidebarStack}>
+            <TradePanel
+              market={market}
+              positions={positions}
+            />
+            <SettlementPanel market={market} />
+          </div>
         </div>
       )}
 
@@ -168,7 +174,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <div className={styles.grid}>
           <div className={styles.stack}>
             <ResolvedOutcomePanel market={market} resolution={resolution} />
-            {book && (
+            {market.bookAddress && book && (
               <OrderBookPanel
                 books={book}
                 market={market}

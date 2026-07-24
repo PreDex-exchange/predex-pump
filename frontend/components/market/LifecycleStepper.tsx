@@ -44,28 +44,52 @@ function phaseIndex(phase: MarketPhase) {
   return 2;
 }
 
-export function LifecycleStepper({ phase }: { phase: MarketPhase }) {
+export function LifecycleStepper({
+  graduated,
+  phase,
+}: {
+  graduated: boolean;
+  phase: MarketPhase;
+}) {
   const current = phaseIndex(phase);
+  const skippedGraduation = current === 2 && !graduated;
 
   return (
     <ol aria-label="Market lifecycle" className={styles.steps}>
-      {STEPS.map((step, index) => (
-        <li className={styles.group} key={step.label}>
-          <div
-            aria-current={index === current ? 'step' : undefined}
-            className={`${styles.step} ${index < current ? styles.done : ''} ${index === current ? styles.current : ''}`}
-          >
-            <span className={styles.icon}>{step.icon}</span>
-            <span>
-              {step.label}
-              <small>{step.description}</small>
-            </span>
-          </div>
-          {index < STEPS.length - 1 && (
-            <span className={`${styles.line} ${index < current ? styles.lineDone : ''}`} />
-          )}
-        </li>
-      ))}
+      {STEPS.map((step, index) => {
+        const skipped = skippedGraduation && index === 1;
+        return (
+          <li className={styles.group} key={step.label}>
+            <div
+              aria-current={index === current ? 'step' : undefined}
+              className={`${styles.step} ${
+                index < current && !skipped ? styles.done : ''
+              } ${index === current ? styles.current : ''} ${
+                skipped ? styles.skipped : ''
+              }`}
+            >
+              <span className={styles.icon}>{step.icon}</span>
+              <span>
+                {skipped ? 'Graduation skipped' : step.label}
+                <small>
+                  {skipped ? 'settled from incubation' : step.description}
+                </small>
+              </span>
+            </div>
+            {index < STEPS.length - 1 && (
+              <span
+                className={`${styles.line} ${
+                  index < current
+                    ? skippedGraduation
+                      ? styles.lineSkipped
+                      : styles.lineDone
+                    : ''
+                }`}
+              />
+            )}
+          </li>
+        );
+      })}
     </ol>
   );
 }

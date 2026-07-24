@@ -1300,16 +1300,10 @@ async function readResolutionEligibility(
   ]);
   assertDeploymentBinding(binding);
 
+  // CommitteeOracleAdapterV2 intentionally allows a known outcome to be
+  // resolved independently of the registry phase and trading deadline. Keep
+  // these fresh context reads, but do not use them as authorization gates.
   const lifecycleState = Number(lifecycle[2]);
-  if (
-    lifecycleState === 4 ||
-    lifecycleState === 5 ||
-    (lifecycleState !== 3 && block.timestamp < tradingEndsAt)
-  ) {
-    throw new Error(
-      'Resolution is available only after graduation or the live trading deadline.',
-    );
-  }
 
   const questionId = binding[3];
   const [
@@ -1407,6 +1401,9 @@ async function readResolutionEligibility(
     nonce,
     digest,
     onchainResolutionDigest,
+    lifecycleState,
+    tradingEndsAt,
+    chainTimestamp: block.timestamp,
   };
 }
 

@@ -62,7 +62,6 @@ export interface SettlementStatus {
   lifecycleState: number;
   chainTimestamp: number;
   tradingEndsAt: number;
-  resolutionEligible: boolean;
   questionId: Hex;
   conditionId: Hex;
   oracleResolved: boolean;
@@ -246,9 +245,6 @@ async function readSettlementStatus(
     lifecycleState,
     chainTimestamp,
     tradingEndsAt,
-    resolutionEligible:
-      lifecycleState < 4 &&
-      (lifecycleState === 3 || chainTimestamp >= tradingEndsAt),
     questionId,
     conditionId,
     oracleResolved,

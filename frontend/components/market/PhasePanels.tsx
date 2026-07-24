@@ -39,6 +39,7 @@ export function ResolvedOutcomePanel({
   resolution: Resolution | null;
 }) {
   const outcome = resolution?.outcome ?? (market.yesPriceRaw === '1000000' ? 'YES' : 'NO');
+  const settledWithoutGraduation = market.graduatedAt === null;
 
   return (
     <Card className={styles.resolvedCard}>
@@ -55,8 +56,9 @@ export function ResolvedOutcomePanel({
       </div>
       <h2>{market.question}</h2>
       <p>
-        The committee outcome has been observed on-chain. Prices are final and eligible positions
-        can be redeemed from Conditional Tokens.
+        {settledWithoutGraduation
+          ? 'The committee outcome was observed directly from incubation, without graduation. Curve trading is stopped, prices are final, and eligible positions can be redeemed from Conditional Tokens.'
+          : 'The committee outcome has been observed on-chain. Prices are final and eligible positions can be redeemed from Conditional Tokens.'}
       </p>
       <div className={styles.resolutionMeta}>
         <span>Condition</span>
