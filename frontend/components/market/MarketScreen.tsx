@@ -142,7 +142,11 @@ export function MarketScreen({ marketId }: { marketId: string }) {
                 <p className={styles.bookLoading}>Reading live MiniCLOB orders…</p>
               </Card>
             ) : (
-              <OrderBookPanel books={book} />
+              <OrderBookPanel
+                books={book}
+                market={market}
+                positions={positions}
+              />
             )}
             <RecentTrades trades={recentTrades} />
           </div>
@@ -164,6 +168,13 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <div className={styles.grid}>
           <div className={styles.stack}>
             <ResolvedOutcomePanel market={market} resolution={resolution} />
+            {book && (
+              <OrderBookPanel
+                books={book}
+                market={market}
+                positions={positions}
+              />
+            )}
             <RecentTrades trades={recentTrades} />
           </div>
           <SettlementPanel market={market} />

@@ -1049,7 +1049,9 @@ async function readOrderBook(
     yes: emptyBook(market, 'YES'),
     no: emptyBook(market, 'NO'),
   };
-  if (market.phase !== 'Graduated') return response;
+  // Keep unresolved and resolved graduated books readable. MiniCLOB blocks fills
+  // after payout while deliberately allowing makers to cancel remaining escrow.
+  if (!market.bookAddress) return response;
 
   const metas = [...snapshot.orderEvents.values()].filter(
     (meta) => meta.conditionId.toLowerCase() === market.conditionId.toLowerCase(),

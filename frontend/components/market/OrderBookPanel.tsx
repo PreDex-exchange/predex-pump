@@ -1,14 +1,73 @@
 'use client';
 
-import type { OrderBook, Outcome } from '@predex-pump/shared/domain';
+import type {
+  Market,
+  Order,
+  OrderBook,
+  Outcome,
+  Position,
+} from '@predex-pump/shared/domain';
 import type { MarketBookResponse } from '@predex-pump/shared/rest';
-import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { formatUnits } from 'viem';
+import { useAccount } from 'wagmi';
 
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Tabs } from '@/components/ui/Tabs';
-import { formatPrice, formatRaw, formatUsdc } from '@/lib/format';
+import { TxStatus } from '@/components/ui/TxStatus';
+import { arcTestnet } from '@/lib/chain/arc';
+import {
+  clearChainReadCache,
+  rememberConfirmedChainLogs,
+} from '@/lib/chain/client';
+import {
+  cancelOrderOnArc,
+  cumulativeMiniClobPaymentRaw,
+  fillOrderOnArc,
+  miniClobFillPaymentRaw,
+  placeOrderOnArc,
+} from '@/lib/chain/transactions';
+import { useSettlementStatus } from '@/lib/chain/useSettlementStatus';
+import { useTxFlow } from '@/lib/chain/useTxFlow';
+import {
+  formatPrice,
+  formatRaw,
+  formatUsdc,
+  parseUsdcInput,
+  shortAddress,
+} from '@/lib/format';
 
 import styles from './OrderBookPanel.module.css';
+
+type BookAction =
+  | { kind: 'place' }
+  | { kind: 'fill'; order: Order }
+  | { kind: 'cancel'; order: Order };
+
+const PRICE_SCALE = 1_000_000n;
+
+function inputRaw(value: string) {
+  const raw = parseUsdcInput(value);
+  return raw === null ? null : BigInt(raw);
+}
+
+function orderRefundRaw(order: Order) {
+  const remainingRaw = BigInt(order.remainingRaw);
+  if (order.side === 'ASK') return remainingRaw;
+  return (
+    cumulativeMiniClobPaymentRaw(
+      BigInt(order.priceRaw),
+      BigInt(order.sizeRaw),
+    ) -
+    cumulativeMiniClobPaymentRaw(
+      BigInt(order.priceRaw),
+      BigInt(order.filledRaw),
+    )
+  );
+}
 
 function Ladder({
   book,
@@ -26,20 +85,39 @@ function Ladder({
   return (
     <div className={styles.levels}>
       {levels.map((level) => {
-        const totalRaw = (
-          (BigInt(level.priceRaw) * BigInt(level.sizeRaw)) /
-          1_000_000n
-        ).toString();
+        const totalRaw = book.orders
+          .filter(
+            (order) =>
+              order.side === (side === 'asks' ? 'ASK' : 'BID') &&
+              order.priceRaw === level.priceRaw,
+          )
+          .reduce(
+            (total, order) =>
+              total +
+              miniClobFillPaymentRaw(
+                BigInt(order.priceRaw),
+                BigInt(order.filledRaw),
+                BigInt(order.remainingRaw),
+              ),
+            0n,
+          )
+          .toString();
         return (
-          <div className={styles.level} key={`${side}:${level.priceRaw}`}>
+          <div
+            className={`${styles.level} ${
+              side === 'asks' ? styles.askLevel : styles.bidLevel
+            }`}
+            key={`${side}:${level.priceRaw}`}
+          >
             <span className="numeric">{formatPrice(level.priceRaw, 3)}</span>
             <span className="numeric">
               {formatRaw(level.sizeRaw, {
                 minimumFractionDigits: 0,
-                maximumFractionDigits: 2,
+                maximumFractionDigits: 3,
               })}
             </span>
-            <span className="numeric">{formatUsdc(totalRaw)}</span>
+            <span className="numeric">{formatUsdc(totalRaw, 3)}</span>
+            <span className="numeric">{level.orderCount}</span>
           </div>
         );
       })}
@@ -47,52 +125,646 @@ function Ladder({
   );
 }
 
-export function OrderBookPanel({ books }: { books: MarketBookResponse }) {
+function actionTitle(action: BookAction | null) {
+  if (!action || action.kind === 'place') return 'Place limit order';
+  if (action.kind === 'fill') return `Fill order #${action.order.orderId}`;
+  return `Cancel order #${action.order.orderId}`;
+}
+
+export function OrderBookPanel({
+  books,
+  market,
+  positions = [],
+}: {
+  books: MarketBookResponse;
+  market: Market;
+  positions?: Position[];
+}) {
   const [outcome, setOutcome] = useState<Outcome>('YES');
+  const [orderSide, setOrderSide] = useState<'BID' | 'ASK'>('BID');
+  const [price, setPrice] = useState(() =>
+    formatUnits(BigInt(market.yesPriceRaw), 6),
+  );
+  const [size, setSize] = useState('0.20');
+  const [fillSize, setFillSize] = useState('');
+  const [action, setAction] = useState<BookAction | null>(null);
+  const [completion, setCompletion] = useState<string | null>(null);
+  const { address, chainId, isConnected } = useAccount();
+  const queryClient = useQueryClient();
+  const tx = useTxFlow();
+  const settlement = useSettlementStatus(market.id, address);
   const book = outcome === 'YES' ? books.yes : books.no;
+  const priceRaw = inputRaw(price);
+  const sizeRaw = inputRaw(size);
+  const fillSizeRaw = inputRaw(fillSize);
+  const wrongNetwork = isConnected && chainId !== arcTestnet.id;
+  const conditionUnresolved =
+    settlement.data?.payoutDenominator === 0n;
+  const selectedPosition = positions.find(
+    (position) => position.outcome === outcome,
+  );
+  const validPrice =
+    priceRaw !== null && priceRaw > 0n && priceRaw <= PRICE_SCALE;
+  const validSize = sizeRaw !== null && sizeRaw > 0n;
+  const placeEscrowRaw =
+    validPrice && validSize
+      ? orderSide === 'BID'
+        ? cumulativeMiniClobPaymentRaw(priceRaw, sizeRaw)
+        : sizeRaw
+      : null;
+  const canPlace =
+    isConnected &&
+    Boolean(address) &&
+    !wrongNetwork &&
+    conditionUnresolved &&
+    validPrice &&
+    validSize;
+
+  const restingOrders = useMemo(
+    () =>
+      [...book.orders].sort((left, right) => {
+        if (left.side !== right.side) return left.side === 'ASK' ? -1 : 1;
+        const leftPrice = BigInt(left.priceRaw);
+        const rightPrice = BigInt(right.priceRaw);
+        if (leftPrice !== rightPrice) {
+          if (left.side === 'ASK') return leftPrice < rightPrice ? -1 : 1;
+          return leftPrice > rightPrice ? -1 : 1;
+        }
+        return BigInt(left.orderId) < BigInt(right.orderId) ? -1 : 1;
+      }),
+    [book.orders],
+  );
+
+  const activeOrder = action && action.kind !== 'place' ? action.order : null;
+  const validFill =
+    action?.kind === 'fill' &&
+    fillSizeRaw !== null &&
+    fillSizeRaw > 0n &&
+    fillSizeRaw <= BigInt(action.order.remainingRaw);
+  const fillPaymentRaw =
+    action?.kind === 'fill' && validFill && fillSizeRaw !== null
+      ? miniClobFillPaymentRaw(
+          BigInt(action.order.priceRaw),
+          BigInt(action.order.filledRaw),
+          fillSizeRaw,
+        )
+      : null;
+
+  function selectOutcome(nextOutcome: Outcome) {
+    setOutcome(nextOutcome);
+    setPrice(
+      formatUnits(
+        BigInt(
+          nextOutcome === 'YES'
+            ? market.yesPriceRaw
+            : market.noPriceRaw,
+        ),
+        6,
+      ),
+    );
+    tx.reset();
+  }
+
+  function openAction(nextAction: BookAction) {
+    tx.reset();
+    setCompletion(null);
+    setAction(nextAction);
+    if (nextAction.kind === 'fill') {
+      setFillSize(formatUnits(BigInt(nextAction.order.remainingRaw), 6));
+    }
+  }
+
+  function closeAction() {
+    if (tx.isBusy) return;
+    setAction(null);
+    setCompletion(null);
+    tx.reset();
+  }
+
+  async function refreshAfterWrite(
+    receipt: Parameters<typeof rememberConfirmedChainLogs>[0],
+  ) {
+    rememberConfirmedChainLogs(receipt);
+    clearChainReadCache();
+    await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: ['markets'] }),
+      queryClient.invalidateQueries({ queryKey: ['market', market.id] }),
+      queryClient.invalidateQueries({ queryKey: ['order-book', market.id] }),
+      queryClient.invalidateQueries({ queryKey: ['account', address] }),
+      queryClient.invalidateQueries({ queryKey: ['activity'] }),
+      queryClient.invalidateQueries({ queryKey: ['settlement', market.id] }),
+    ]);
+  }
+
+  async function handleAction() {
+    if (!address || !action) return;
+
+    if (action.kind === 'place') {
+      if (!canPlace || priceRaw === null || sizeRaw === null) return;
+      const result = await tx.execute((report) =>
+        placeOrderOnArc({
+          account: address,
+          marketId: BigInt(market.id),
+          outcome,
+          side: orderSide,
+          priceRaw,
+          sizeRaw,
+          report,
+        }),
+      );
+      if (!result) return;
+      setCompletion(
+        `${result.orderId === null ? 'Order' : `Order #${result.orderId}`} confirmed. ${
+          orderSide === 'BID'
+            ? `${formatUsdc(result.escrowRaw.toString(), 6)} USDC`
+            : `${formatRaw(result.escrowRaw.toString(), {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 6,
+              })} ${outcome}`
+        } is escrowed on MiniCLOB.`,
+      );
+      await refreshAfterWrite(result.receipt);
+      return;
+    }
+
+    if (action.kind === 'fill') {
+      if (
+        !conditionUnresolved ||
+        !validFill ||
+        fillSizeRaw === null ||
+        wrongNetwork
+      ) {
+        return;
+      }
+      const result = await tx.execute((report) =>
+        fillOrderOnArc({
+          account: address,
+          orderId: BigInt(action.order.orderId),
+          fillSizeRaw,
+          report,
+        }),
+      );
+      if (!result) return;
+      setCompletion(
+        action.order.side === 'ASK'
+          ? `Fill confirmed: paid ${formatUsdc(result.paymentRaw.toString(), 6)} USDC and received ${formatRaw(result.fillSizeRaw.toString(), {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 6,
+            })} ${action.order.outcome}.`
+          : `Fill confirmed: delivered ${formatRaw(result.fillSizeRaw.toString(), {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 6,
+            })} ${action.order.outcome} and received ${formatUsdc(result.paymentRaw.toString(), 6)} USDC.`,
+      );
+      await refreshAfterWrite(result.receipt);
+      return;
+    }
+
+    if (
+      wrongNetwork ||
+      action.order.maker.toLowerCase() !== address.toLowerCase()
+    ) {
+      return;
+    }
+    const result = await tx.execute((report) =>
+      cancelOrderOnArc({
+        account: address,
+        orderId: BigInt(action.order.orderId),
+        report,
+      }),
+    );
+    if (!result) return;
+    setCompletion(
+      action.order.side === 'BID'
+        ? `Cancellation confirmed: ${formatUsdc(result.refundRaw.toString(), 6)} USDC refunded.`
+        : `Cancellation confirmed: ${formatRaw(result.refundRaw.toString(), {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 6,
+          })} ${action.order.outcome} refunded.`,
+    );
+    await refreshAfterWrite(result.receipt);
+  }
+
+  const placeButtonLabel = !isConnected
+    ? 'Connect wallet in the header'
+    : wrongNetwork
+      ? 'Switch to Arc Testnet'
+      : settlement.isLoading
+        ? 'Checking condition…'
+        : settlement.error
+          ? 'Condition read unavailable'
+          : !conditionUnresolved
+            ? 'Market resolved'
+            : !validPrice
+              ? 'Enter a price from 0 to 1'
+              : !validSize
+                ? 'Enter an order size'
+                : `Preview ${outcome} ${orderSide}`;
+
+  const confirmDisabled =
+    tx.isBusy ||
+    tx.state.phase === 'confirmed' ||
+    (action?.kind === 'place' && !canPlace) ||
+    (action?.kind === 'fill' &&
+      (!validFill || !conditionUnresolved || wrongNetwork)) ||
+    (action?.kind === 'cancel' &&
+      (wrongNetwork ||
+        !address ||
+        action.order.maker.toLowerCase() !== address.toLowerCase()));
+
+  const confirmLabel =
+    tx.state.phase === 'confirmed'
+      ? 'Confirmed'
+      : tx.state.phase === 'reverted'
+        ? 'Retry action'
+        : action?.kind === 'cancel'
+          ? 'Cancel & refund'
+          : action?.kind === 'fill'
+            ? 'Approve & fill'
+            : 'Approve & place';
 
   return (
-    <Card className={styles.card}>
-      <div className={styles.header}>
-        <div>
-          <h2>Order book</h2>
-          <p>Graduated market · live MiniCLOB getters</p>
+    <>
+      <Card className={styles.card}>
+        <div className={styles.header}>
+          <div>
+            <h2>MiniCLOB order book</h2>
+            <p>Live on-chain orders · prices in USDC per token</p>
+          </div>
+          <Tabs
+            ariaLabel="Order book outcome"
+            compact
+            onChange={selectOutcome}
+            options={[
+              { value: 'YES', label: 'YES' },
+              { value: 'NO', label: 'NO' },
+            ]}
+            value={outcome}
+          />
         </div>
-        <Tabs
-          ariaLabel="Order book outcome"
-          compact
-          onChange={setOutcome}
-          options={[
-            { value: 'YES', label: 'YES' },
-            { value: 'NO', label: 'NO' },
-          ]}
-          value={outcome}
-        />
-      </div>
-      <div className={styles.columns}>
-        <span>Price</span>
-        <span>Size</span>
-        <span>Total USDC</span>
-      </div>
-      <div className={`${styles.section} ${styles.asks}`}>
-        <span className={styles.sectionLabel}>Asks</span>
-        <Ladder book={book} side="asks" />
-      </div>
-      <div className={styles.spread}>
-        <span>Spread</span>
-        <strong className="numeric">
-          {book.asks[0] && book.bids[0]
-            ? formatPrice(
-                (BigInt(book.asks[0].priceRaw) - BigInt(book.bids[0].priceRaw)).toString(),
-                3,
-              )
-            : '—'}
-        </strong>
-      </div>
-      <div className={`${styles.section} ${styles.bids}`}>
-        <span className={styles.sectionLabel}>Bids</span>
-        <Ladder book={book} side="bids" />
-      </div>
-    </Card>
+
+        <div className={styles.workspace}>
+          <div className={styles.book}>
+            <div className={styles.columns}>
+              <span>Price</span>
+              <span>Size</span>
+              <span>Total USDC</span>
+              <span>Orders</span>
+            </div>
+            <div className={styles.section}>
+              <span className={styles.sectionLabel}>Asks · sell {outcome}</span>
+              <Ladder book={book} side="asks" />
+            </div>
+            <div className={styles.spread}>
+              <span>Spread</span>
+              <strong className="numeric">
+                {book.asks[0] && book.bids[0]
+                  ? formatPrice(
+                      (
+                        BigInt(book.asks[0].priceRaw) -
+                        BigInt(book.bids[0].priceRaw)
+                      ).toString(),
+                      3,
+                    )
+                  : '—'}
+              </strong>
+            </div>
+            <div className={styles.section}>
+              <span className={styles.sectionLabel}>Bids · buy {outcome}</span>
+              <Ladder book={book} side="bids" />
+            </div>
+          </div>
+
+          <section className={styles.ticket}>
+            <div className={styles.ticketHeader}>
+              <h3>Place order</h3>
+              <span
+                className={`${styles.outcomePill} ${
+                  outcome === 'YES' ? styles.yes : styles.no
+                }`}
+              >
+                {outcome}
+              </span>
+            </div>
+            <Tabs
+              ariaLabel="Order side"
+              className={styles.sideTabs}
+              compact
+              onChange={(side) => {
+                setOrderSide(side);
+                tx.reset();
+              }}
+              options={[
+                { value: 'BID', label: 'Buy · BID' },
+                { value: 'ASK', label: 'Sell · ASK' },
+              ]}
+              value={orderSide}
+            />
+            <label className={styles.field}>
+              <span>Limit price</span>
+              <span className={styles.input}>
+                <input
+                  aria-invalid={!validPrice}
+                  inputMode="decimal"
+                  onChange={(event) => setPrice(event.target.value)}
+                  value={price}
+                />
+                <b>USDC/token</b>
+              </span>
+            </label>
+            <label className={styles.field}>
+              <span>Size</span>
+              <span className={styles.input}>
+                <input
+                  aria-invalid={!validSize}
+                  inputMode="decimal"
+                  onChange={(event) => setSize(event.target.value)}
+                  value={size}
+                />
+                <b>{outcome}</b>
+              </span>
+            </label>
+            <dl className={styles.ticketRows}>
+              <div>
+                <dt>{orderSide === 'BID' ? 'USDC escrow' : `${outcome} escrow`}</dt>
+                <dd className="numeric">
+                  {placeEscrowRaw === null
+                    ? '—'
+                    : orderSide === 'BID'
+                      ? `${formatUsdc(placeEscrowRaw.toString(), 6)} USDC`
+                      : `${formatRaw(placeEscrowRaw.toString(), {
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 6,
+                        })} ${outcome}`}
+                </dd>
+              </div>
+              <div>
+                <dt>Wallet holds</dt>
+                <dd className="numeric">
+                  {selectedPosition
+                    ? `${formatRaw(selectedPosition.qtyRaw, {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 3,
+                      })} ${outcome}`
+                    : `0 ${outcome}`}
+                </dd>
+              </div>
+            </dl>
+            <Button
+              disabled={!canPlace}
+              fullWidth
+              onClick={() => openAction({ kind: 'place' })}
+              variant={outcome === 'YES' ? 'mint' : 'sky'}
+            >
+              {placeButtonLabel}
+            </Button>
+            <p className={styles.onchainNote}>
+              Escrow and order state remain fully on-chain in MiniCLOB.
+            </p>
+          </section>
+        </div>
+
+        <section className={styles.resting}>
+          <div className={styles.restingHeader}>
+            <div>
+              <h3>Resting {outcome} orders</h3>
+              <p>Raw orders backing the aggregated ladder</p>
+            </div>
+            <span className="numeric">{restingOrders.length} open</span>
+          </div>
+          {!conditionUnresolved && !settlement.isLoading && !settlement.error && (
+            <p className={styles.resolvedNotice}>
+              Conditional Tokens is resolved. New orders and fills are disabled;
+              makers may still cancel their own escrowed orders.
+            </p>
+          )}
+          {settlement.error && (
+            <p className={styles.resolvedNotice} role="alert">
+              The payout denominator could not be verified. Fills stay disabled
+              until the live condition read succeeds.
+            </p>
+          )}
+          <div className={styles.orderTable}>
+            <div className={`${styles.orderRow} ${styles.orderHead}`}>
+              <span>Order</span>
+              <span>Side</span>
+              <span>Price</span>
+              <span>Remaining</span>
+              <span>Maker</span>
+              <span>Action</span>
+            </div>
+            {restingOrders.length === 0 ? (
+              <div className={styles.orderEmpty}>
+                No resting {outcome} orders on-chain.
+              </div>
+            ) : (
+              restingOrders.map((order) => {
+                const ownOrder =
+                  Boolean(address) &&
+                  order.maker.toLowerCase() === address?.toLowerCase();
+                return (
+                  <div className={styles.orderRow} key={order.orderId}>
+                    <span className="numeric">
+                      #{order.orderId}
+                      {order.isSeed && <small>Seed</small>}
+                    </span>
+                    <span className={styles.sideLabel}>{order.side}</span>
+                    <span className="numeric">
+                      {formatPrice(order.priceRaw, 3)}
+                    </span>
+                    <span className="numeric">
+                      {formatRaw(order.remainingRaw, {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 3,
+                      })}
+                    </span>
+                    <code
+                      className="mono"
+                      title={order.maker}
+                    >
+                      {shortAddress(order.maker, 4, 3)}
+                    </code>
+                    <span className={styles.actionGroup}>
+                      <button
+                        className={styles.rowAction}
+                        disabled={
+                          !isConnected ||
+                          wrongNetwork ||
+                          !conditionUnresolved ||
+                          tx.isBusy
+                        }
+                        onClick={() => openAction({ kind: 'fill', order })}
+                        type="button"
+                      >
+                        Fill
+                      </button>
+                      {ownOrder && (
+                        <button
+                          className={`${styles.rowAction} ${styles.cancelAction}`}
+                          disabled={wrongNetwork || tx.isBusy}
+                          onClick={() => openAction({ kind: 'cancel', order })}
+                          type="button"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+      </Card>
+
+      <ConfirmModal
+        closeDisabled={tx.isBusy}
+        closeOnConfirm={false}
+        confirmDisabled={confirmDisabled}
+        confirmLabel={confirmLabel}
+        kicker="Live Arc transaction"
+        onClose={closeAction}
+        onConfirm={handleAction}
+        open={action !== null}
+        title={actionTitle(action)}
+      >
+        {action?.kind === 'place' && (
+          <>
+            <p>
+              The market binding, CTF payout denominator, balance, and approval
+              are re-read immediately before signing. The contract call is{' '}
+              <code>
+                place(conditionId, tokenId, {orderSide === 'BID' ? 0 : 1},{' '}
+                {priceRaw?.toString() ?? '—'}, {sizeRaw?.toString() ?? '—'})
+              </code>
+              .
+            </p>
+            <dl className={styles.confirmRows}>
+              <div>
+                <dt>Order</dt>
+                <dd>
+                  {outcome} {orderSide} @{' '}
+                  <span className="numeric">
+                    {validPrice && priceRaw !== null
+                      ? formatPrice(priceRaw.toString(), 6)
+                      : '—'}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>Size</dt>
+                <dd className="numeric">
+                  {validSize && sizeRaw !== null
+                    ? formatRaw(sizeRaw.toString(), {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 6,
+                      })
+                    : '—'}{' '}
+                  {outcome}
+                </dd>
+              </div>
+              <div>
+                <dt>Approval</dt>
+                <dd>
+                  {orderSide === 'BID'
+                    ? 'USDC → MiniCLOB if needed'
+                    : 'CTF → MiniCLOB if needed'}
+                </dd>
+              </div>
+            </dl>
+          </>
+        )}
+
+        {action?.kind === 'fill' && activeOrder && (
+          <>
+            <p>
+              Order #{activeOrder.orderId}, its dynamic{' '}
+              <code>minimumFillRaw</code>, remaining size, and payout
+              denominator are re-read before signing.
+            </p>
+            <label className={styles.modalField}>
+              <span>Fill size</span>
+              <span className={styles.input}>
+                <input
+                  aria-invalid={!validFill}
+                  inputMode="decimal"
+                  onChange={(event) => setFillSize(event.target.value)}
+                  value={fillSize}
+                />
+                <b>{activeOrder.outcome}</b>
+              </span>
+            </label>
+            <dl className={styles.confirmRows}>
+              <div>
+                <dt>Maker side</dt>
+                <dd>{activeOrder.side}</dd>
+              </div>
+              <div>
+                <dt>Limit price</dt>
+                <dd className="numeric">
+                  {formatPrice(activeOrder.priceRaw, 6)} USDC/token
+                </dd>
+              </div>
+              <div>
+                <dt>Current payment</dt>
+                <dd className="numeric">
+                  {fillPaymentRaw === null
+                    ? '—'
+                    : `${formatUsdc(fillPaymentRaw.toString(), 6)} USDC`}
+                </dd>
+              </div>
+              <div>
+                <dt>Approval</dt>
+                <dd>
+                  {activeOrder.side === 'ASK'
+                    ? 'USDC → MiniCLOB if needed'
+                    : 'CTF → MiniCLOB if needed'}
+                </dd>
+              </div>
+            </dl>
+          </>
+        )}
+
+        {action?.kind === 'cancel' && activeOrder && (
+          <>
+            <p>
+              MiniCLOB re-reads the maker and open order immediately before the
+              wallet signs <code>cancel({activeOrder.orderId})</code>. Remaining
+              escrow is returned by the contract.
+            </p>
+            <dl className={styles.confirmRows}>
+              <div>
+                <dt>Remaining size</dt>
+                <dd className="numeric">
+                  {formatRaw(activeOrder.remainingRaw, {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 6,
+                  })}{' '}
+                  {activeOrder.outcome}
+                </dd>
+              </div>
+              <div>
+                <dt>Expected refund</dt>
+                <dd className="numeric">
+                  {activeOrder.side === 'BID'
+                    ? `${formatUsdc(orderRefundRaw(activeOrder).toString(), 6)} USDC`
+                    : `${formatRaw(orderRefundRaw(activeOrder).toString(), {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 6,
+                      })} ${activeOrder.outcome}`}
+                </dd>
+              </div>
+            </dl>
+          </>
+        )}
+
+        {completion && (
+          <p className={styles.completion} role="status">
+            {completion}
+          </p>
+        )}
+        <TxStatus state={tx.state} />
+      </ConfirmModal>
+    </>
   );
 }

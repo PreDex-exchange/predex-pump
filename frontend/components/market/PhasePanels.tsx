@@ -1,16 +1,12 @@
 'use client';
 
-import type { Market, Outcome, Resolution } from '@predex-pump/shared/domain';
-import { useState } from 'react';
+import type { Market, Resolution } from '@predex-pump/shared/domain';
 
 import { HatchingChick } from '@/components/mascot/HatchingChick';
 import { OutcomeBadge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
-import { Tabs } from '@/components/ui/Tabs';
-import { formatPrice, formatRaw } from '@/lib/format';
+import { formatRaw } from '@/lib/format';
 
 import styles from './PhasePanels.module.css';
 
@@ -32,92 +28,6 @@ export function HatchedHeader({ market }: { market: Market }) {
         Trading
       </span>
     </section>
-  );
-}
-
-export function BookActionPanel({ market }: { market: Market }) {
-  const [outcome, setOutcome] = useState<Outcome>('YES');
-  const [orderSide, setOrderSide] = useState<'BID' | 'ASK'>('BID');
-  const [open, setOpen] = useState(false);
-
-  return (
-    <aside className={styles.actionSticky}>
-      <Card>
-        <h2 className={styles.actionTitle}>Place an order</h2>
-        <Tabs
-          ariaLabel="Order side"
-          onChange={setOrderSide}
-          options={[
-            { value: 'BID', label: 'Buy' },
-            { value: 'ASK', label: 'Sell' },
-          ]}
-          value={orderSide}
-        />
-        <div className={styles.outcomeTabs}>
-          {(['YES', 'NO'] as const).map((value) => (
-            <button
-              className={`${styles.outcomeButton} ${styles[value.toLowerCase()]} ${
-                outcome === value ? styles.outcomeSelected : ''
-              }`}
-              key={value}
-              onClick={() => setOutcome(value)}
-              type="button"
-            >
-              <span>{value}</span>
-              <NumberDisplay>
-                {formatPrice(value === 'YES' ? market.yesPriceRaw : market.noPriceRaw)}
-              </NumberDisplay>
-            </button>
-          ))}
-        </div>
-        <label className={styles.bookField}>
-          Limit price
-          <span>
-            <input defaultValue={formatPrice(outcome === 'YES' ? market.yesPriceRaw : market.noPriceRaw, 3)} inputMode="decimal" />
-            <b>USDC</b>
-          </span>
-        </label>
-        <label className={styles.bookField}>
-          Size
-          <span>
-            <input defaultValue="50.00" inputMode="decimal" />
-            <b>{outcome}</b>
-          </span>
-        </label>
-        <div className={styles.orderTotal}>
-          <span>Estimated total</span>
-          <strong className="numeric">36.50 USDC</strong>
-        </div>
-        <Button
-          fullWidth
-          onClick={() => setOpen(true)}
-          size="large"
-          variant={outcome === 'YES' ? 'mint' : 'sky'}
-        >
-          Preview order
-        </Button>
-        <p className={styles.note}>
-          Coming soon — MiniCLOB place, fill, and cancel writes are deferred after Phase C3.
-        </p>
-      </Card>
-      <ConfirmModal
-        onClose={() => setOpen(false)}
-        onConfirm={() =>
-          console.info('Deferred MiniCLOB place-order preview', {
-            marketId: market.id,
-            outcome,
-            orderSide,
-          })
-        }
-        open={open}
-        title="Order preview"
-      >
-        <p>
-          Coming soon. This preview does not request MiniCLOB approval or submit a place
-          transaction.
-        </p>
-      </ConfirmModal>
-    </aside>
   );
 }
 
