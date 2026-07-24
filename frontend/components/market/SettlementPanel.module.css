@@ -1,0 +1,259 @@
+.sticky {
+  position: sticky;
+  top: 104px;
+}
+
+.card {
+  font-variant-numeric: tabular-nums;
+}
+
+.heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.heading h2 {
+  margin: 2px 0 0;
+  font-family: var(--font-nunito), system-ui, sans-serif;
+  font-size: 1.1rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.kicker {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invalidBadge {
+  display: inline-flex;
+  flex: none;
+  padding: 5px 9px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-pill);
+  background: var(--reward-soft);
+  color: var(--ink);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.stateTable,
+.moneyTable,
+.positionTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.stateTable {
+  margin-bottom: var(--space-4);
+}
+
+.stateTable th,
+.stateTable td,
+.moneyTable th,
+.moneyTable td {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.stateTable th,
+.moneyTable th {
+  color: var(--muted);
+  font-weight: 700;
+  text-align: left;
+}
+
+.stateTable td,
+.moneyTable td {
+  color: var(--ink);
+  font-weight: 800;
+  text-align: right;
+}
+
+.section {
+  padding-top: var(--space-4);
+  margin-top: var(--space-4);
+  border-top: 2px solid var(--hairline);
+}
+
+.section h3 {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-nunito), system-ui, sans-serif;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.explainer {
+  margin: 0 0 var(--space-4);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.outcomeFieldset {
+  padding: 0;
+  margin: 0 0 var(--space-4);
+  border: 0;
+}
+
+.outcomeFieldset legend {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.outcomeFieldset > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.outcomeChoice {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+}
+
+.outcomeChoice span {
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.outcomeChoice code {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.outcomeChoice[aria-pressed='true'].yes {
+  border-color: var(--yes);
+  background: var(--yes-soft);
+}
+
+.outcomeChoice[aria-pressed='true'].no {
+  border-color: var(--no);
+  background: var(--no-soft);
+}
+
+.outcomeChoice[aria-pressed='true'].invalid {
+  border-color: var(--warning);
+  background: var(--reward-soft);
+}
+
+.moneyButton,
+.inlineMoneyButton {
+  transform: none !important;
+  box-shadow: 0 2px 0 var(--outline) !important;
+  transition: background var(--duration-short) !important;
+}
+
+.inlineMoneyButton {
+  min-height: 30px;
+  padding: 6px 10px;
+  border-width: 1px;
+  font-size: 0.68rem;
+}
+
+.readState {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.readOnly {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-input);
+  background: #fbf9f5;
+  font-size: 0.72rem;
+}
+
+.readOnly strong {
+  color: var(--ink);
+}
+
+.readOnly span {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.readOnly code {
+  color: var(--ink);
+}
+
+.positionTableWrap {
+  overflow-x: auto;
+}
+
+.positionTable th,
+.positionTable td {
+  padding: 8px 5px;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.positionTable th {
+  color: var(--muted);
+  font-weight: 700;
+  text-align: left;
+}
+
+.positionTable td {
+  color: var(--ink);
+  font-weight: 700;
+  text-align: right;
+}
+
+.positionTable td:last-child {
+  padding-right: 0;
+}
+
+.creatorActions {
+  display: grid;
+  gap: 10px;
+  padding-top: var(--space-4);
+  margin-top: var(--space-4);
+  border-top: 2px solid var(--hairline);
+}
+
+.creatorActions > span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.warning {
+  padding: 10px 12px;
+  border-left: 3px solid var(--warning);
+  background: var(--reward-soft);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+@media (max-width: 980px) {
+  .sticky {
+    position: static;
+  }
+}

@@ -1,8 +1,11 @@
 import {
   decodeEventLog,
+  encodeAbiParameters,
   getAddress,
+  hashMessage,
   keccak256,
   maxUint256,
+  recoverMessageAddress,
   stringToHex,
   type Abi,
   type Address,
@@ -12,15 +15,17 @@ import {
 } from 'viem';
 import {
   getAccount,
+  signMessage,
   waitForTransactionReceipt,
   writeContract,
 } from 'wagmi/actions';
 
 import { ADDRESSES, ARC } from '@/lib/shared/addresses';
 
-import { arcPublicClient } from './client';
+import { arcPublicClient, readSettlementEventState } from './client';
 import { wagmiConfig } from './config';
 import {
+  committeeOracleAbi,
   collateralErc20Abi,
   conditionalTokensAbi,
   incubatorLmsrAbi,
@@ -29,6 +34,20 @@ import {
 
 const DEADLINE_BUFFER_SECONDS = 20n * 60n;
 const BPS_SCALE = 10_000n;
+const ZERO_COLLECTION_ID =
+  '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex;
+const COMMITTEE_DOMAIN_LABEL = 'PredexCommitteeOracleV2';
+
+export type ResolutionChoice = 'YES' | 'NO' | 'INVALID';
+
+const RESOLUTION_PAYOUTS: Record<
+  ResolutionChoice,
+  readonly [bigint, bigint]
+> = {
+  YES: [1n, 0n],
+  NO: [0n, 1n],
+  INVALID: [1n, 1n],
+};
 
 export type TxPhase =
   | 'idle'
@@ -94,6 +113,14 @@ interface GraduateInput {
   account: Address;
   marketId: bigint;
   report: TxReporter;
+}
+
+interface ResolveInput extends GraduateInput {
+  outcome: ResolutionChoice;
+}
+
+interface RedeemInput extends GraduateInput {
+  outcome: 'YES' | 'NO';
 }
 
 interface ContractWrite {
@@ -182,6 +209,53 @@ async function readCollateralBalance(account: Address) {
     functionName: 'balanceOf',
     args: [account],
   });
+}
+
+type MarketLifecycle = readonly [
+  Address,
+  number,
+  number,
+  boolean,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
+
+type TokenBinding = readonly [
+  Address,
+  Address,
+  Address,
+  Hex,
+  Hex,
+  bigint,
+  bigint,
+];
+
+async function readLifecycle(marketId: bigint) {
+  return (await arcPublicClient.readContract({
+    address: ADDRESSES.registry,
+    abi: incubatorRegistryAbi,
+    functionName: 'marketLifecycle',
+    args: [marketId],
+  })) as MarketLifecycle;
+}
+
+function sameAddress(left: Address, right: Address) {
+  return getAddress(left) === getAddress(right);
+}
+
+function assertDeploymentBinding(binding: TokenBinding) {
+  if (
+    !sameAddress(binding[0], ADDRESSES.usdc) ||
+    !sameAddress(binding[1], ADDRESSES.ctf) ||
+    !sameAddress(binding[2], ADDRESSES.oracle)
+  ) {
+    throw new Error(
+      'The live market token binding does not match the configured Arc deployment.',
+    );
+  }
 }
 
 async function approveCollateral(
@@ -461,7 +535,7 @@ async function readTokenBinding(marketId: bigint) {
     abi: incubatorRegistryAbi,
     functionName: 'tokenBinding',
     args: [marketId],
-  })) as readonly [Address, Address, Address, Hex, Hex, bigint, bigint];
+  })) as TokenBinding;
 }
 
 export async function sellOnArc({
@@ -656,6 +730,565 @@ export async function graduateOnArc({
     report,
   );
   return { receipt, tollRaw };
+}
+
+/**
+ * CommitteeOracleAdapterV2 does not use EIP-712. Its source-of-truth digest is:
+ *
+ *   personal_sign(
+ *     keccak256(abi.encode(
+ *       keccak256(abi.encode("PredexCommitteeOracleV2", chainId, oracle)),
+ *       questionId,
+ *       payouts,
+ *       nonce
+ *     ))
+ *   )
+ *
+ * Keep this helper exported so the live read-smoke and the wallet path share the
+ * exact same encoding.
+ */
+export function buildCommitteeResolutionDigest({
+  chainId,
+  oracle,
+  questionId,
+  payouts,
+  nonce,
+}: {
+  chainId: number;
+  oracle: Address;
+  questionId: Hex;
+  payouts: readonly [bigint, bigint];
+  nonce: bigint;
+}) {
+  const domainSeparator = keccak256(
+    encodeAbiParameters(
+      [
+        { type: 'string' },
+        { type: 'uint256' },
+        { type: 'address' },
+      ],
+      [COMMITTEE_DOMAIN_LABEL, BigInt(chainId), oracle],
+    ),
+  );
+  const payloadDigest = keccak256(
+    encodeAbiParameters(
+      [
+        { type: 'bytes32' },
+        { type: 'bytes32' },
+        { type: 'uint256[]' },
+        { type: 'uint256' },
+      ],
+      [domainSeparator, questionId, [...payouts], nonce],
+    ),
+  );
+  return {
+    domainSeparator,
+    payloadDigest,
+    resolutionDigest: hashMessage({ raw: payloadDigest }),
+  };
+}
+
+async function readResolutionEligibility(
+  account: Address,
+  marketId: bigint,
+  payouts: readonly [bigint, bigint],
+) {
+  const [lifecycle, binding, tradingEndsAt, block] = await Promise.all([
+    readLifecycle(marketId),
+    readTokenBinding(marketId),
+    arcPublicClient.readContract({
+      address: ADDRESSES.registry,
+      abi: incubatorRegistryAbi,
+      functionName: 'marketTradingEndsAt',
+      args: [marketId],
+    }) as Promise<bigint>,
+    arcPublicClient.getBlock(),
+  ]);
+  assertDeploymentBinding(binding);
+
+  const lifecycleState = Number(lifecycle[2]);
+  if (
+    lifecycleState === 4 ||
+    lifecycleState === 5 ||
+    (lifecycleState !== 3 && block.timestamp < tradingEndsAt)
+  ) {
+    throw new Error(
+      'Resolution is available only after graduation or the live trading deadline.',
+    );
+  }
+
+  const questionId = binding[3];
+  const [
+    initialized,
+    resolved,
+    currentMember,
+    snapshotMember,
+    threshold,
+    nonce,
+    onchainDomainSeparator,
+    onchainResolutionDigest,
+  ] = await Promise.all([
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'isInitialized',
+      args: [questionId],
+    }) as Promise<boolean>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'isResolved',
+      args: [questionId],
+    }) as Promise<boolean>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'isCurrentMember',
+      args: [account],
+    }) as Promise<boolean>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'isSnapshotMember',
+      args: [questionId, account],
+    }) as Promise<boolean>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'questionThreshold',
+      args: [questionId],
+    }) as Promise<bigint>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'questionNonce',
+      args: [questionId],
+    }) as Promise<bigint>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'domainSeparator',
+    }) as Promise<Hex>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'resolutionDigest',
+      args: [questionId, [...payouts]],
+    }) as Promise<Hex>,
+  ]);
+
+  if (!initialized) throw new Error('The oracle question is not initialized.');
+  if (resolved) throw new Error('The oracle question has already been resolved.');
+  if (!currentMember || !snapshotMember) {
+    throw new Error(
+      'The connected wallet is not both a current and snapshotted committee signer.',
+    );
+  }
+  if (threshold !== 1n) {
+    throw new Error(
+      `This UI can submit the demo threshold-1 flow only; the question threshold is ${threshold}.`,
+    );
+  }
+
+  const digest = buildCommitteeResolutionDigest({
+    chainId: ARC.chainId,
+    oracle: ADDRESSES.oracle,
+    questionId,
+    payouts,
+    nonce,
+  });
+  if (digest.domainSeparator !== onchainDomainSeparator) {
+    throw new Error(
+      'The client committee domain separator does not match the live oracle.',
+    );
+  }
+  if (digest.resolutionDigest !== onchainResolutionDigest) {
+    throw new Error(
+      'The client committee resolution digest does not match the live oracle.',
+    );
+  }
+
+  return {
+    questionId,
+    nonce,
+    digest,
+    onchainResolutionDigest,
+  };
+}
+
+export async function resolveOnArc({
+  account,
+  marketId,
+  outcome,
+  report,
+}: ResolveInput) {
+  assertConnectedAccount(account);
+  report({
+    phase: 'checking',
+    message:
+      'Refreshing the lifecycle, deadline, oracle membership, nonce, and resolution digest…',
+  });
+  const payouts = RESOLUTION_PAYOUTS[outcome];
+  const fresh = await readResolutionEligibility(
+    account,
+    marketId,
+    payouts,
+  );
+
+  assertConnectedAccount(account);
+  report({
+    phase: 'awaiting-signature',
+    message: `Sign the nonce-bound ${outcome} committee resolution message.`,
+  });
+  const signature = await signMessage(wagmiConfig, {
+    account,
+    message: { raw: fresh.digest.payloadDigest },
+  });
+  const recovered = await recoverMessageAddress({
+    message: { raw: fresh.digest.payloadDigest },
+    signature,
+  });
+  if (!sameAddress(recovered, account)) {
+    throw new Error('The committee signature did not recover to the connected wallet.');
+  }
+
+  // A signature is useful only for one question nonce. Re-read all mutable
+  // authorization state after the wallet returns and before requesting the tx.
+  report({
+    phase: 'checking',
+    message: 'Signature captured. Re-checking the live committee nonce and membership…',
+  });
+  const rechecked = await readResolutionEligibility(
+    account,
+    marketId,
+    payouts,
+  );
+  if (
+    rechecked.nonce !== fresh.nonce ||
+    rechecked.onchainResolutionDigest !== fresh.onchainResolutionDigest
+  ) {
+    throw new Error(
+      'The committee question changed while the signature was open. Review and sign again.',
+    );
+  }
+
+  const receipt = await sendAndConfirm(
+    account,
+    {
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'resolve',
+      args: [fresh.questionId, [...payouts], [signature]],
+    },
+    {
+      awaiting: 'Confirm CommitteeOracleAdapterV2.resolve in the injected wallet.',
+      pending: 'Committee resolution is pending on Arc…',
+      confirmed: `${outcome} resolution confirmed on Arc. It can now be observed by the LMSR.`,
+    },
+    report,
+  );
+  return {
+    receipt,
+    questionId: fresh.questionId,
+    payouts,
+    digest: fresh.onchainResolutionDigest,
+  };
+}
+
+export async function observeResolutionOnArc({
+  account,
+  marketId,
+  report,
+}: GraduateInput) {
+  assertConnectedAccount(account);
+  report({
+    phase: 'checking',
+    message: 'Refreshing the registry lifecycle and Conditional Tokens payouts…',
+  });
+  const [lifecycle, binding] = await Promise.all([
+    readLifecycle(marketId),
+    readTokenBinding(marketId),
+  ]);
+  assertDeploymentBinding(binding);
+  if (Number(lifecycle[2]) === 4 || Number(lifecycle[2]) === 5) {
+    throw new Error('This market resolution has already been observed.');
+  }
+  const [oracleResolved, denominator] = await Promise.all([
+    arcPublicClient.readContract({
+      address: ADDRESSES.oracle,
+      abi: committeeOracleAbi,
+      functionName: 'isResolved',
+      args: [binding[3]],
+    }) as Promise<boolean>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.ctf,
+      abi: conditionalTokensAbi,
+      functionName: 'payoutDenominator',
+      args: [binding[4]],
+    }) as Promise<bigint>,
+  ]);
+  if (!oracleResolved || denominator === 0n) {
+    throw new Error('The oracle resolution is not yet available to observe.');
+  }
+
+  const receipt = await sendAndConfirm(
+    account,
+    {
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'observeResolution',
+      args: [marketId],
+    },
+    {
+      awaiting: 'Confirm IncubatorLMSR.observeResolution in the injected wallet.',
+      pending: 'Resolution observation is pending on Arc…',
+      confirmed: 'Resolution observed. Eligible CTF positions can now be redeemed.',
+    },
+    report,
+  );
+  return { receipt };
+}
+
+export async function redeemOnArc({
+  account,
+  marketId,
+  outcome,
+  report,
+}: RedeemInput) {
+  assertConnectedAccount(account);
+  report({
+    phase: 'checking',
+    message: `Refreshing the ${outcome} CTF balance and payout vector…`,
+  });
+  const [lifecycle, binding] = await Promise.all([
+    readLifecycle(marketId),
+    readTokenBinding(marketId),
+  ]);
+  assertDeploymentBinding(binding);
+  if (Number(lifecycle[2]) !== 4) {
+    throw new Error(
+      'Redemption is available in the ResolvedObserved phase before closeout.',
+    );
+  }
+
+  const outcomeIndex = outcome === 'YES' ? 0n : 1n;
+  const tokenId = outcome === 'YES' ? binding[5] : binding[6];
+  const indexSet = outcome === 'YES' ? 1n : 2n;
+  const [balance, numerator, denominator] = await Promise.all([
+    arcPublicClient.readContract({
+      address: ADDRESSES.ctf,
+      abi: conditionalTokensAbi,
+      functionName: 'balanceOf',
+      args: [account, tokenId],
+    }) as Promise<bigint>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.ctf,
+      abi: conditionalTokensAbi,
+      functionName: 'payoutNumerators',
+      args: [binding[4], outcomeIndex],
+    }) as Promise<bigint>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.ctf,
+      abi: conditionalTokensAbi,
+      functionName: 'payoutDenominator',
+      args: [binding[4]],
+    }) as Promise<bigint>,
+  ]);
+  if (denominator === 0n) throw new Error('The CTF payout is not available.');
+  if (balance === 0n || numerator === 0n) {
+    throw new Error(`The connected wallet has no redeemable ${outcome} position.`);
+  }
+  const redeemableRaw = (balance * numerator) / denominator;
+
+  const receipt = await sendAndConfirm(
+    account,
+    {
+      address: ADDRESSES.ctf,
+      abi: conditionalTokensAbi,
+      functionName: 'redeemPositions',
+      args: [ADDRESSES.usdc, ZERO_COLLECTION_ID, binding[4], [indexSet]],
+    },
+    {
+      awaiting: `Confirm ConditionalTokens.redeemPositions for ${outcome}.`,
+      pending: `${outcome} redemption is pending on Arc…`,
+      confirmed: `${outcome} redemption confirmed on Arc.`,
+    },
+    report,
+  );
+  return { receipt, redeemableRaw, indexSet };
+}
+
+export async function closeoutOnArc({
+  account,
+  marketId,
+  report,
+}: GraduateInput) {
+  assertConnectedAccount(account);
+  report({
+    phase: 'checking',
+    message: 'Refreshing the registry and LMSR resolution state before closeout…',
+  });
+  const [lifecycle, ammState] = await Promise.all([
+    readLifecycle(marketId),
+    arcPublicClient.readContract({
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'ammState',
+      args: [marketId],
+    }) as Promise<{ resolved: boolean; closedOut: boolean }>,
+  ]);
+  if (
+    Number(lifecycle[2]) !== 4 ||
+    !ammState.resolved ||
+    ammState.closedOut
+  ) {
+    throw new Error('The market is not in a fresh ResolvedObserved state.');
+  }
+
+  const receipt = await sendAndConfirm(
+    account,
+    {
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'closeout',
+      args: [marketId],
+    },
+    {
+      awaiting: 'Confirm IncubatorLMSR.closeout in the injected wallet.',
+      pending: 'Market closeout is pending on Arc…',
+      confirmed: 'Market closeout confirmed on Arc.',
+    },
+    report,
+  );
+  return { receipt };
+}
+
+async function assertCreatorAtCloseout(account: Address, marketId: bigint) {
+  const lifecycle = await readLifecycle(marketId);
+  if (Number(lifecycle[2]) !== 5) {
+    throw new Error('The market must be ClosedOut first.');
+  }
+  if (!sameAddress(lifecycle[0], account)) {
+    throw new Error('Only the market creator can use this closeout control.');
+  }
+  return lifecycle;
+}
+
+export async function claimFundingResidualOnArc({
+  account,
+  marketId,
+  report,
+}: GraduateInput) {
+  assertConnectedAccount(account);
+  report({
+    phase: 'checking',
+    message: 'Refreshing creator funding shares and terminal accounting…',
+  });
+  await assertCreatorAtCloseout(account, marketId);
+  const [shares, totalShares, terminal] = await Promise.all([
+    arcPublicClient.readContract({
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'fundingShares',
+      args: [marketId, account],
+    }) as Promise<bigint>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'totalFundingShares',
+      args: [marketId],
+    }) as Promise<bigint>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'terminalAccounting',
+      args: [marketId],
+    }) as Promise<readonly [bigint, ...unknown[]]>,
+  ]);
+  const fundingResidualRaw = terminal[0];
+  if (shares === 0n || totalShares === 0n || fundingResidualRaw === 0n) {
+    throw new Error('The creator has no funding residual available to claim.');
+  }
+  const claimableRaw = (fundingResidualRaw * shares) / totalShares;
+  if (claimableRaw === 0n) {
+    throw new Error('The creator funding residual rounds to zero.');
+  }
+
+  const receipt = await sendAndConfirm(
+    account,
+    {
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'claimFundingResidual',
+      args: [marketId],
+    },
+    {
+      awaiting: 'Confirm IncubatorLMSR.claimFundingResidual in the injected wallet.',
+      pending: 'Funding residual claim is pending on Arc…',
+      confirmed: 'Funding residual claimed on Arc.',
+    },
+    report,
+  );
+  return { receipt, claimableRaw };
+}
+
+export async function sweepProtocolAfterCloseoutOnArc({
+  account,
+  marketId,
+  report,
+}: GraduateInput) {
+  assertConnectedAccount(account);
+  report({
+    phase: 'checking',
+    message: 'Refreshing closeout protocol fees and PnL before the sweep…',
+  });
+  await assertCreatorAtCloseout(account, marketId);
+  const [ammState, terminal, events] = await Promise.all([
+    arcPublicClient.readContract({
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'ammState',
+      args: [marketId],
+    }) as Promise<{ protocolFeesAccruedRaw: bigint; closedOut: boolean }>,
+    arcPublicClient.readContract({
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'terminalAccounting',
+      args: [marketId],
+    }) as Promise<
+      readonly [bigint, bigint, bigint, bigint, ...unknown[]]
+    >,
+    readSettlementEventState(marketId, { fresh: true }),
+  ]);
+  if (!ammState.closedOut) throw new Error('The LMSR is not closed out.');
+  if (events.protocolSweepCompleted) {
+    throw new Error('The closeout protocol sweep has already completed.');
+  }
+  const protocolPnlAvailableRaw = terminal[2] - terminal[3];
+  if (
+    ammState.protocolFeesAccruedRaw === 0n &&
+    protocolPnlAvailableRaw === 0n
+  ) {
+    throw new Error('There are no protocol fees or PnL available to sweep.');
+  }
+
+  const receipt = await sendAndConfirm(
+    account,
+    {
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'sweepProtocolAfterCloseout',
+      args: [marketId],
+    },
+    {
+      awaiting:
+        'Confirm IncubatorLMSR.sweepProtocolAfterCloseout in the injected wallet.',
+      pending: 'Protocol closeout sweep is pending on Arc…',
+      confirmed: 'Protocol fees and PnL swept to the protocol depth account.',
+    },
+    report,
+  );
+  return { receipt };
 }
 
 export function chainErrorMessage(error: unknown) {

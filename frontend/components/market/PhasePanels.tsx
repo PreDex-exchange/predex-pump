@@ -1,6 +1,6 @@
 'use client';
 
-import type { Market, Outcome, Position, Resolution } from '@predex-pump/shared/domain';
+import type { Market, Outcome, Resolution } from '@predex-pump/shared/domain';
 import { useState } from 'react';
 
 import { HatchingChick } from '@/components/mascot/HatchingChick';
@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { Tabs } from '@/components/ui/Tabs';
-import { formatPrice, formatRaw, formatUsdc } from '@/lib/format';
+import { formatPrice, formatRaw } from '@/lib/format';
 
 import styles from './PhasePanels.module.css';
 
@@ -153,70 +153,5 @@ export function ResolvedOutcomePanel({
         <code className="mono">{market.conditionId.slice(0, 12)}…{market.conditionId.slice(-6)}</code>
       </div>
     </Card>
-  );
-}
-
-export function RedeemPanel({
-  market,
-  position,
-}: {
-  market: Market;
-  position?: Position;
-}) {
-  const [open, setOpen] = useState(false);
-  const closed = market.phase === 'ClosedOut';
-  const estimatedPayout =
-    position && (position.outcome === 'YES' ? market.yesPriceRaw : market.noPriceRaw) === '1000000'
-      ? position.qtyRaw
-      : '0';
-
-  return (
-    <aside className={styles.actionSticky}>
-      <Card>
-        <h2 className={styles.actionTitle}>{closed ? 'Market closed out' : 'Redeem position'}</h2>
-        <div className={styles.redeemRows}>
-          <div>
-            <span>Eligible shares</span>
-            <strong className="numeric">
-              {position
-                ? `${formatRaw(position.qtyRaw, {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })} ${position.outcome}`
-                : '0.00'}
-            </strong>
-          </div>
-          <div>
-            <span>Estimated payout</span>
-            <strong className="numeric">{formatUsdc(estimatedPayout)} USDC</strong>
-          </div>
-        </div>
-        <Button
-          disabled={closed || !position}
-          fullWidth
-          onClick={() => setOpen(true)}
-          size="large"
-          variant="mint"
-        >
-          {closed ? 'Redemption closed' : position ? 'Preview redeem' : 'No position to redeem'}
-        </Button>
-        <p className={styles.note}>
-          {closed
-            ? 'This market has completed closeout.'
-            : 'Coming soon — committee resolve, redeem, and closeout writes remain deferred.'}
-        </p>
-      </Card>
-      <ConfirmModal
-        onClose={() => setOpen(false)}
-        onConfirm={() => console.info('Deferred CTF redeem preview', { marketId: market.id })}
-        open={open}
-        title="Redemption preview"
-      >
-        <p>
-          Coming soon. This preview does not call Conditional Tokens or submit a wallet
-          transaction.
-        </p>
-      </ConfirmModal>
-    </aside>
   );
 }

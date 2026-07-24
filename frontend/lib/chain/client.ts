@@ -296,6 +296,50 @@ function decodeLogs(logs: RawChainLog[], abi: Abi): ChainEvent[] {
   return decoded;
 }
 
+export interface SettlementEventState {
+  fundingResidualClaimedRaw: bigint;
+  protocolSweepCompleted: boolean;
+  protocolSweptRaw: bigint;
+}
+
+/**
+ * terminalAccounting exposes protocol PnL swept, but the LMSR intentionally
+ * keeps its protocol-fee swept counter private. The emitted closeout events are
+ * therefore the authoritative public read for whether the one-shot protocol
+ * sweep has completed.
+ */
+export async function readSettlementEventState(
+  marketId: bigint,
+  options: { fresh?: boolean } = {},
+): Promise<SettlementEventState> {
+  if (options.fresh) {
+    addressLogCache.delete(ADDRESSES.lmsr.toLowerCase());
+  }
+  const events = decodeLogs(
+    await getAddressLogs(ADDRESSES.lmsr),
+    incubatorLmsrAbi,
+  ).filter((event) => bigintArg(event.args, 'marketId') === marketId);
+
+  let fundingResidualClaimedRaw = 0n;
+  let protocolSweepCompleted = false;
+  let protocolSweptRaw = 0n;
+  for (const event of events) {
+    if (event.eventName === 'FundingResidualClaimed') {
+      fundingResidualClaimedRaw += bigintArg(event.args, 'amountRaw');
+    } else if (event.eventName === 'ProtocolFeeSwept') {
+      protocolSweptRaw += bigintArg(event.args, 'amountRaw');
+      protocolSweepCompleted =
+        protocolSweepCompleted || Boolean(event.args.closeoutComplete);
+    }
+  }
+
+  return {
+    fundingResidualClaimedRaw,
+    protocolSweepCompleted,
+    protocolSweptRaw,
+  };
+}
+
 async function multicallReads(reads: MulticallRead[]) {
   const output: MulticallResult[] = [];
   const chunkSize = 120;

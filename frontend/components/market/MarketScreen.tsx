@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { useAccount as useWalletAccount } from 'wagmi';
 
 import { PhaseBadge } from '@/components/ui/Badge';
@@ -22,22 +23,31 @@ import { GraduationPanel } from './GraduationPanel';
 import { LifecycleStepper } from './LifecycleStepper';
 import { OrderBookPanel } from './OrderBookPanel';
 import {
-  BookActionPanel,
-  HatchedHeader,
-  RedeemPanel,
   ResolvedOutcomePanel,
 } from './PhasePanels';
 import { PriceOverview } from './PriceOverview';
 import { RecentTrades } from './RecentTrades';
+import { SettlementPanel } from './SettlementPanel';
 import { TradePanel } from './TradePanel';
 import styles from './MarketScreen.module.css';
 
 export function MarketScreen({ marketId }: { marketId: string }) {
+  const [clockSeconds, setClockSeconds] = useState(0);
   const { address } = useWalletAccount();
   const { data: detail, isLoading, error } = useMarket(marketId);
   const { data: priceHistory } = usePriceHistory(marketId);
   const { data: book, isLoading: bookLoading } = useOrderBook(marketId);
   const { data: account } = useChainAccount(address);
+
+  useEffect(() => {
+    const updateClock = () => setClockSeconds(Math.floor(Date.now() / 1000));
+    const initialTimer = window.setTimeout(updateClock, 0);
+    const interval = window.setInterval(updateClock, 30_000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   if (isLoading) {
     return (
@@ -81,6 +91,13 @@ export function MarketScreen({ marketId }: { marketId: string }) {
   );
   const isIncubating = market.phase === 'Opened';
   const isGraduated = market.phase === 'Graduated';
+  const isObserved =
+    market.phase === 'ResolvedObserved' || market.phase === 'ClosedOut';
+  const settlementReady =
+    isGraduated ||
+    isObserved ||
+    resolution !== null ||
+    clockSeconds >= market.tradingEndsAt;
 
   return (
     <main className={styles.page}>
@@ -101,9 +118,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
 
       <LifecycleStepper phase={market.phase} />
 
-      {isGraduated && <HatchedHeader market={market} />}
-
-      {isIncubating && (
+      {isIncubating && !settlementReady && (
         <div className={styles.grid}>
           <div className={styles.stack}>
             <PriceOverview market={market} points={priceHistory?.points ?? []} />
@@ -131,17 +146,27 @@ export function MarketScreen({ marketId }: { marketId: string }) {
             )}
             <RecentTrades trades={recentTrades} />
           </div>
-          <BookActionPanel market={market} />
+          <SettlementPanel market={market} />
         </div>
       )}
 
-      {!isIncubating && !isGraduated && (
+      {isIncubating && settlementReady && (
+        <div className={styles.grid}>
+          <div className={styles.stack}>
+            <PriceOverview market={market} points={priceHistory?.points ?? []} />
+            <RecentTrades trades={recentTrades} />
+          </div>
+          <SettlementPanel market={market} />
+        </div>
+      )}
+
+      {isObserved && (
         <div className={styles.grid}>
           <div className={styles.stack}>
             <ResolvedOutcomePanel market={market} resolution={resolution} />
             <RecentTrades trades={recentTrades} />
           </div>
-          <RedeemPanel market={market} position={positions?.[0]} />
+          <SettlementPanel market={market} />
         </div>
       )}
     </main>
