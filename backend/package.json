@@ -1,0 +1,37 @@
+{
+  "name": "@predex-pump/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "prisma generate && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:generate": "prisma generate",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "indexer": "tsx src/indexer.ts",
+    "indexer:once": "tsx src/indexer.ts --once",
+    "summary": "tsx src/summary.ts",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@predex-pump/shared": "file:../shared",
+    "@prisma/client": "6.19.3",
+    "dotenv": "17.2.2",
+    "viem": "2.55.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "prisma": "6.19.3",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.0"
+  },
+  "packageManager": "pnpm@10.29.2"
+}
