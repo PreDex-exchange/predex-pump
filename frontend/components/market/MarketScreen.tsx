@@ -8,7 +8,7 @@ import { PhaseBadge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { StatePanel } from '@/components/ui/StatePanel';
 import {
-  useAccount as useChainAccount,
+  useAccount as useIndexedAccount,
   useMarket,
   useOrderBook,
   usePriceHistory,
@@ -37,7 +37,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
   const { data: detail, isLoading, error } = useMarket(marketId);
   const { data: priceHistory } = usePriceHistory(marketId);
   const { data: book, isLoading: bookLoading } = useOrderBook(marketId);
-  const { data: account } = useChainAccount(address);
+  const { data: account } = useIndexedAccount(address);
 
   useEffect(() => {
     const updateClock = () => setClockSeconds(Math.floor(Date.now() / 1000));
@@ -53,7 +53,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     return (
       <main className={styles.state}>
         <StatePanel
-          message="Scanning Arc events and reading the latest contract state."
+          message="Loading the indexed market snapshot and recent activity."
           title="Checking this egg…"
         />
       </main>
@@ -64,7 +64,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     return (
       <main className={styles.state}>
         <StatePanel
-          message="The live Arc snapshot could not be assembled. Return to the feed and retry."
+          message="The indexed market snapshot could not load. Return to the feed and retry."
           title="This market would not open"
         />
       </main>
@@ -145,7 +145,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
             {bookLoading || !book ? (
               <Card>
                 <h2 className={styles.bookLoadingTitle}>Order book</h2>
-                <p className={styles.bookLoading}>Reading live MiniCLOB orders…</p>
+                <p className={styles.bookLoading}>Loading indexed MiniCLOB orders…</p>
               </Card>
             ) : (
               <OrderBookPanel

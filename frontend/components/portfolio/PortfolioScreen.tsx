@@ -18,12 +18,13 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { StatePanel } from '@/components/ui/StatePanel';
 import {
-  useAccount as useMockAccount,
+  useAccount as useIndexedAccount,
   useActivity,
   useMarkets,
 } from '@/lib/api/hooks';
 import {
   formatRaw,
+  formatSignedUsdc,
   formatUsdc,
   phaseLabel,
   shortAddress,
@@ -36,11 +37,26 @@ const RAW_SCALE = 1_000_000n;
 interface PositionRow {
   position: Position;
   market: Market | undefined;
+  averageCostRaw: string;
   currentValueRaw: string;
+  estimatedPnlRaw: string;
 }
 
 function rawProduct(leftRaw: string, rightRaw: string) {
   return ((BigInt(leftRaw) * BigInt(rightRaw)) / RAW_SCALE).toString();
+}
+
+function averageCostRaw(position: Position) {
+  const quantity = BigInt(position.qtyRaw);
+  if (quantity === 0n) return '0';
+  return ((BigInt(position.costBasisRaw) * RAW_SCALE) / quantity).toString();
+}
+
+function pnlClassName(raw: string) {
+  const value = BigInt(raw);
+  if (value > 0n) return styles.positive;
+  if (value < 0n) return styles.negative;
+  return styles.flat;
 }
 
 function tradeToActivity(trade: Trade): ActivityEvent {
@@ -72,7 +88,7 @@ export function PortfolioScreen() {
     isLoading: accountLoading,
     error: accountError,
     refetch: refetchAccount,
-  } = useMockAccount(address);
+  } = useIndexedAccount(address);
   const {
     data: marketsPage,
     isLoading: marketsLoading,
@@ -100,7 +116,12 @@ export function PortfolioScreen() {
       return {
         position,
         market,
+        averageCostRaw: averageCostRaw(position),
         currentValueRaw: rawProduct(position.qtyRaw, markRaw),
+        estimatedPnlRaw: (
+          BigInt(position.realizedPnlRaw) +
+          BigInt(position.unrealizedPnlRaw)
+        ).toString(),
       };
     });
   }, [account?.positions, marketsPage?.items]);
@@ -108,6 +129,10 @@ export function PortfolioScreen() {
   const totalPositionValueRaw = positionRows
     .reduce((total, row) => total + BigInt(row.currentValueRaw), 0n)
     .toString();
+  const estimatedPnlRaw = (
+    BigInt(account?.pnl.realizedRaw ?? '0') +
+    BigInt(account?.pnl.unrealizedRaw ?? '0')
+  ).toString();
   const marketsHeld = new Set(
     positionRows
       .filter((row) => BigInt(row.position.qtyRaw) > 0n)
@@ -143,8 +168,9 @@ export function PortfolioScreen() {
         <span className={styles.kicker}>Portfolio</span>
         <h1>Your positions, held calmly.</h1>
         <p>
-          Quantities come directly from CTF balanceOf and current values use live marginal or
-          resolved prices. Cost basis and PnL are unknown because the contracts do not store them.
+          Quantities are indexed from CTF transfers and marked against indexed
+          marginal or resolved prices. Cost basis and PnL are estimates from
+          trade history.
         </p>
       </div>
       {address && (
@@ -179,7 +205,7 @@ export function PortfolioScreen() {
           message={
             connectError
               ? 'The wallet connection was not completed. Try again, or explore the live market feed.'
-              : 'Connect a wallet to read its live outcome-token balances and Arc activity.'
+              : 'Connect a wallet to load its indexed outcome-token positions and Arc activity.'
           }
           title="Connect to open your portfolio"
         />
@@ -192,7 +218,7 @@ export function PortfolioScreen() {
       <main className={styles.page}>
         {header}
         <StatePanel
-          message="Reading live CTF balances and marking them against current Arc prices."
+          message="Loading indexed positions and marking them against current prices."
           title="Counting your positions…"
         />
       </main>
@@ -215,7 +241,7 @@ export function PortfolioScreen() {
               Try again
             </Button>
           }
-          message="The live account snapshot could not be assembled. Retry the Arc reads."
+          message="The indexed account snapshot could not load. Retry the backend reads."
           title="This portfolio would not open"
         />
       </main>
@@ -254,12 +280,20 @@ export function PortfolioScreen() {
           <NumberDisplay size="hero">
             {formatUsdc(totalPositionValueRaw)} <small>USDC</small>
           </NumberDisplay>
-          <small>At current live contract prices</small>
+          <small>At current indexed prices</small>
         </Card>
         <Card className={styles.summaryCard} quiet>
-          <span>Cost basis &amp; PnL</span>
-          <NumberDisplay size="hero">Unknown</NumberDisplay>
-          <small>Not stored by the on-chain contracts</small>
+          <span>Estimated PnL</span>
+          <NumberDisplay
+            className={pnlClassName(estimatedPnlRaw)}
+            size="hero"
+          >
+            {formatSignedUsdc(estimatedPnlRaw)} <small>USDC</small>
+          </NumberDisplay>
+          <small>
+            {formatSignedUsdc(account.pnl.realizedRaw)} realized ·{' '}
+            {formatSignedUsdc(account.pnl.unrealizedRaw)} unrealized
+          </small>
         </Card>
         <Card className={styles.summaryCard} quiet>
           <span>Markets held</span>
@@ -300,14 +334,14 @@ export function PortfolioScreen() {
             <h2>Positions</h2>
           </div>
           <p id="positions-note">
-            Cost basis and PnL are unavailable in direct-chain mode.
+            Cost basis and PnL are indexer estimates; quantities derive from CTF transfers.
           </p>
         </div>
 
         <Card className={styles.tableCard} padded={false} quiet>
           <table aria-describedby="positions-note">
             <caption className="sr-only">
-              Live outcome-token positions for the connected Arc account
+              Indexed outcome-token positions for the connected Arc account
             </caption>
             <thead>
               <tr>
@@ -351,13 +385,21 @@ export function PortfolioScreen() {
                     })}
                   </td>
                   <td className={styles.numericCell} data-label="Avg. cost">
-                    <span title="Cost basis is not stored on-chain">Unknown</span>
+                    <span title="Estimated from indexed trade history">
+                      {formatUsdc(row.averageCostRaw, 3)} <small>USDC</small>
+                    </span>
                   </td>
                   <td className={styles.numericCell} data-label="Current value">
                     {formatUsdc(row.currentValueRaw)} <small>USDC</small>
                   </td>
                   <td className={styles.numericCell} data-label="PnL (est.)">
-                    <span title="PnL requires an indexed cost basis">—</span>
+                    <span
+                      className={pnlClassName(row.estimatedPnlRaw)}
+                      title="Estimated from indexed trade history"
+                    >
+                      {formatSignedUsdc(row.estimatedPnlRaw)}{' '}
+                      <small>USDC</small>
+                    </span>
                   </td>
                 </tr>
               ))}

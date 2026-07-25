@@ -61,6 +61,13 @@
   color: var(--ink);
 }
 
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
 @media (max-width: 820px) {
   .header {
     flex-wrap: wrap;
@@ -84,5 +91,15 @@
   .header {
     position: relative;
     top: 0;
+  }
+
+  .actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions > span {
+    align-self: center;
   }
 }

@@ -1,6 +1,10 @@
-import type { AccountResponse, MarketBookResponse } from '@predex-pump/shared/rest';
+import type {
+  AccountResponse,
+  MarketBookResponse,
+  OrderBookResponse,
+} from '@predex-pump/shared/rest';
 
-import type { ApiClient } from '@/lib/api/types';
+import type { BackendApiClient } from '@/lib/api/types';
 
 import {
   MOCK_ACCOUNT_RESPONSE,
@@ -48,7 +52,7 @@ function emptyBookResponse(marketId: string): MarketBookResponse {
   };
 }
 
-export const mockApiClient: ApiClient = {
+export const mockApiClient: BackendApiClient = {
   async listMarkets(query = {}) {
     let items = [...MOCK_MARKETS];
 
@@ -100,6 +104,16 @@ export const mockApiClient: ApiClient = {
     return respond(MOCK_ORDER_BOOKS[marketId] ?? emptyBookResponse(marketId));
   },
 
+  async getTokenOrderBook(tokenId): Promise<OrderBookResponse> {
+    for (const market of MOCK_MARKETS) {
+      const books =
+        MOCK_ORDER_BOOKS[market.id] ?? emptyBookResponse(market.id);
+      if (books.yes.tokenId === tokenId) return respond(books.yes);
+      if (books.no.tokenId === tokenId) return respond(books.no);
+    }
+    throw new Error(`Unknown mock token: ${tokenId}`);
+  },
+
   async getActivity(query = {}) {
     let items = [...MOCK_ACTIVITY];
     if (query.marketId) items = items.filter((event) => event.marketId === query.marketId);
@@ -143,6 +157,16 @@ export const mockApiClient: ApiClient = {
     return respond({
       marketId,
       points: points.slice(-limit),
+    });
+  },
+
+  async getHealth() {
+    return respond({
+      ok: true,
+      chainId: MOCK_CONFIG.chainId,
+      indexedBlock: 1,
+      headBlock: 1,
+      lagBlocks: 0,
     });
   },
 };

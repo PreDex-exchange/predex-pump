@@ -1,7 +1,6 @@
 'use client';
 
 import type { Market } from '@predex-pump/shared/domain';
-import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useAccount } from 'wagmi';
 
@@ -11,7 +10,6 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { TxStatus } from '@/components/ui/TxStatus';
 import { arcTestnet } from '@/lib/chain/arc';
-import { clearChainReadCache } from '@/lib/chain/client';
 import { graduateOnArc } from '@/lib/chain/transactions';
 import { useGraduationStatus } from '@/lib/chain/useGraduationStatus';
 import { useTxFlow } from '@/lib/chain/useTxFlow';
@@ -26,7 +24,6 @@ import styles from './GraduationPanel.module.css';
 export function GraduationPanel({ market }: { market: Market }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const { address, chainId, isConnected } = useAccount();
-  const queryClient = useQueryClient();
   const tx = useTxFlow();
   const status = useGraduationStatus(market.id);
   const liveMarket = status.data
@@ -60,13 +57,8 @@ export function GraduationPanel({ market }: { market: Market }) {
     );
     if (!result) return;
 
-    clearChainReadCache();
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['markets'] }),
-      queryClient.invalidateQueries({ queryKey: ['market', market.id] }),
-      queryClient.invalidateQueries({ queryKey: ['order-book', market.id] }),
-      queryClient.invalidateQueries({ queryKey: ['activity'] }),
-    ]).catch(() => undefined);
+    // Indexed market/book/activity display state arrives over WebSocket.
+    // graduationStatus remains a direct chain read.
     void status.refetch();
   }
 

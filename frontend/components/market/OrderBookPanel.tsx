@@ -8,7 +8,6 @@ import type {
   Position,
 } from '@predex-pump/shared/domain';
 import type { MarketBookResponse } from '@predex-pump/shared/rest';
-import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useAccount } from 'wagmi';
@@ -19,10 +18,6 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Tabs } from '@/components/ui/Tabs';
 import { TxStatus } from '@/components/ui/TxStatus';
 import { arcTestnet } from '@/lib/chain/arc';
-import {
-  clearChainReadCache,
-  rememberConfirmedChainLogs,
-} from '@/lib/chain/client';
 import {
   cancelOrderOnArc,
   cumulativeMiniClobPaymentRaw,
@@ -150,7 +145,6 @@ export function OrderBookPanel({
   const [action, setAction] = useState<BookAction | null>(null);
   const [completion, setCompletion] = useState<string | null>(null);
   const { address, chainId, isConnected } = useAccount();
-  const queryClient = useQueryClient();
   const tx = useTxFlow();
   const settlement = useSettlementStatus(market.id, address);
   const book = outcome === 'YES' ? books.yes : books.no;
@@ -241,21 +235,6 @@ export function OrderBookPanel({
     tx.reset();
   }
 
-  async function refreshAfterWrite(
-    receipt: Parameters<typeof rememberConfirmedChainLogs>[0],
-  ) {
-    rememberConfirmedChainLogs(receipt);
-    clearChainReadCache();
-    await Promise.allSettled([
-      queryClient.invalidateQueries({ queryKey: ['markets'] }),
-      queryClient.invalidateQueries({ queryKey: ['market', market.id] }),
-      queryClient.invalidateQueries({ queryKey: ['order-book', market.id] }),
-      queryClient.invalidateQueries({ queryKey: ['account', address] }),
-      queryClient.invalidateQueries({ queryKey: ['activity'] }),
-      queryClient.invalidateQueries({ queryKey: ['settlement', market.id] }),
-    ]);
-  }
-
   async function handleAction() {
     if (!address || !action) return;
 
@@ -283,7 +262,6 @@ export function OrderBookPanel({
               })} ${outcome}`
         } is escrowed on MiniCLOB.`,
       );
-      await refreshAfterWrite(result.receipt);
       return;
     }
 
@@ -316,7 +294,6 @@ export function OrderBookPanel({
               maximumFractionDigits: 6,
             })} ${action.order.outcome} and received ${formatUsdc(result.paymentRaw.toString(), 6)} USDC.`,
       );
-      await refreshAfterWrite(result.receipt);
       return;
     }
 
@@ -342,7 +319,6 @@ export function OrderBookPanel({
             maximumFractionDigits: 6,
           })} ${action.order.outcome} refunded.`,
     );
-    await refreshAfterWrite(result.receipt);
   }
 
   const placeButtonLabel = !isConnected
@@ -389,7 +365,7 @@ export function OrderBookPanel({
         <div className={styles.header}>
           <div>
             <h2>MiniCLOB order book</h2>
-            <p>Live on-chain orders · prices in USDC per token</p>
+            <p>Live indexed orders · prices in USDC per token</p>
           </div>
           <Tabs
             ariaLabel="Order book outcome"

@@ -1,7 +1,8 @@
 'use client';
 
 import type { Address, Market, RegistryConfig } from '@predex-pump/shared/domain';
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import type { MarketDetailResponse } from '@predex-pump/shared/rest';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
@@ -18,10 +19,6 @@ import { TxStatus } from '@/components/ui/TxStatus';
 import { useConfig } from '@/lib/api/hooks';
 import { arcTestnet } from '@/lib/chain/arc';
 import {
-  clearChainReadCache,
-  rememberConfirmedChainLogs,
-} from '@/lib/chain/client';
-import {
   buildMarketMetadata,
   createMarketOnArc,
 } from '@/lib/chain/transactions';
@@ -31,7 +28,6 @@ import { formatDateTime, formatUsdc, parseUsdcInput } from '@/lib/format';
 import styles from './CreateScreen.module.css';
 
 const QUESTION_MAX_LENGTH = 180;
-const MARKET_DISCOVERY_RETRY_DELAYS_MS = [0, 5_000, 15_000] as const;
 const CATEGORIES = [
   { value: '', label: 'No category' },
   { value: 'crypto', label: 'Crypto' },
@@ -54,21 +50,6 @@ const CUSTOM_WINDOW_UNITS = [
   { label: 'days', seconds: 86_400n, value: 'days' },
 ] as const;
 type CustomWindowUnit = (typeof CUSTOM_WINDOW_UNITS)[number]['value'];
-
-function scheduleMarketDiscoveryRefresh(queryClient: QueryClient) {
-  const refetch = () => {
-    clearChainReadCache();
-    void Promise.all([
-      queryClient.refetchQueries({ queryKey: ['markets'], type: 'all' }),
-      queryClient.refetchQueries({ queryKey: ['activity'], type: 'all' }),
-    ]).catch(() => undefined);
-  };
-
-  for (const delay of MARKET_DISCOVERY_RETRY_DELAYS_MS) {
-    if (delay === 0) refetch();
-    else window.setTimeout(refetch, delay);
-  }
-}
 
 function validateQuestion(value: string) {
   if (!value.trim()) return 'Enter a question for the market.';
@@ -354,14 +335,17 @@ export function CreateScreen() {
     );
     if (!result) return;
 
-    rememberConfirmedChainLogs(result.receipt);
-    scheduleMarketDiscoveryRefresh(queryClient);
-    void queryClient
-      .invalidateQueries({ queryKey: ['config'] })
-      .catch(() => undefined);
     setSubmitted(false);
     setConfirmOpen(false);
     if (result.marketId) {
+      queryClient.setQueryData<MarketDetailResponse>(
+        ['market', result.marketId],
+        {
+          market: { ...previewMarket, id: result.marketId },
+          recentTrades: [],
+          resolution: null,
+        },
+      );
       router.push(`/market/${result.marketId}`);
       return;
     }

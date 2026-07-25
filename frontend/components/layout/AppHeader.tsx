@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import { IndexerLagIndicator } from './IndexerLagIndicator';
 import { WalletBar } from './WalletBar';
 import styles from './AppHeader.module.css';
 
@@ -48,7 +49,10 @@ export function AppHeader() {
           );
         })}
       </nav>
-      <WalletBar />
+      <div className={styles.actions}>
+        <IndexerLagIndicator />
+        <WalletBar />
+      </div>
     </header>
   );
 }

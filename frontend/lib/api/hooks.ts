@@ -4,6 +4,7 @@ import type {
   AccountResponse,
   ActivityQuery,
   ActivityResponse,
+  HealthResponse,
   ListMarketsQuery,
   ListMarketsResponse,
   MarketBookResponse,
@@ -16,12 +17,19 @@ import type {
   Position,
   RegistryConfig,
 } from '@predex-pump/shared/domain';
-import { useQuery, type QueryKey } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import {
+  useQuery,
+  useQueryClient,
+  type QueryKey,
+} from '@tanstack/react-query';
+import { useCallback, useEffect } from 'react';
 
 import { apiClient } from './client';
+import { backendWsClient } from './websocket';
 
 const MARKET_BACKGROUND_REFRESH_MS = 60_000;
+const MARKET_DETAIL_FALLBACK_REFRESH_MS = 15_000;
+const HEALTH_REFRESH_MS = 15_000;
 
 interface ResourceState<T> {
   data: T | null;
@@ -71,15 +79,43 @@ export function useMarkets(query: ListMarketsQuery = {}) {
 }
 
 export function useMarket(id: string) {
+  const queryClient = useQueryClient();
   const load = useCallback(() => apiClient.getMarket(id), [id]);
-  return useApiResource<MarketDetailResponse | null>(['market', id], load);
+  useEffect(() => {
+    if (!id) return;
+    return backendWsClient.subscribe(`market:${id}`, () => {
+      void queryClient.invalidateQueries({
+        exact: true,
+        queryKey: ['market', id],
+      });
+    });
+  }, [id, queryClient]);
+
+  return useApiResource<MarketDetailResponse | null>(['market', id], load, {
+    refetchInterval: MARKET_DETAIL_FALLBACK_REFRESH_MS,
+  });
 }
 
 export function useAccount(address?: string) {
+  const queryClient = useQueryClient();
+  const normalizedAddress = address?.toLowerCase();
   const load = useCallback(
     () => (address ? apiClient.getAccount(address) : Promise.resolve(null)),
     [address],
   );
+  useEffect(() => {
+    if (!normalizedAddress) return;
+    return backendWsClient.subscribe(
+      `account:${normalizedAddress}`,
+      () => {
+        void queryClient.invalidateQueries({
+          exact: true,
+          queryKey: ['account', address],
+        });
+      },
+    );
+  }, [address, normalizedAddress, queryClient]);
+
   return useApiResource<AccountResponse | null>(['account', address], load);
 }
 
@@ -102,7 +138,18 @@ export function usePosition(
 }
 
 export function useOrderBook(marketId: string) {
+  const queryClient = useQueryClient();
   const load = useCallback(() => apiClient.getOrderBook(marketId), [marketId]);
+  useEffect(() => {
+    if (!marketId || marketId === 'preview') return;
+    return backendWsClient.subscribe(`book:${marketId}`, () => {
+      void queryClient.invalidateQueries({
+        exact: true,
+        queryKey: ['order-book', marketId],
+      });
+    });
+  }, [marketId, queryClient]);
+
   return useApiResource<MarketBookResponse>(['order-book', marketId], load);
 }
 
@@ -124,6 +171,7 @@ export function useConfig() {
 }
 
 export function usePriceHistory(marketId: string, query: PriceHistoryQuery = {}) {
+  const queryClient = useQueryClient();
   const { fromTs, limit } = query;
   const load = useCallback(
     () =>
@@ -132,8 +180,25 @@ export function usePriceHistory(marketId: string, query: PriceHistoryQuery = {})
         : apiClient.getPriceHistory(marketId, { fromTs, limit }),
     [fromTs, limit, marketId],
   );
+  useEffect(() => {
+    if (!marketId || marketId === 'preview') return;
+    return backendWsClient.subscribe(`market:${marketId}`, (message) => {
+      if (message.event !== 'price.tick') return;
+      void queryClient.invalidateQueries({
+        queryKey: ['price-history', marketId],
+      });
+    });
+  }, [marketId, queryClient]);
+
   return useApiResource<PriceHistoryResponse>(
     ['price-history', marketId, fromTs, limit],
     load,
   );
+}
+
+export function useHealth() {
+  const load = useCallback(() => apiClient.getHealth(), []);
+  return useApiResource<HealthResponse>(['health'], load, {
+    refetchInterval: HEALTH_REFRESH_MS,
+  });
 }

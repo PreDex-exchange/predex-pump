@@ -4,7 +4,6 @@ import type {
   Market,
   ResolutionOutcome,
 } from '@predex-pump/shared/domain';
-import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useAccount } from 'wagmi';
 
@@ -15,10 +14,6 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { TxStatus } from '@/components/ui/TxStatus';
 import { useConfig } from '@/lib/api/hooks';
 import { arcTestnet } from '@/lib/chain/arc';
-import {
-  clearChainReadCache,
-  rememberConfirmedChainLogs,
-} from '@/lib/chain/client';
 import {
   claimFundingResidualOnArc,
   closeoutOnArc,
@@ -139,7 +134,6 @@ export function SettlementPanel({ market }: { market: Market }) {
   const config = useConfig();
   const status = useSettlementStatus(market.id, address);
   const settlement = status.data;
-  const queryClient = useQueryClient();
   const tx = useTxFlow();
   const wrongNetwork = isConnected && chainId !== arcTestnet.id;
   const resolvingEarly =
@@ -163,18 +157,6 @@ export function SettlementPanel({ market }: { market: Market }) {
     if (tx.isBusy) return;
     setAction(null);
     tx.reset();
-  }
-
-  async function refreshSettlement() {
-    clearChainReadCache();
-    await Promise.allSettled([
-      status.refetch(),
-      queryClient.invalidateQueries({ queryKey: ['markets'] }),
-      queryClient.invalidateQueries({ queryKey: ['market', market.id] }),
-      queryClient.invalidateQueries({ queryKey: ['account', address] }),
-      queryClient.invalidateQueries({ queryKey: ['activity'] }),
-      queryClient.invalidateQueries({ queryKey: ['settlement', market.id] }),
-    ]);
   }
 
   async function handleAction() {
@@ -224,8 +206,9 @@ export function SettlementPanel({ market }: { market: Market }) {
       });
     });
     if (!result) return;
-    rememberConfirmedChainLogs(result.receipt);
-    await refreshSettlement();
+    // Resolution/position/activity display state arrives through the backend.
+    // Settlement guards remain fresh direct-chain reads.
+    await status.refetch();
   }
 
   function modalCopy() {

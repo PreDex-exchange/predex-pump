@@ -1,7 +1,6 @@
 'use client';
 
 import type { Market, Outcome, Position } from '@predex-pump/shared/domain';
-import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { formatUnits, parseUnits } from 'viem';
 import { useAccount } from 'wagmi';
@@ -13,11 +12,15 @@ import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { Tabs } from '@/components/ui/Tabs';
 import { TxStatus } from '@/components/ui/TxStatus';
 import { arcTestnet } from '@/lib/chain/arc';
-import { clearChainReadCache } from '@/lib/chain/client';
 import { buyOnArc, sellOnArc } from '@/lib/chain/transactions';
 import { useQuote } from '@/lib/chain/useQuote';
 import { useTxFlow } from '@/lib/chain/useTxFlow';
-import { formatPrice, formatRaw, formatUsdc } from '@/lib/format';
+import {
+  formatPrice,
+  formatRaw,
+  formatSignedUsdc,
+  formatUsdc,
+} from '@/lib/format';
 
 import styles from './TradePanel.module.css';
 
@@ -52,7 +55,6 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
   const [amount, setAmount] = useState('0.10');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const { address, chainId, isConnected } = useAccount();
-  const queryClient = useQueryClient();
   const tx = useTxFlow();
   const amountRaw = inputToRaw(amount);
   const amountValue = BigInt(amountRaw);
@@ -117,14 +119,8 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           );
     if (!result) return;
 
-    clearChainReadCache();
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['markets'] }),
-      queryClient.invalidateQueries({ queryKey: ['market', market.id] }),
-      queryClient.invalidateQueries({ queryKey: ['account', address] }),
-      queryClient.invalidateQueries({ queryKey: ['activity'] }),
-      queryClient.invalidateQueries({ queryKey: ['price-history', market.id] }),
-    ]).catch(() => undefined);
+    // Display state lands through the backend WebSocket after indexing. The
+    // next signing quote remains a fresh chain read.
     void refetchQuote();
   }
 
@@ -297,12 +293,20 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
                 </strong>
               </div>
               <div>
-                <span>Cost basis</span>
-                <strong className={styles.unknown}>Unknown on-chain</strong>
+                <span>Cost basis (est.)</span>
+                <strong className="numeric">
+                  {formatUsdc(selectedPosition.costBasisRaw)} USDC
+                </strong>
+              </div>
+              <div>
+                <span>Unrealized PnL (est.)</span>
+                <strong className="numeric">
+                  {formatSignedUsdc(selectedPosition.unrealizedPnlRaw)} USDC
+                </strong>
               </div>
               <p className={styles.noPosition}>
-                CTF holdings are authoritative. Cost basis and PnL require indexed trade
-                history and are intentionally not fabricated here.
+                CTF holdings are indexed from transfers. Cost basis and PnL are
+                read-model estimates, not settlement authority.
               </p>
             </>
           ) : (

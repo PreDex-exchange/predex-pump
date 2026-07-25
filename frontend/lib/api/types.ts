@@ -3,10 +3,12 @@ import type {
   ActivityQuery,
   ActivityResponse,
   ConfigResponse,
+  HealthResponse,
   ListMarketsQuery,
   ListMarketsResponse,
   MarketBookResponse,
   MarketDetailResponse,
+  OrderBookResponse,
   PriceHistoryQuery,
   PriceHistoryResponse,
 } from '@predex-pump/shared/rest';
@@ -22,4 +24,9 @@ export interface ApiClient {
     marketId: string,
     query?: PriceHistoryQuery,
   ): Promise<PriceHistoryResponse>;
+}
+
+export interface BackendApiClient extends ApiClient {
+  getTokenOrderBook(tokenId: string): Promise<OrderBookResponse>;
+  getHealth(): Promise<HealthResponse>;
 }

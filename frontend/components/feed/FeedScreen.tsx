@@ -81,13 +81,13 @@ export function FeedScreen() {
         <section aria-label="Markets" className={styles.marketArea}>
           {isLoading && (
             <StatePanel
-              message="Scanning MarketCreated logs and reading live bonding-curve state."
+              message="Loading indexed markets and their latest prices."
               title="Warming the nest…"
             />
           )}
           {!isLoading && error && (
             <StatePanel
-              message="The live Arc read could not complete. Refresh to retry the RPC request."
+              message="The indexed API could not load the market feed. Refresh to retry."
               title="The nest needs a reset"
             />
           )}

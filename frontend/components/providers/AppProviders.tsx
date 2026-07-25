@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { WagmiProvider, type State } from 'wagmi';
 
+import { BackendLiveSync } from '@/lib/api/live';
 import { getWagmiConfig } from '@/lib/chain/config';
 
 interface AppProvidersProps {
@@ -21,7 +22,10 @@ export function AppProviders({ children, initialState }: AppProvidersProps) {
       initialState={initialState}
       reconnectOnMount
     >
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <BackendLiveSync />
+        {children}
+      </QueryClientProvider>
     </WagmiProvider>
   );
 }
