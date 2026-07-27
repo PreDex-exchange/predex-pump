@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-07-24T20:59:48.806Z",
+  "databaseSchema": "perf_bench",
+  "syntheticOnly": true,
+  "scale": {
+    "markets": 2000,
+    "accounts": 20000,
+    "trades": 200000,
+    "positions": 100000,
+    "orders": 50000,
+    "fills": 25000,
+    "pricePoints": 200000,
+    "activityEvents": 1000000
+  },
+  "durationSeconds": 393.3032462,
+  "hotRows": {
+    "marketOneTrades": 10000,
+    "marketOnePricePoints": 10000,
+    "marketOneOrders": 500,
+    "marketOneActivityEvents": 50000,
+    "denseAccount": "0x0000000000000000000000000000000000000001"
+  }
+}

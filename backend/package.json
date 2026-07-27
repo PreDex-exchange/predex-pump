@@ -1,0 +1,47 @@
+{
+  "name": "@predex-pump/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "prisma generate && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx tests/prepare-database.ts && vitest run",
+    "db:generate": "prisma generate",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "start": "tsx src/start.ts",
+    "dev": "tsx watch src/start.ts",
+    "indexer": "tsx src/indexer.ts",
+    "indexer:once": "tsx src/indexer.ts --once",
+    "summary": "tsx src/summary.ts",
+    "bench:seed": "tsx bench/seed.ts",
+    "bench:run": "tsx bench/run.ts",
+    "bench:teardown": "tsx bench/seed.ts --teardown",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@fastify/websocket": "^11.3.0",
+    "@predex-pump/shared": "file:../shared",
+    "@prisma/client": "6.19.3",
+    "dotenv": "17.2.2",
+    "fastify": "^5.10.0",
+    "viem": "2.55.8",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/ws": "^8.18.1",
+    "prisma": "6.19.3",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.0"
+  },
+  "packageManager": "pnpm@10.29.2"
+}

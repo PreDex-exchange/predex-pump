@@ -1,6 +1,5 @@
-// predex-pump backend — Postgres schema (non-custodial read model over Arc).
-// Raw on-chain uints are stored as exact decimal STRINGS (Prisma has no uint256).
-// Unix-second timestamps are Int; `indexedAt` is row bookkeeping.
+// predex-pump backend — Postgres read model over the Arc incubator.
+// Raw on-chain uints are exact decimal strings; timestamps are Unix seconds.
 
 generator client {
   provider = "prisma-client-js"
@@ -12,91 +11,147 @@ datasource db {
 }
 
 model Market {
-  id                     String   @id // marketId (decimal string)
-  creator                String
-  question               String
-  phase                  String // Opened | Graduated | ResolvedObserved | ClosedOut
-  conditionId            String   @unique
-  questionId             String
-  yesTokenId             String   @unique
-  noTokenId              String   @unique
-  seedRaw                String
-  yesPriceRaw            String
-  noPriceRaw             String
-  graduationActivityRaw  String   @default("0")
-  bookAddress            String?
-  frozenYesPriceRaw      String?
-  handoffSizeRaw         String?
-  tradeCount             Int      @default(0)
-  volumeRaw              String   @default("0")
-  // params snapshot (immutable per market)
-  seedFloorRaw           String
-  seedCapRaw             String
-  fCapRaw                String
-  graduationThresholdRaw String
-  graduationTollRaw      String
-  inventoryTargetRaw     String
-  protocolFeeBps         Int
-  depthFeeBps            Int
-  tradingWindowSeconds   Int
-  minimumTimeOpenSeconds Int
-  createdAt              Int
-  tradingEndsAt          Int
-  graduatedAt            Int?
-  resolvedAt             Int?
-  indexedAt              DateTime @default(now())
+  id                    String  @id // marketId (decimal string)
+  creator               String
+  question              String
+  ancillaryData         String
+  ancillaryDataHash     String
+  metadataHash          String
+  phase                 String  @default("Opened")
+  conditionId           String  @unique
+  questionId            String
+  marketTypeVersion     Int
+  collateralAddress     String?
+  collateralDecimals    Int?
+  yesTokenId            String? @unique
+  noTokenId             String? @unique
+  seedRaw               String  @default("0")
+  yesPriceRaw           String  @default("500000")
+  noPriceRaw            String  @default("500000")
+  graduationActivityRaw String  @default("0")
+  bookAddress           String?
+  frozenYesPriceRaw     String?
+  handoffSizeRaw        String?
+  yesSeedOrderId        String?
+  noSeedOrderId         String?
+  tradeCount            Int     @default(0)
+  volumeRaw             String  @default("0")
 
-  trades     Trade[]
-  orders     Order[]
-  fills      Fill[]
-  positions  Position[]
-  resolution Resolution?
+  // Immutable-per-market parameter snapshot.
+  openingFeeRaw          String @default("0")
+  seedFloorRaw           String @default("0")
+  seedCapRaw             String @default("0")
+  fCapRaw                String @default("0")
+  graduationThresholdRaw String @default("0")
+  graduationTollRaw      String @default("0")
+  inventoryTargetRaw     String @default("0")
+  protocolFeeBps         Int    @default(0)
+  depthFeeBps            Int    @default(0)
+  tradingWindowSeconds   Int    @default(0)
+  minimumTimeOpenSeconds Int    @default(0)
 
-  @@index([phase])
-  @@index([creator])
-  @@index([createdAt])
+  // Latest TradeState inventory/funding snapshot.
+  qYesRaw             String @default("0")
+  qNoRaw              String @default("0")
+  fundingCommittedRaw String @default("0")
+  bCurrentWad         String @default("0")
+  inventoryYesRaw     String @default("0")
+  inventoryNoRaw      String @default("0")
+  lastSplitAmountRaw  String @default("0")
+  lastMergeAmountRaw  String @default("0")
+
+  createdAt     Int
+  tradingEndsAt Int      @default(0)
+  graduatedAt   Int?
+  resolvedAt    Int?
+  closedOutAt   Int?
+  indexedAt     DateTime @updatedAt
+
+  trades      Trade[]
+  pricePoints PricePoint[]
+  orders      Order[]
+  fills       Fill[]
+  positions   Position[]
+  resolution  Resolution?
+  closeout    Closeout?
+
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([phase, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([creator, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([phase, creator, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([questionId])
 }
 
 model Trade {
-  id       String @id // `${txHash}:${logIndex}`
-  marketId String
-  venue    String // LMSR | BOOK
-  account  String
-  outcome  String // YES | NO
-  side     String // BID | ASK
-  sizeRaw  String
-  priceRaw String
-  costRaw  String
-  feeRaw   String
-  txHash   String
-  logIndex Int
-  ts       Int
-  market   Market @relation(fields: [marketId], references: [id])
+  id                   String @id // `${txHash}:${logIndex}`
+  marketId             String
+  venue                String // LMSR | BOOK
+  account              String
+  recipient            String
+  outcome              String // YES | NO
+  side                 String // BID | ASK
+  sizeRaw              String
+  priceRaw             String
+  costRaw              String
+  feeRaw               String
+  baseAmountRaw        String
+  protocolFeeRaw       String
+  depthContributionRaw String
+  totalCostRaw         String
+  netProceedsRaw       String
+  txHash               String
+  logIndex             Int
+  blockNumber          Int
+  ts                   Int
+  market               Market @relation(fields: [marketId], references: [id])
 
-  @@index([marketId, ts])
-  @@index([account, ts])
+  @@unique([txHash, logIndex])
+  @@index([marketId, blockNumber(sort: Desc), logIndex(sort: Desc)])
+  @@index([account, blockNumber(sort: Desc), logIndex(sort: Desc)])
+}
+
+model PricePoint {
+  id          String @id // `${txHash}:${logIndex}`
+  marketId    String
+  yesPriceRaw String
+  noPriceRaw  String
+  qYesRaw     String
+  qNoRaw      String
+  bCurrentWad String
+  txHash      String
+  logIndex    Int
+  blockNumber Int
+  ts          Int
+  market      Market @relation(fields: [marketId], references: [id])
+
+  @@unique([txHash, logIndex])
+  @@index([marketId, ts, blockNumber, logIndex])
 }
 
 model Order {
-  orderId     String  @id // MiniCLOB uint256 order id
-  marketId    String
-  conditionId String
-  tokenId     String
-  outcome     String // YES | NO
-  maker       String
-  side        String // BID | ASK
-  priceRaw    String
-  sizeRaw     String
-  filledRaw   String  @default("0")
+  orderId      String  @id // MiniCLOB uint256 order id
+  marketId     String
+  conditionId  String
+  tokenId      String
+  outcome      String // YES | NO
+  maker        String
+  side         String // BID | ASK
+  priceRaw     String
+  sizeRaw      String
+  escrowRaw    String
+  filledRaw    String  @default("0")
   remainingRaw String
-  open        Boolean @default(true)
-  isSeed      Boolean @default(false)
-  createdAt   Int
-  updatedAt   Int
-  market      Market  @relation(fields: [marketId], references: [id])
-  fills       Fill[]
+  open         Boolean @default(true)
+  isSeed       Boolean @default(false)
+  txHash       String
+  logIndex     Int
+  blockNumber  Int
+  createdAt    Int
+  updatedAt    Int
+  market       Market  @relation(fields: [marketId], references: [id])
+  fills        Fill[]
 
-  @@index([marketId, outcome, open])
+  @@index([marketId, open])
   @@index([tokenId, open])
   @@index([maker])
 }
@@ -114,31 +169,35 @@ model Fill {
   openAfter      Boolean
   txHash         String
   logIndex       Int
+  blockNumber    Int
   ts             Int
   order          Order   @relation(fields: [orderId], references: [orderId])
   market         Market  @relation(fields: [marketId], references: [id])
 
+  @@unique([txHash, logIndex])
   @@index([marketId, ts])
   @@index([taker, ts])
 }
 
 model Position {
-  account          String
-  marketId         String
-  outcome          String // YES | NO
-  qtyRaw           String @default("0")
-  costBasisRaw     String @default("0") // ESTIMATED
-  realizedPnlRaw   String @default("0")
-  unrealizedPnlRaw String @default("0")
-  updatedAt        Int
-  market           Market @relation(fields: [marketId], references: [id])
+  account            String
+  marketId           String
+  outcome            String // YES | NO
+  qtyRaw             String  @default("0")
+  costBasisRaw       String  @default("0")
+  costBasisEstimated Boolean @default(true)
+  realizedPnlRaw     String  @default("0")
+  unrealizedPnlRaw   String  @default("0")
+  updatedAt          Int
+  market             Market  @relation(fields: [marketId], references: [id])
 
   @@id([account, marketId, outcome])
-  @@index([account])
+  @@index([account, updatedAt(sort: Desc), marketId(sort: Desc), outcome])
+  @@index([marketId, outcome, account])
 }
 
 model Resolution {
-  marketId    String  @id
+  marketId    String @id
   conditionId String
   outcome     String // YES | NO | INVALID
   payoutYes   Int
@@ -146,37 +205,122 @@ model Resolution {
   denominator Int
   resolvedAt  Int
   observedAt  Int?
-  market      Market  @relation(fields: [marketId], references: [id])
+  txHash      String
+  logIndex    Int
+  market      Market @relation(fields: [marketId], references: [id])
+}
+
+model Closeout {
+  marketId                 String @id
+  conditionId              String
+  payoutYes                String
+  payoutNo                 String
+  userTerminalClaimRaw     String
+  netBaseTradeCollectedRaw String
+  fundingLossRaw           String
+  fundingResidualRaw       String
+  protocolPnlRaw           String
+  protocolFeesRaw          String
+  redeemedYesRaw           String
+  redeemedNoRaw            String
+  closedOutAt              Int
+  txHash                   String
+  logIndex                 Int
+  market                   Market @relation(fields: [marketId], references: [id])
 }
 
 model Account {
-  address        String @id
-  firstSeenAt    Int
-  marketsCreated Int    @default(0)
-  tradeCount     Int    @default(0)
+  address          String @id
+  firstSeenAt      Int
+  marketsCreated   Int    @default(0)
+  tradeCount       Int    @default(0)
+  realizedPnlRaw   String @default("0")
+  unrealizedPnlRaw String @default("0")
 }
 
+// One row for every decoded contract event. This is also the atomic per-log
+// idempotency guard for all derived writes.
 model ActivityEvent {
-  id       String  @id // `${txHash}:${logIndex}`
-  type     String
-  marketId String?
-  account  String?
-  outcome  String?
-  side     String?
-  amountRaw String?
-  priceRaw String?
-  txHash   String
-  ts       Int
+  id          String  @id // `${txHash}:${logIndex}`
+  type        String
+  eventName   String
+  source      String
+  marketId    String?
+  account     String?
+  outcome     String?
+  side        String?
+  amountRaw   String?
+  priceRaw    String?
+  txHash      String
+  logIndex    Int
+  blockNumber Int
+  ts          Int
+  data        Json
 
-  @@index([ts])
-  @@index([marketId, ts])
-  @@index([account, ts])
+  @@unique([txHash, logIndex])
+  @@index([blockNumber(sort: Desc), logIndex(sort: Desc)])
+  @@index([marketId, blockNumber(sort: Desc), logIndex(sort: Desc)])
+  @@index([account, blockNumber(sort: Desc), logIndex(sort: Desc)])
+  @@index([marketId, account, blockNumber(sort: Desc), logIndex(sort: Desc)])
 }
 
-// Singleton: indexer replay cursor + chain-lag reporting.
+model RegistryConfig {
+  id                            Int      @id @default(1)
+  chainId                       Int
+  usdcAddress                   String
+  ctfAddress                    String
+  oracleAddress                 String
+  lmsrAddress                   String
+  registryAddress               String
+  miniClobAddress               String
+  marketTypeVersion             Int      @default(0)
+  currentLmsrAddress            String
+  openingFeeRaw                 String   @default("0")
+  seedFloorRaw                  String   @default("0")
+  seedCapRaw                    String   @default("0")
+  fCapRaw                       String   @default("0")
+  singleTopUpCapRaw             String   @default("0")
+  graduationMoneyInThresholdRaw String   @default("0")
+  graduationTollRaw             String   @default("0")
+  inventoryTargetRaw            String   @default("0")
+  inventoryLowRaw               String   @default("0")
+  inventoryHighRaw              String   @default("0")
+  freeCollateralBufferRaw       String   @default("0")
+  defaultTradingWindowSeconds   Int      @default(0)
+  minTradingWindowSeconds       Int      @default(0)
+  maxTradingWindowSeconds       Int      @default(0)
+  minimumTimeOpenSeconds        Int      @default(0)
+  protocolFeeBps                Int      @default(0)
+  depthFeeBps                   Int      @default(0)
+  committeeThreshold            Int      @default(0)
+  updatedBlock                  Int
+  updatedAt                     DateTime @updatedAt
+}
+
+model RegisteredMarketType {
+  version      Int    @id
+  lmsrAddress  String
+  configHash   String
+  registeredAt Int
+  blockNumber  Int
+}
+
+model CommitteeMember {
+  address      String  @id
+  active       Boolean
+  addedAt      Int
+  removedAt    Int?
+  updatedBlock Int
+
+  @@index([active])
+}
+
+// Singleton replay cursor and chain-lag state.
 model IndexerState {
-  id        Int      @id @default(1)
-  lastBlock Int
-  headBlock Int      @default(0)
-  updatedAt DateTime @updatedAt
+  id          Int      @id @default(1)
+  chainId     Int
+  deployBlock Int
+  lastBlock   Int
+  headBlock   Int      @default(0)
+  updatedAt   DateTime @updatedAt
 }
