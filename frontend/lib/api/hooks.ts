@@ -24,7 +24,7 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useEffect } from 'react';
 
-import { apiClient } from './client';
+import { backendRestClient as apiClient } from './rest-client';
 import { backendWsClient } from './websocket';
 
 const MARKET_BACKGROUND_REFRESH_MS = 60_000;

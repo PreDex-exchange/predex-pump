@@ -1,13 +1,8 @@
 import {
   decodeEventLog,
-  encodeAbiParameters,
   getAddress,
-  hashMessage,
-  keccak256,
   maxUint256,
   recoverMessageAddress,
-  stringToHex,
-  type Abi,
   type Address,
   type Hash,
   type Hex,
@@ -15,10 +10,38 @@ import {
 } from 'viem';
 import {
   getAccount,
+  sendTransaction,
   signMessage,
   waitForTransactionReceipt,
-  writeContract,
 } from 'wagmi/actions';
+import {
+  addSlippage,
+  buildClaimFundingResidualTx,
+  buildCloseoutTx,
+  buildCommitteeResolutionDigest,
+  buildCommitteeResolveTx,
+  buildCreateMarketTx,
+  buildCtfApprovalForAllTx,
+  buildErc20ApprovalTx,
+  buildGraduateIfQualifiedTx,
+  buildMarketMetadata,
+  buildMiniClobCancelTx,
+  buildMiniClobFillTx,
+  buildMiniClobPlaceTx,
+  buildObserveResolutionTx,
+  buildBuyTx,
+  buildRedeemTx,
+  buildSellTx,
+  buildSweepProtocolAfterCloseoutTx,
+  cumulativeMiniClobPaymentRaw,
+  deadlineFromTimestamp,
+  MINI_CLOB_PRICE_SCALE,
+  miniClobFillPaymentRaw,
+  resolutionPayouts,
+  subtractSlippage,
+  type ResolutionChoice,
+  type TxRequest,
+} from '@predex-pump/shared/tx';
 
 import { ADDRESSES, ARC } from '@/lib/shared/addresses';
 
@@ -33,23 +56,13 @@ import {
   miniClobAbi,
 } from './contracts';
 
-const DEADLINE_BUFFER_SECONDS = 20n * 60n;
-const BPS_SCALE = 10_000n;
-const MINI_CLOB_PRICE_SCALE = 1_000_000n;
-const ZERO_COLLECTION_ID =
-  '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex;
-const COMMITTEE_DOMAIN_LABEL = 'PredexCommitteeOracleV2';
-
-export type ResolutionChoice = 'YES' | 'NO' | 'INVALID';
-
-const RESOLUTION_PAYOUTS: Record<
-  ResolutionChoice,
-  readonly [bigint, bigint]
-> = {
-  YES: [1n, 0n],
-  NO: [0n, 1n],
-  INVALID: [1n, 1n],
+export {
+  buildCommitteeResolutionDigest,
+  buildMarketMetadata,
+  cumulativeMiniClobPaymentRaw,
+  miniClobFillPaymentRaw,
 };
+export type { ResolutionChoice };
 
 export type TxPhase =
   | 'idle'
@@ -159,13 +172,6 @@ interface MiniClobOrder {
   open: boolean;
 }
 
-interface ContractWrite {
-  address: Address;
-  abi: Abi | typeof collateralErc20Abi;
-  functionName: string;
-  args: readonly unknown[];
-}
-
 function assertConnectedAccount(expectedAccount: Address) {
   const account = getAccount(wagmiConfig);
   if (!account.isConnected || !account.address) {
@@ -181,7 +187,7 @@ function assertConnectedAccount(expectedAccount: Address) {
 
 async function sendAndConfirm(
   account: Address,
-  write: ContractWrite,
+  write: TxRequest,
   labels: {
     awaiting: string;
     pending: string;
@@ -196,14 +202,13 @@ async function sendAndConfirm(
     message: labels.awaiting,
   });
 
-  const hash = await writeContract(
+  const hash = await sendTransaction(
     wagmiConfig,
     {
       chainId: ARC.chainId,
-      address: write.address,
-      abi: write.abi,
-      functionName: write.functionName,
-      args: write.args,
+      to: write.to,
+      data: write.data,
+      value: write.value,
     } as never,
   );
   report({
@@ -304,12 +309,7 @@ async function approveCollateral(
   assertConnectedAccount(account);
   await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.usdc,
-      abi: collateralErc20Abi,
-      functionName: 'approve',
-      args: [spender, amountRaw],
-    },
+    buildErc20ApprovalTx({ spender, amountRaw }),
     {
       awaiting: `Approve ${label} to spend the required six-decimal Arc USDC.`,
       pending: `${label} USDC approval is pending on Arc…`,
@@ -329,12 +329,7 @@ async function approveCtfOperator(
   assertConnectedAccount(account);
   await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.ctf,
-      abi: conditionalTokensAbi,
-      functionName: 'setApprovalForAll',
-      args: [operator, true],
-    },
+    buildCtfApprovalForAllTx({ operator }),
     {
       awaiting: `Approve ${label} as a CTF ERC-1155 operator.`,
       pending: `${label} CTF operator approval is pending on Arc…`,
@@ -359,29 +354,9 @@ async function assertTradable(marketId: bigint) {
   }
 }
 
-function addSlippage(raw: bigint, slippageBps: number) {
-  const bps = BigInt(slippageBps);
-  return (raw * (BPS_SCALE + bps) + BPS_SCALE - 1n) / BPS_SCALE;
-}
-
-function subtractSlippage(raw: bigint, slippageBps: number) {
-  const bps = BigInt(slippageBps);
-  return (raw * (BPS_SCALE - bps)) / BPS_SCALE;
-}
-
 async function freshDeadline() {
   const block = await arcPublicClient.getBlock();
-  return block.timestamp + DEADLINE_BUFFER_SECONDS;
-}
-
-export function buildMarketMetadata(question: string) {
-  // The proven Arc e2e uses a NUL-terminated ancillary byte string and hashes that
-  // exact byte payload for metadataHash.
-  const ancillaryData = stringToHex(`${question.trim()}\0`);
-  return {
-    ancillaryData,
-    metadataHash: keccak256(ancillaryData),
-  };
+  return deadlineFromTimestamp(block.timestamp);
 }
 
 export async function createMarketOnArc({
@@ -450,18 +425,13 @@ export async function createMarketOnArc({
   assertConnectedAccount(account);
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.registry,
-      abi: incubatorRegistryAbi,
-      functionName: 'createMarket',
-      args: [
-        ancillaryData,
-        seedRaw,
-        params.openingFeeRaw,
-        tradingWindowSeconds,
-        metadataHash,
-      ],
-    },
+    buildCreateMarketTx({
+      ancillaryData,
+      seedRaw,
+      openingFeeRaw: params.openingFeeRaw,
+      tradingWindowSeconds,
+      metadataHash,
+    }),
     {
       awaiting: 'Confirm createMarket in the injected wallet.',
       pending: 'Market creation is pending on Arc…',
@@ -569,12 +539,13 @@ export async function buyOnArc({
   const functionName = outcome === 'YES' ? 'buyYes' : 'buyNo';
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.lmsr,
-      abi: incubatorLmsrAbi,
-      functionName,
-      args: [marketId, amountRaw, fresh.maxCostRaw, fresh.deadline],
-    },
+    buildBuyTx({
+      marketId,
+      outcome,
+      amountRaw,
+      maxCostRaw: fresh.maxCostRaw,
+      deadline: fresh.deadline,
+    }),
     {
       awaiting: `Confirm ${functionName} in the injected wallet.`,
       pending: `${functionName} is pending on Arc…`,
@@ -597,31 +568,6 @@ async function readTokenBinding(marketId: bigint) {
     functionName: 'tokenBinding',
     args: [marketId],
   })) as TokenBinding;
-}
-
-export function cumulativeMiniClobPaymentRaw(
-  priceRaw: bigint,
-  sizeRaw: bigint,
-) {
-  if (priceRaw < 0n || sizeRaw < 0n) {
-    throw new Error('MiniCLOB price and size cannot be negative.');
-  }
-  if (priceRaw === 0n || sizeRaw === 0n) return 0n;
-  return (
-    (priceRaw * sizeRaw + MINI_CLOB_PRICE_SCALE - 1n) /
-    MINI_CLOB_PRICE_SCALE
-  );
-}
-
-export function miniClobFillPaymentRaw(
-  priceRaw: bigint,
-  filledRaw: bigint,
-  fillSizeRaw: bigint,
-) {
-  return (
-    cumulativeMiniClobPaymentRaw(priceRaw, filledRaw + fillSizeRaw) -
-    cumulativeMiniClobPaymentRaw(priceRaw, filledRaw)
-  );
 }
 
 async function readMiniClobOrder(orderId: bigint) {
@@ -799,18 +745,13 @@ export async function placeOrderOnArc({
   assertConnectedAccount(account);
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.miniClob,
-      abi: miniClobAbi,
-      functionName: 'place',
-      args: [
-        freshBinding[4],
-        tokenId,
-        side === 'BID' ? 0 : 1,
-        priceRaw,
-        sizeRaw,
-      ],
-    },
+    buildMiniClobPlaceTx({
+      conditionId: freshBinding[4],
+      tokenId,
+      side,
+      priceRaw,
+      sizeRaw,
+    }),
     {
       awaiting: `Confirm MiniCLOB.place for the ${outcome} ${side}.`,
       pending: 'Order placement is pending on Arc…',
@@ -944,12 +885,7 @@ export async function fillOrderOnArc({
   assertConnectedAccount(account);
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.miniClob,
-      abi: miniClobAbi,
-      functionName: 'fill',
-      args: [orderId, fillSizeRaw],
-    },
+    buildMiniClobFillTx({ orderId, fillSizeRaw }),
     {
       awaiting: `Confirm MiniCLOB.fill for order ${orderId}.`,
       pending: `Order ${orderId} fill is pending on Arc…`,
@@ -1006,12 +942,7 @@ export async function cancelOrderOnArc({
   assertConnectedAccount(account);
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.miniClob,
-      abi: miniClobAbi,
-      functionName: 'cancel',
-      args: [orderId],
-    },
+    buildMiniClobCancelTx({ orderId }),
     {
       awaiting: `Confirm MiniCLOB.cancel for order ${orderId}.`,
       pending: `Order ${orderId} cancellation is pending on Arc…`,
@@ -1071,12 +1002,7 @@ export async function sellOnArc({
   if (!approved) {
     await sendAndConfirm(
       account,
-      {
-        address: ADDRESSES.ctf,
-        abi: conditionalTokensAbi,
-        functionName: 'setApprovalForAll',
-        args: [ADDRESSES.lmsr, true],
-      },
+      buildCtfApprovalForAllTx({ operator: ADDRESSES.lmsr }),
       {
         awaiting: 'Approve the LMSR as a CTF ERC-1155 operator.',
         pending: 'CTF operator approval is pending on Arc…',
@@ -1125,12 +1051,13 @@ export async function sellOnArc({
   const functionName = outcome === 'YES' ? 'sellYes' : 'sellNo';
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.lmsr,
-      abi: incubatorLmsrAbi,
-      functionName,
-      args: [marketId, amountRaw, minProceedsRaw, deadline],
-    },
+    buildSellTx({
+      marketId,
+      outcome,
+      amountRaw,
+      minProceedsRaw,
+      deadline,
+    }),
     {
       awaiting: `Confirm ${functionName} in the injected wallet.`,
       pending: `${functionName} is pending on Arc…`,
@@ -1210,12 +1137,7 @@ export async function graduateOnArc({
   assertConnectedAccount(account);
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.registry,
-      abi: incubatorRegistryAbi,
-      functionName: 'graduateIfQualified',
-      args: [marketId],
-    },
+    buildGraduateIfQualifiedTx({ marketId }),
     {
       awaiting: 'Confirm graduateIfQualified in the injected wallet.',
       pending: 'Graduation is pending on Arc…',
@@ -1224,62 +1146,6 @@ export async function graduateOnArc({
     report,
   );
   return { receipt, tollRaw };
-}
-
-/**
- * CommitteeOracleAdapterV2 does not use EIP-712. Its source-of-truth digest is:
- *
- *   personal_sign(
- *     keccak256(abi.encode(
- *       keccak256(abi.encode("PredexCommitteeOracleV2", chainId, oracle)),
- *       questionId,
- *       payouts,
- *       nonce
- *     ))
- *   )
- *
- * Keep this helper exported so the live read-smoke and the wallet path share the
- * exact same encoding.
- */
-export function buildCommitteeResolutionDigest({
-  chainId,
-  oracle,
-  questionId,
-  payouts,
-  nonce,
-}: {
-  chainId: number;
-  oracle: Address;
-  questionId: Hex;
-  payouts: readonly [bigint, bigint];
-  nonce: bigint;
-}) {
-  const domainSeparator = keccak256(
-    encodeAbiParameters(
-      [
-        { type: 'string' },
-        { type: 'uint256' },
-        { type: 'address' },
-      ],
-      [COMMITTEE_DOMAIN_LABEL, BigInt(chainId), oracle],
-    ),
-  );
-  const payloadDigest = keccak256(
-    encodeAbiParameters(
-      [
-        { type: 'bytes32' },
-        { type: 'bytes32' },
-        { type: 'uint256[]' },
-        { type: 'uint256' },
-      ],
-      [domainSeparator, questionId, [...payouts], nonce],
-    ),
-  );
-  return {
-    domainSeparator,
-    payloadDigest,
-    resolutionDigest: hashMessage({ raw: payloadDigest }),
-  };
 }
 
 async function readResolutionEligibility(
@@ -1419,7 +1285,7 @@ export async function resolveOnArc({
     message:
       'Refreshing the lifecycle, deadline, oracle membership, nonce, and resolution digest…',
   });
-  const payouts = RESOLUTION_PAYOUTS[outcome];
+  const payouts = resolutionPayouts(outcome);
   const fresh = await readResolutionEligibility(
     account,
     marketId,
@@ -1465,12 +1331,11 @@ export async function resolveOnArc({
 
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.oracle,
-      abi: committeeOracleAbi,
-      functionName: 'resolve',
-      args: [fresh.questionId, [...payouts], [signature]],
-    },
+    buildCommitteeResolveTx({
+      questionId: fresh.questionId,
+      payouts,
+      signatures: [signature],
+    }),
     {
       awaiting: 'Confirm CommitteeOracleAdapterV2.resolve in the injected wallet.',
       pending: 'Committee resolution is pending on Arc…',
@@ -1524,12 +1389,7 @@ export async function observeResolutionOnArc({
 
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.lmsr,
-      abi: incubatorLmsrAbi,
-      functionName: 'observeResolution',
-      args: [marketId],
-    },
+    buildObserveResolutionTx({ marketId }),
     {
       awaiting: 'Confirm IncubatorLMSR.observeResolution in the injected wallet.',
       pending: 'Resolution observation is pending on Arc…',
@@ -1593,12 +1453,7 @@ export async function redeemOnArc({
 
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.ctf,
-      abi: conditionalTokensAbi,
-      functionName: 'redeemPositions',
-      args: [ADDRESSES.usdc, ZERO_COLLECTION_ID, binding[4], [indexSet]],
-    },
+    buildRedeemTx({ conditionId: binding[4], indexSet }),
     {
       awaiting: `Confirm ConditionalTokens.redeemPositions for ${outcome}.`,
       pending: `${outcome} redemption is pending on Arc…`,
@@ -1638,12 +1493,7 @@ export async function closeoutOnArc({
 
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.lmsr,
-      abi: incubatorLmsrAbi,
-      functionName: 'closeout',
-      args: [marketId],
-    },
+    buildCloseoutTx({ marketId }),
     {
       awaiting: 'Confirm IncubatorLMSR.closeout in the injected wallet.',
       pending: 'Market closeout is pending on Arc…',
@@ -1707,12 +1557,7 @@ export async function claimFundingResidualOnArc({
 
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.lmsr,
-      abi: incubatorLmsrAbi,
-      functionName: 'claimFundingResidual',
-      args: [marketId],
-    },
+    buildClaimFundingResidualTx({ marketId }),
     {
       awaiting: 'Confirm IncubatorLMSR.claimFundingResidual in the injected wallet.',
       pending: 'Funding residual claim is pending on Arc…',
@@ -1765,12 +1610,7 @@ export async function sweepProtocolAfterCloseoutOnArc({
 
   const receipt = await sendAndConfirm(
     account,
-    {
-      address: ADDRESSES.lmsr,
-      abi: incubatorLmsrAbi,
-      functionName: 'sweepProtocolAfterCloseout',
-      args: [marketId],
-    },
+    buildSweepProtocolAfterCloseoutTx({ marketId }),
     {
       awaiting:
         'Confirm IncubatorLMSR.sweepProtocolAfterCloseout in the injected wallet.',

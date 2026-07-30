@@ -21,6 +21,7 @@
       "@predex-pump/shared/addresses": ["../shared/src/addresses.ts"],
       "@predex-pump/shared/domain": ["../shared/src/domain.ts"],
       "@predex-pump/shared/rest": ["../shared/src/rest.ts"],
+      "@predex-pump/shared/tx": ["../shared/src/tx/index.ts"],
       "@predex-pump/shared/ws": ["../shared/src/ws.ts"],
       "@predex-pump/shared/*": ["../shared/*"]
     }

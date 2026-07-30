@@ -7,12 +7,22 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./addresses": "./src/addresses.ts",
+    "./domain": "./src/domain.ts",
+    "./rest": "./src/rest.ts",
+    "./ws": "./src/ws.ts",
+    "./tx": "./src/tx/index.ts",
     "./abis/*": "./abis/*"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "viem": "2.55.8"
   },
   "devDependencies": {
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "4.1.0"
   }
 }

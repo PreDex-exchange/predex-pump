@@ -6,8 +6,6 @@ import type {
 
 const DEFAULT_WS_URL = 'ws://localhost:3001/ws';
 const MAX_RECONNECT_DELAY_MS = 15_000;
-const MOCK_DATA_ENABLED =
-  process.env.NEXT_PUBLIC_USE_MOCK_DATA === 'true';
 
 export type BackendEventListener = (message: ServerMessage) => void;
 
@@ -43,8 +41,6 @@ class BackendWebSocketClient {
   private reconnectTimer: number | null = null;
 
   subscribe(channel: Channel, listener: BackendEventListener) {
-    if (MOCK_DATA_ENABLED) return () => undefined;
-
     const channelListeners =
       this.listeners.get(channel) ?? new Set<BackendEventListener>();
     const firstListener = channelListeners.size === 0;

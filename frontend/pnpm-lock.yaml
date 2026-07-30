@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@predex-pump/shared':
         specifier: file:../shared
-        version: file:../shared
+        version: file:../shared(typescript@6.0.3)(zod@4.4.3)
       '@tanstack/react-query':
         specifier: ^5.90.5
         version: 5.101.4(react@19.2.8)
@@ -2332,7 +2332,14 @@ snapshots:
 
   '@nolyfill/is-core-module@1.0.39': {}
 
-  '@predex-pump/shared@file:../shared': {}
+  '@predex-pump/shared@file:../shared(typescript@6.0.3)(zod@4.4.3)':
+    dependencies:
+      viem: 2.55.8(typescript@6.0.3)(zod@4.4.3)
+    transitivePeerDependencies:
+      - bufferutil
+      - typescript
+      - utf-8-validate
+      - zod
 
   '@rtsao/scc@1.1.0': {}
 

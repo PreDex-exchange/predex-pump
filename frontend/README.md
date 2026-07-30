@@ -41,8 +41,6 @@ Run the backend separately on port 3001 before opening the app.
 - All create, trade, graduate, MiniCLOB, resolution, observation, redemption,
   and closeout writes go through the injected wallet and wait for receipts.
 - All collateral and CTF sizes use six-decimal raw integers. No flow sends native `value`.
-- Set `NEXT_PUBLIC_USE_MOCK_DATA=true` only for local visual development; the
-  backend is the default display source.
 
 ## Backend URLs and LAN phones
 
