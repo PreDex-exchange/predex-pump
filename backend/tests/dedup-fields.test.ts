@@ -86,6 +86,38 @@ describe('deterministic market fact extraction', () => {
     });
   });
 
+  // The gate is split by field type: objective fields (strike/deadline/basis
+  // and a DIRECTIONAL comparator) are hard gated, while subject naming and
+  // comparator phrasing are deferred to a semantic judge. Requiring exact
+  // string equality on those rejected true duplicates, because extractors
+  // emit unstable surface forms for one entity.
+  it('defers subject naming and comparator phrasing, but hard-gates direction', () => {
+    const base = {
+      subject: 'manchester united',
+      comparator: 'win',
+      strike: null,
+      deadline: '2027',
+      basis: null,
+    };
+    // Same fact, different surface form for the entity → judge decides.
+    expect(
+      compareAuthoritativeFields(base, { ...base, subject: 'man utd' }),
+    ).toMatchObject({ compatible: true, needsSemanticJudgment: true });
+    // Comparator absent on one side is phrasing, not a fact difference.
+    expect(
+      compareAuthoritativeFields(base, { ...base, comparator: null }),
+    ).toMatchObject({ compatible: true, needsSemanticJudgment: true });
+    // Direction is objective and must never be deferred.
+    const priced = { ...base, comparator: 'above', strike: 'usd:70000' };
+    expect(
+      compareAuthoritativeFields(priced, { ...priced, comparator: 'below' }),
+    ).toMatchObject({ compatible: false });
+    // Identical fields need no judgment at all.
+    const identical = compareAuthoritativeFields(priced, { ...priced });
+    expect(identical).toMatchObject({ compatible: true });
+    expect(identical.needsSemanticJudgment).toBeUndefined();
+  });
+
   // Regression: "this friday" used to canonicalize differently from a bare
   // "friday", so genuine same-fact duplicates were rejected and the merge
   // router never fired on natural phrasing. "next friday" must stay distinct.

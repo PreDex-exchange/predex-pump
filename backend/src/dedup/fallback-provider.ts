@@ -70,6 +70,12 @@ export class FallbackMarketIntelligenceProvider
     if (!structured.compatible) {
       return { sameFact: false, reason: structured.reason };
     }
+    if (structured.needsSemanticJudgment === true) {
+      // This judge is deterministic and cannot resolve entity aliases or verb
+      // phrasing, so an ambiguous subject/comparator stays not-a-duplicate.
+      // Only the model-backed judge may equate them.
+      return { sameFact: false, reason: structured.reason };
+    }
 
     const similarity = tokenSimilarity(draft.question, candidate.question);
     const sameFact = similarity >= 0.7;

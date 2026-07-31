@@ -111,13 +111,19 @@ describe('retrieve-then-judge dedup service', () => {
   });
 
   it.each([
-    ['strike', 'Will BTC close above $75k Friday?'],
-    ['deadline', 'Will BTC close above $70k Saturday?'],
-    ['subject', 'Will ETH close above $70k Friday?'],
-    ['comparator', 'Will BTC close below $70k Friday?'],
-  ])('rejects a different %s even when wording is otherwise near-identical', async (
-    field,
+    // Objective fields stay a hard gate: a difference here is a different fact.
+    ['strike', 'Will BTC close above $75k Friday?', 'Different strike'],
+    ['deadline', 'Will BTC close above $70k Saturday?', 'Different deadline'],
+    ['comparator', 'Will BTC close below $70k Friday?', 'Different comparator'],
+    // A differing subject is NOT hard gated any more: extractors emit unstable
+    // surface forms for one entity ("man_utd" vs "manchester_united"), so the
+    // gate defers to the semantic judge. The deterministic judge used here
+    // cannot resolve entities, so it still refuses to merge.
+    ['subject', 'Will ETH close above $70k Friday?', 'needs semantic judgment'],
+  ])('never merges a different %s even when wording is otherwise near-identical', async (
+    _field,
     draftQuestion,
+    expectedReason,
   ) => {
     const service = await serviceWithMarket('Will BTC close above $70k Friday?');
     const response = await service.check(draftQuestion);
@@ -126,7 +132,7 @@ describe('retrieve-then-judge dedup service', () => {
       isDuplicate: false,
       canonicalMarketId: null,
     });
-    expect(response.candidates[0]?.reason).toContain(`Different ${field}`);
+    expect(response.candidates[0]?.reason).toContain(expectedReason);
   });
 
   it('never lets a near-perfect ANN score override a structured strike conflict', async () => {

@@ -345,34 +345,101 @@ export function extractFieldsLocally(question: string): MarketFactFields {
 export interface AuthoritativeComparison {
   compatible: boolean;
   reason: string;
+  /**
+   * True when every objective field matches but some linguistic field is
+   * ambiguous — the subject is named differently ("man_utd" vs
+   * "manchester_united"), or the comparator is absent/phrased differently
+   * ("win" vs "be champions"). Only a semantic judge may resolve those; a
+   * deterministic judge must treat it as not-a-duplicate.
+   */
+  needsSemanticJudgment?: boolean;
 }
 
+/**
+ * Comparators that encode a DIRECTION. A mismatch between two of these is an
+ * objective difference (above vs below is a different fact), so it is hard
+ * gated. Everything else ("win", "reach", "lose", or absent) is verb phrasing
+ * and is deferred to the semantic judge.
+ */
+const DIRECTIONAL_COMPARATORS = new Set([
+  'above',
+  'below',
+  'at_or_above',
+  'at_or_below',
+  'equal',
+]);
+
+/**
+ * Objective fields. A difference here means a genuinely different real-world
+ * fact ($70k vs $75k, Friday vs Saturday), so they are a hard gate that no
+ * similarity score or model judgment may override.
+ *
+ * `subject` is deliberately NOT in this list: extractors — especially model
+ * backed ones — emit unstable surface forms for the same entity, so requiring
+ * exact string equality rejected true duplicates. It is handled separately.
+ */
 const AUTHORITATIVE_FIELDS = [
-  'subject',
-  'comparator',
   'strike',
   'deadline',
   'basis',
 ] as const satisfies readonly (keyof MarketFactFields)[];
 
 /**
- * Structured fields are a hard gate. A conflict or a field present on only one
- * side can never be overridden by vector similarity or a model judgment.
+ * Objective fields are a hard gate: a conflict, or a field present on only one
+ * side, can never be overridden by vector similarity or a model judgment.
+ *
+ * `subject` is a softer gate. It must be established on BOTH sides, but when the
+ * two sides merely NAME it differently the decision is deferred to the caller's
+ * semantic judge via `subjectNeedsJudgment` — extractors emit unstable surface
+ * forms ("man_utd" vs "manchester_united") for one entity, and demanding exact
+ * equality rejected true duplicates. Deterministic judges must treat that flag
+ * as not-a-duplicate; only a semantic judge may equate the two.
  */
 export function compareAuthoritativeFields(
   draft: MarketFactFields,
   candidate: MarketFactFields,
 ): AuthoritativeComparison {
+  if (draft.subject === null && candidate.subject === null) {
+    return {
+      compatible: false,
+      reason: 'Cannot establish subject; conservative not-duplicate decision',
+    };
+  }
+  if (draft.subject === null || candidate.subject === null) {
+    return {
+      compatible: false,
+      reason: 'Different subject: one question does not specify it',
+    };
+  }
+  let needsSemanticJudgment = draft.subject !== candidate.subject;
+
+  // Comparator: a directional mismatch is objective and fatal; absent or
+  // differently-phrased comparators are linguistic and go to the judge.
+  const draftComparator = draft.comparator;
+  const candidateComparator = candidate.comparator;
+  if (draftComparator !== candidateComparator) {
+    if (
+      draftComparator !== null &&
+      candidateComparator !== null &&
+      DIRECTIONAL_COMPARATORS.has(draftComparator) &&
+      DIRECTIONAL_COMPARATORS.has(candidateComparator)
+    ) {
+      return {
+        compatible: false,
+        reason: `Different comparator: "${draftComparator}" vs "${candidateComparator}"`,
+      };
+    }
+    needsSemanticJudgment = true;
+  } else if (draftComparator === null) {
+    // Neither question states a comparison; only a semantic judge can tell
+    // "announce" from "release".
+    needsSemanticJudgment = true;
+  }
+
   for (const field of AUTHORITATIVE_FIELDS) {
     const draftValue = draft[field];
     const candidateValue = candidate[field];
     if (draftValue === null && candidateValue === null) {
-      if (field === 'subject' || field === 'comparator') {
-        return {
-          compatible: false,
-          reason: `Cannot establish ${field}; conservative not-duplicate decision`,
-        };
-      }
       continue;
     }
     if (draftValue === null || candidateValue === null) {
@@ -394,10 +461,18 @@ export function compareAuthoritativeFields(
       };
     }
   }
-  return {
-    compatible: true,
-    reason: 'All authoritative structured fields match',
-  };
+  return needsSemanticJudgment
+    ? {
+        compatible: true,
+        needsSemanticJudgment: true,
+        reason:
+          'Objective fields (strike, deadline, basis, direction) match; ' +
+          'subject naming or comparator phrasing needs semantic judgment',
+      }
+    : {
+        compatible: true,
+        reason: 'All authoritative structured fields match',
+      };
 }
 
 function canonicalizeAliases(value: string): string {
