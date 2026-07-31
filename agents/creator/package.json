@@ -21,8 +21,8 @@
     "start": "tsx --tsconfig tsconfig.runtime.json src/cli.ts"
   },
   "dependencies": {
-    "@predex-pump/agent-sdk": "file:../../agent-sdk",
-    "@predex-pump/shared": "file:../../shared",
+    "@predex-pump/agent-sdk": "link:../../agent-sdk",
+    "@predex-pump/shared": "link:../../shared",
     "viem": "2.55.8"
   },
   "devDependencies": {

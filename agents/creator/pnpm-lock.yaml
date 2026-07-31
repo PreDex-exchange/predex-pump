@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@predex-pump/agent-sdk':
-        specifier: file:../../agent-sdk
-        version: file:../../agent-sdk(typescript@5.9.3)
+        specifier: link:../../agent-sdk
+        version: link:../../agent-sdk
       '@predex-pump/shared':
-        specifier: file:../../shared
-        version: file:../../shared(typescript@5.9.3)
+        specifier: link:../../shared
+        version: link:../../shared
       viem:
         specifier: 2.55.8
         version: 2.55.8(typescript@5.9.3)
@@ -225,13 +225,6 @@ packages:
 
   '@oxc-project/types@0.142.0':
     resolution: {integrity: sha512-7W+2q5AKQVU36fkaryontrHn3YDt1RyUYXatw9i5H8ocYe2sPKSFB6eS8WNPeRKiN1qAWWZUPm7gwFzJGrccqQ==}
-
-  '@predex-pump/agent-sdk@file:../../agent-sdk':
-    resolution: {directory: ../../agent-sdk, type: directory}
-    engines: {node: '>=20'}
-
-  '@predex-pump/shared@file:../../shared':
-    resolution: {directory: ../../shared, type: directory}
 
   '@rolldown/binding-android-arm64@1.2.1':
     resolution: {integrity: sha512-02hOeOSryYxVrOIphmLAsqnCJWxwlzFk+pEt/N/i6OgT3lShHO7xGCU5cpgchRDHboAEbSjzgGh+O/u1GswQmA==}
@@ -709,18 +702,6 @@ packages:
       utf-8-validate:
         optional: true
 
-  ws@8.21.1:
-    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
 snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
@@ -837,26 +818,6 @@ snapshots:
   '@noble/hashes@1.8.0': {}
 
   '@oxc-project/types@0.142.0': {}
-
-  '@predex-pump/agent-sdk@file:../../agent-sdk(typescript@5.9.3)':
-    dependencies:
-      '@predex-pump/shared': file:../../shared(typescript@5.9.3)
-      viem: 2.55.8(typescript@5.9.3)
-      ws: 8.21.1
-    transitivePeerDependencies:
-      - bufferutil
-      - typescript
-      - utf-8-validate
-      - zod
-
-  '@predex-pump/shared@file:../../shared(typescript@5.9.3)':
-    dependencies:
-      viem: 2.55.8(typescript@5.9.3)
-    transitivePeerDependencies:
-      - bufferutil
-      - typescript
-      - utf-8-validate
-      - zod
 
   '@rolldown/binding-android-arm64@1.2.1':
     optional: true
@@ -1245,5 +1206,3 @@ snapshots:
       stackback: 0.0.2
 
   ws@8.21.0: {}
-
-  ws@8.21.1: {}
