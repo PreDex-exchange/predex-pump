@@ -11,6 +11,7 @@ import {
   type MarketDetailResponse,
   type OrderBookResponse,
   type PriceHistoryResponse,
+  type TruthSignalResponse,
 } from '@predex-pump/shared';
 import type { FastifyInstance } from 'fastify';
 
@@ -35,6 +36,7 @@ import {
   getMarketDetail,
   getOrderBook,
   getPriceHistory,
+  getTruthSignal,
   listActivity,
   listMarkets,
 } from './queries.js';
@@ -60,6 +62,10 @@ interface ActivityQuerystring {
 
 interface IdParams {
   id: string;
+}
+
+interface TruthParams {
+  marketId: string;
 }
 
 interface TokenParams {
@@ -171,6 +177,16 @@ export function registerRestRoutes(
       const tokenId = parseDecimalId('token id', request.params.tokenId);
       const response = await getOrderBook(prisma, tokenId);
       if (response === null) throw notFound(`Token ${tokenId} was not found`);
+      return response;
+    },
+  );
+
+  app.get<{ Params: TruthParams }>(
+    routes.truth(':marketId'),
+    async (request): Promise<TruthSignalResponse> => {
+      const marketId = parseDecimalId('market id', request.params.marketId);
+      const response = await getTruthSignal(prisma, marketId);
+      if (response === null) throw notFound(`Market ${marketId} was not found`);
       return response;
     },
   );

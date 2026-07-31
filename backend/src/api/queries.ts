@@ -10,6 +10,7 @@ import type {
   OrderBook,
   OrderBookResponse,
   PriceHistoryResponse,
+  TruthSignalResponse,
 } from '@predex-pump/shared';
 import {
   Prisma,
@@ -40,6 +41,7 @@ import {
   encodeActivityCursor,
   encodeMarketCursor,
 } from './input.js';
+import { deriveTruthSignal } from './truth.js';
 
 const MARKET_SELECT = {
   id: true,
@@ -366,6 +368,29 @@ export async function getPriceHistory(
       noPriceRaw: point.noPriceRaw,
     })),
   };
+}
+
+export async function getTruthSignal(
+  prisma: PrismaClient,
+  marketId: string,
+): Promise<TruthSignalResponse | null> {
+  const market = await getMarketDto(prisma, marketId);
+  if (market === null) return null;
+  const [book, recentPriceRows] = await Promise.all([
+    getMarketBook(prisma, marketId),
+    prisma.pricePoint.findMany({
+      where: { marketId },
+      select: { ts: true, yesPriceRaw: true, noPriceRaw: true },
+      orderBy: [{ ts: 'desc' }, { blockNumber: 'desc' }, { logIndex: 'desc' }],
+      take: 8,
+    }),
+  ]);
+  if (book === null) return null;
+  return deriveTruthSignal({
+    market,
+    book,
+    recentPrices: recentPriceRows.reverse(),
+  });
 }
 
 export async function getAccount(

@@ -14,6 +14,7 @@ import {
   type OrderBookResponse,
   type PriceHistoryQuery,
   type PriceHistoryResponse,
+  type TruthSignalResponse,
 } from '@predex-pump/shared/rest';
 
 const DEFAULT_API_URL = 'http://localhost:3001';
@@ -45,6 +46,7 @@ export interface PredexRestClient {
     query?: PriceHistoryQuery,
   ): Promise<PriceHistoryResponse>;
   getHealth(): Promise<HealthResponse>;
+  getTruthSignal(marketId: string): Promise<TruthSignalResponse>;
 }
 
 export class PredexRestError extends Error {
@@ -212,6 +214,12 @@ class FetchPredexRestClient implements PredexRestClient {
 
   getHealth() {
     return this.request<HealthResponse>(routes.health());
+  }
+
+  getTruthSignal(marketId: string) {
+    return this.request<TruthSignalResponse>(
+      routes.truth(encodeURIComponent(marketId)),
+    );
   }
 }
 

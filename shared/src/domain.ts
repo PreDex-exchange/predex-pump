@@ -208,6 +208,60 @@ export interface PricePoint {
   noPriceRaw: Raw;
 }
 
+/**
+ * An explainable estimate computed only from the indexed Predex read model.
+ * This is market microstructure, not an external fact oracle or resolution claim.
+ */
+export interface TruthSignal {
+  marketId: string;
+  estimateType: 'INDEXED_MARKET_ESTIMATE';
+  fairValueYesRaw: Raw;
+  fairValueNoRaw: Raw;
+  inputs: {
+    currentImpliedYesRaw: Raw;
+    recentPrice: {
+      pointsUsed: number;
+      oldestTs: number | null;
+      latestTs: number | null;
+      oldestYesPriceRaw: Raw | null;
+      latestYesPriceRaw: Raw | null;
+      /** Signed six-decimal price change; unlike Raw, this may be negative. */
+      changeRaw: string;
+    };
+    yesBook: {
+      bestBidRaw: Raw | null;
+      bestAskRaw: Raw | null;
+      midpointRaw: Raw | null;
+      bidLiquidityRaw: Raw;
+      askLiquidityRaw: Raw;
+      /** Signed parts-per-million depth imbalance, or null for an empty book. */
+      imbalancePpm: number | null;
+    };
+    context: {
+      phase: MarketPhase;
+      tradeCount: number;
+      volumeRaw: Raw;
+    };
+  };
+  derivation: {
+    method: 'INDEXED_MARKET_MICROSTRUCTURE_V1';
+    formula: string;
+    currentImpliedWeightBps: 7_000;
+    bookMidpointWeightBps: 3_000;
+    trendWeightBps: 1_000;
+    maxAbsTrendAdjustmentRaw: '25000';
+    maxAbsImbalanceAdjustmentRaw: '15000';
+    baseRaw: Raw;
+    /** Signed six-decimal price adjustment. */
+    trendAdjustmentRaw: string;
+    /** Signed six-decimal price adjustment. */
+    imbalanceAdjustmentRaw: string;
+    /** Signed before the final [0, 1] probability clamp. */
+    unclampedFairValueYesRaw: string;
+  };
+  caveats: string[];
+}
+
 /** Committee (oracle) resolver set — display + gating only; the resolve tx re-checks on-chain. */
 export interface CommitteeInfo {
   oracle: Address;

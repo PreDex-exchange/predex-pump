@@ -15,6 +15,7 @@ import type {
   RegistryConfig,
   Resolution,
   Trade,
+  TruthSignal,
 } from './domain';
 
 /** Opaque forward cursor for keyset pagination (base64 of the last seen sort key). */
@@ -60,6 +61,9 @@ export interface PriceHistoryResponse {
   marketId: string;
   points: PricePoint[];
 }
+
+// GET /truth/:marketId → explainable estimate from the indexed read model
+export type TruthSignalResponse = TruthSignal;
 
 // GET /config  → registry-level params + committee set (needed before a market exists)
 export type ConfigResponse = RegistryConfig;
@@ -114,6 +118,7 @@ export const routes = {
   market: (id: string) => `/markets/${id}`,
   marketBook: (id: string) => `/markets/${id}/book`,
   marketPrices: (id: string) => `/markets/${id}/prices`,
+  truth: (marketId: string) => `/truth/${marketId}`,
   orderbook: (tokenId: string) => `/orderbook/${tokenId}`,
   account: (addr: string) => `/accounts/${addr}`,
   activity: () => `/activity`,

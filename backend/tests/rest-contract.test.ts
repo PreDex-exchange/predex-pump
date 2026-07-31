@@ -9,6 +9,7 @@ import type {
   MarketDetailResponse,
   OrderBookResponse,
   PriceHistoryResponse,
+  TruthSignalResponse,
 } from '@predex-pump/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -282,6 +283,97 @@ describe('REST shared contract', () => {
         },
       ],
     });
+  });
+
+  it('GET /truth/:marketId exposes the exact indexed signal derivation', async () => {
+    const response = await app.inject({ method: 'GET', url: '/truth/1' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<TruthSignalResponse>()).toEqual({
+      marketId: '1',
+      estimateType: 'INDEXED_MARKET_ESTIMATE',
+      fairValueYesRaw: '614166',
+      fairValueNoRaw: '385834',
+      inputs: {
+        currentImpliedYesRaw: '600000',
+        recentPrice: {
+          pointsUsed: 2,
+          oldestTs: 1_700_000_010,
+          latestTs: 1_700_000_020,
+          oldestYesPriceRaw: '550000',
+          latestYesPriceRaw: '600000',
+          changeRaw: '50000',
+        },
+        yesBook: {
+          bestBidRaw: '600000',
+          bestAskRaw: '650000',
+          midpointRaw: '625000',
+          bidLiquidityRaw: '1250000',
+          askLiquidityRaw: '1000000',
+          imbalancePpm: 111111,
+        },
+        context: {
+          phase: 'Graduated',
+          tradeCount: 1,
+          volumeRaw: '1000000',
+        },
+      },
+      derivation: {
+        method: 'INDEXED_MARKET_MICROSTRUCTURE_V1',
+        formula: expect.stringContaining('70% current implied YES'),
+        currentImpliedWeightBps: 7_000,
+        bookMidpointWeightBps: 3_000,
+        trendWeightBps: 1_000,
+        maxAbsTrendAdjustmentRaw: '25000',
+        maxAbsImbalanceAdjustmentRaw: '15000',
+        baseRaw: '607500',
+        trendAdjustmentRaw: '5000',
+        imbalanceAdjustmentRaw: '1666',
+        unclampedFairValueYesRaw: '614166',
+      },
+      caveats: expect.arrayContaining([
+        expect.stringContaining('not an external fact oracle'),
+        expect.stringContaining('may lag Arc'),
+      ]),
+    });
+  });
+
+  it('GET /truth/:marketId degrades honestly without book or price history', async () => {
+    const response = await app.inject({ method: 'GET', url: '/truth/2' });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<TruthSignalResponse>();
+    expect(body.fairValueYesRaw).toBe('550000');
+    expect(body.inputs.recentPrice).toMatchObject({
+      pointsUsed: 0,
+      oldestTs: null,
+      latestTs: null,
+      changeRaw: '0',
+    });
+    expect(body.inputs.yesBook).toEqual({
+      bestBidRaw: null,
+      bestAskRaw: null,
+      midpointRaw: null,
+      bidLiquidityRaw: '0',
+      askLiquidityRaw: '0',
+      imbalancePpm: null,
+    });
+    expect(body.derivation).toMatchObject({
+      baseRaw: '550000',
+      trendAdjustmentRaw: '0',
+      imbalanceAdjustmentRaw: '0',
+    });
+    expect(body.caveats).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('two-sided YES book was unavailable'),
+        expect.stringContaining('Fewer than two recent price points'),
+        expect.stringContaining('no liquidity'),
+        expect.stringContaining('not assert that the market is tradable'),
+      ]),
+    );
+    expect((await app.inject({ method: 'GET', url: '/truth/999' })).statusCode).toBe(
+      404,
+    );
   });
 
   it('GET /accounts/:addr returns positions, trades, and estimated PnL', async () => {
