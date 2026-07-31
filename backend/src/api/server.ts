@@ -12,6 +12,7 @@ export interface BuildServerOptions {
   prisma: PrismaClient;
   eventBus: ServerEventBus;
   dedupChecker?: DedupChecker;
+  indexerStallMs?: number;
   logger?: FastifyServerOptions['logger'];
 }
 
@@ -25,6 +26,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     app,
     options.prisma,
     options.dedupChecker ?? { check: async () => unavailableDedupResponse() },
+    options.indexerStallMs,
   );
   await app.ready();
   return app;

@@ -16,6 +16,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { unavailableDedupResponse } from '../dedup/service.js';
 import type { DedupChecker } from '../dedup/types.js';
+import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
 import {
   HttpError,
   parseAddress,
@@ -88,6 +89,7 @@ export function registerRestRoutes(
   app: FastifyInstance,
   prisma: PrismaClient,
   dedupChecker: DedupChecker,
+  indexerStallMs = DEFAULT_INDEXER_STALL_MS,
 ): void {
   const readConfig = createCachedConfigReader(prisma);
 
@@ -206,5 +208,8 @@ export function registerRestRoutes(
     return response;
   });
 
-  app.get(routes.health(), async (): Promise<HealthResponse> => getHealth(prisma));
+  app.get(
+    routes.health(),
+    async (): Promise<HealthResponse> => getHealth(prisma, indexerStallMs),
+  );
 }

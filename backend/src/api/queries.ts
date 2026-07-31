@@ -18,6 +18,8 @@ import {
   type PrismaClient,
 } from '@prisma/client';
 
+import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
+
 import {
   ACTIVITY_TYPES,
   type ActivityDtoRow,
@@ -554,7 +556,11 @@ export function createCachedConfigReader(
   };
 }
 
-export async function getHealth(prisma: PrismaClient): Promise<HealthResponse> {
+export async function getHealth(
+  prisma: PrismaClient,
+  stallAfterMs = DEFAULT_INDEXER_STALL_MS,
+  now = new Date(),
+): Promise<HealthResponse> {
   const state = await prisma.indexerState.findUnique({ where: { id: 1 } });
   if (state === null) {
     return {
@@ -563,14 +569,36 @@ export async function getHealth(prisma: PrismaClient): Promise<HealthResponse> {
       indexedBlock: 0,
       headBlock: 0,
       lagBlocks: 0,
+      indexerStatus: 'stalled',
+      lastSuccessfulPollAt: null,
+      secondsSinceLastSuccessfulPoll: null,
     };
   }
+  const millisecondsSinceLastSuccessfulPoll =
+    state.lastSuccessfulPollAt === null
+      ? null
+      : Math.max(0, now.getTime() - state.lastSuccessfulPollAt.getTime());
+  const secondsSinceLastSuccessfulPoll =
+    millisecondsSinceLastSuccessfulPoll === null
+      ? null
+      : Math.floor(millisecondsSinceLastSuccessfulPoll / 1_000);
+  const stalled =
+    millisecondsSinceLastSuccessfulPoll === null ||
+    millisecondsSinceLastSuccessfulPoll > stallAfterMs;
+  const indexerStatus = stalled
+    ? 'stalled'
+    : state.consecutiveRpcFailures > 0
+      ? 'degraded'
+      : 'healthy';
   return {
-    ok: state.lastBlock <= state.headBlock,
+    ok: !stalled && state.lastBlock <= state.headBlock,
     chainId: state.chainId,
     indexedBlock: state.lastBlock,
     headBlock: state.headBlock,
     lagBlocks: Math.max(0, state.headBlock - state.lastBlock),
+    indexerStatus,
+    lastSuccessfulPollAt: state.lastSuccessfulPollAt?.toISOString() ?? null,
+    secondsSinceLastSuccessfulPoll,
   };
 }
 

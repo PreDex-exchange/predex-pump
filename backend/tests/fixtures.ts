@@ -44,6 +44,7 @@ export async function seedContractData(): Promise<void> {
       deployBlock: DEPLOY_BLOCK,
       lastBlock: 100,
       headBlock: 103,
+      lastSuccessfulPollAt: new Date(),
     },
   });
   await testPrisma.committeeMember.createMany({

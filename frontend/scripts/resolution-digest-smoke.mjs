@@ -14,7 +14,7 @@ const oracle =
   process.env.ARC_ORACLE_ADDRESS ??
   '0xd246A354FD469023bfbA2DC5eCf4868Db034fC57';
 const rpcUrl =
-  process.env.ARC_RPC_URL ?? 'https://rpc.drpc.testnet.arc.io';
+  process.env.ARC_RPC_URL ?? 'https://rpc.drpc.testnet.arc.network';
 const questionId =
   process.env.ARC_SMOKE_QUESTION_ID ??
   '0xedf8a456092446db109cc0c8e48c1354253c938bb586e7b2924e6091584369ce';

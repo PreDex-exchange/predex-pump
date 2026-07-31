@@ -420,6 +420,42 @@ describe('REST shared contract', () => {
       indexedBlock: 100,
       headBlock: 103,
       lagBlocks: 3,
+      indexerStatus: 'healthy',
+      lastSuccessfulPollAt: expect.any(String),
+      secondsSinceLastSuccessfulPoll: expect.any(Number),
+    });
+  });
+
+  it('marks stale indexer liveness stalled and becomes healthy after recovery', async () => {
+    await testPrisma.indexerState.update({
+      where: { id: 1 },
+      data: {
+        consecutiveRpcFailures: 4,
+        lastSuccessfulPollAt: new Date(Date.now() - 91_000),
+      },
+    });
+    const stalled = (
+      await app.inject({ method: 'GET', url: '/health' })
+    ).json<HealthResponse>();
+    expect(stalled).toMatchObject({
+      ok: false,
+      indexerStatus: 'stalled',
+    });
+    expect(stalled.secondsSinceLastSuccessfulPoll).toBeGreaterThanOrEqual(91);
+
+    await testPrisma.indexerState.update({
+      where: { id: 1 },
+      data: {
+        consecutiveRpcFailures: 0,
+        lastSuccessfulPollAt: new Date(),
+      },
+    });
+    expect(
+      (await app.inject({ method: 'GET', url: '/health' })).json<HealthResponse>(),
+    ).toMatchObject({
+      ok: true,
+      indexerStatus: 'healthy',
+      secondsSinceLastSuccessfulPoll: 0,
     });
   });
 
