@@ -82,12 +82,17 @@ export interface ActivityQuery {
 export type ActivityResponse = Page<ActivityEvent>;
 
 // GET /health → indexer liveness so the frontend can show chain-lag
+export type IndexerStatus = 'healthy' | 'degraded' | 'stalled';
+
 export interface HealthResponse {
   ok: boolean;
   chainId: number;
   indexedBlock: number;
   headBlock: number;
   lagBlocks: number;
+  indexerStatus: IndexerStatus;
+  lastSuccessfulPollAt: string | null;
+  secondsSinceLastSuccessfulPoll: number | null;
 }
 
 // POST /markets/dedup-check

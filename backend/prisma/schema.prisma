@@ -317,10 +317,12 @@ model CommitteeMember {
 
 // Singleton replay cursor and chain-lag state.
 model IndexerState {
-  id          Int      @id @default(1)
-  chainId     Int
-  deployBlock Int
-  lastBlock   Int
-  headBlock   Int      @default(0)
-  updatedAt   DateTime @updatedAt
+  id                     Int       @id @default(1)
+  chainId                Int
+  deployBlock            Int
+  lastBlock              Int
+  headBlock              Int       @default(0)
+  lastSuccessfulPollAt   DateTime?
+  consecutiveRpcFailures Int       @default(0)
+  updatedAt              DateTime  @updatedAt
 }

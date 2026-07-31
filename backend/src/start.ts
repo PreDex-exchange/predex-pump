@@ -6,13 +6,19 @@ import { prisma } from './db.js';
 import { createDedupRuntime } from './dedup/runtime.js';
 import { ServerEventBus } from './events/bus.js';
 import { publishIndexedEvents } from './events/projector.js';
+import { terminateOnFatal } from './fatal.js';
 import { runIndexer } from './indexer/runner.js';
 
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();
   const dedup = createDedupRuntime(config);
   const eventBus = new ServerEventBus();
-  const app = await buildServer({ prisma, eventBus, dedupChecker: dedup.checker });
+  const app = await buildServer({
+    prisma,
+    eventBus,
+    dedupChecker: dedup.checker,
+    indexerStallMs: config.indexerStallMs,
+  });
 
   try {
     await app.listen({ host: config.apiHost, port: config.apiPort });
@@ -32,7 +38,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error('[server] fatal', error);
-  process.exitCode = 1;
-});
+void main().catch(terminateOnFatal);

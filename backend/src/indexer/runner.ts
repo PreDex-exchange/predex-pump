@@ -5,6 +5,7 @@ import {
   decodeEventLog,
   defineChain,
   fallback,
+  HttpRequestError,
   http,
   type Address,
   type Hex,
@@ -21,6 +22,7 @@ import {
   initializeReadModel,
   preloadMarketIdentities,
 } from './handlers.js';
+import { inspectRpcError, retryDelayMs } from './retry.js';
 import type { DecodedEvent, EventArgs } from './types.js';
 
 const arc = defineChain({
@@ -37,6 +39,11 @@ export interface IndexerOptions {
   replayFrom?: number;
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>;
   marketDedupIndexer?: MarketDedupIndexer;
+  client?: PublicClient;
+  signal?: AbortSignal;
+  wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  random?: () => number;
+  now?: () => Date;
 }
 
 export interface RangeResult {
@@ -46,19 +53,36 @@ export interface RangeResult {
   newlyAppliedLogs: number;
 }
 
-function createArcClient(rpcUrl: string): PublicClient {
-  const rpcUrls = [...new Set([rpcUrl, ...ARC.rpcUrls])];
+function createArcClient(rpcUrls: readonly string[]): PublicClient {
   return createPublicClient({
     chain: arc,
     transport: fallback(
       rpcUrls.map((url) =>
         http(url, {
-          retryCount: 2,
-          retryDelay: 500,
+          onFetchResponse: (response) => {
+            if (
+              response.status === 429 ||
+              (!response.ok && response.headers.has('retry-after'))
+            ) {
+              throw new HttpRequestError({
+                details: response.statusText,
+                headers: response.headers,
+                status: response.status,
+                url: response.url || url,
+              });
+            }
+          },
+          retryCount: 0,
           timeout: 30_000,
         }),
       ),
-      { rank: false },
+      {
+        rank: false,
+        retryCount: 0,
+        // A rate-limited public endpoint explicitly asked us to slow down. Do
+        // not immediately shift the same request to another shared endpoint.
+        shouldThrow: (error) => inspectRpcError(error)?.kind === 'rate-limit',
+      },
     ),
   });
 }
@@ -145,6 +169,7 @@ export async function applyDecodedEvents(
   headBlock: number,
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>,
   marketDedupIndexer?: MarketDedupIndexer,
+  successfulPollAt = new Date(),
 ): Promise<number> {
   const newlyAppliedEvents = await prisma.$transaction(
     async (tx) => {
@@ -163,6 +188,8 @@ export async function applyDecodedEvents(
           // Explicit replay never moves the durable resume cursor backwards.
           lastBlock: Math.max(state.lastBlock, toBlock),
           headBlock,
+          lastSuccessfulPollAt: successfulPollAt,
+          consecutiveRpcFailures: 0,
         },
       });
       return applied;
@@ -202,16 +229,16 @@ export async function applyDecodedEvents(
   return newlyAppliedEvents.length;
 }
 
-async function ingestRange(
+async function applyRange(
   prisma: PrismaClient,
-  client: PublicClient,
+  events: readonly DecodedEvent[],
   fromBlock: number,
   toBlock: number,
   headBlock: number,
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>,
   marketDedupIndexer?: MarketDedupIndexer,
+  successfulPollAt = new Date(),
 ): Promise<RangeResult> {
-  const events = await decodedEventsForRange(client, fromBlock, toBlock);
   const newlyAppliedLogs = await applyDecodedEvents(
     prisma,
     events,
@@ -219,6 +246,7 @@ async function ingestRange(
     headBlock,
     onEvents,
     marketDedupIndexer,
+    successfulPollAt,
   );
 
   return {
@@ -229,14 +257,104 @@ async function ingestRange(
   };
 }
 
-function waitForPoll(milliseconds: number, stopped: () => boolean): Promise<void> {
+function waitForPoll(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    if (stopped()) {
+    if (signal.aborted) {
       resolve();
       return;
     }
-    setTimeout(resolve, milliseconds);
+    const timer = setTimeout(finish, milliseconds);
+    function finish(): void {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    }
+    signal.addEventListener('abort', finish, { once: true });
   });
+}
+
+interface RpcRetryResult<T> {
+  value: T;
+  failures: number;
+}
+
+async function requestRpcWithRetry<T>(
+  prisma: PrismaClient,
+  operation: string,
+  request: () => Promise<T>,
+  signal: AbortSignal,
+  wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
+  random: () => number,
+): Promise<RpcRetryResult<T> | undefined> {
+  let failures = 0;
+  while (!signal.aborted) {
+    try {
+      return { value: await request(), failures };
+    } catch (error) {
+      if (signal.aborted) return undefined;
+      const details = inspectRpcError(error);
+      if (details === null) throw error;
+
+      failures += 1;
+      // A failure from this database write escapes the current catch block; it
+      // is fatal rather than being misclassified as another RPC retry.
+      await prisma.indexerState.update({
+        where: { id: 1 },
+        data: { consecutiveRpcFailures: { increment: 1 } },
+      });
+      const delay = retryDelayMs(failures, details, random);
+      const retryAfter =
+        details.retryAfterMs === undefined
+          ? ''
+          : ` retryAfterMs=${details.retryAfterMs}`;
+      console.warn(
+        `[indexer] RPC ${operation} failed attempt=${failures} ` +
+          `kind=${details.kind} retryInMs=${delay}${retryAfter} ` +
+          `error="${details.summary}"`,
+      );
+      await wait(delay, signal);
+    }
+  }
+  return undefined;
+}
+
+function logRpcRecovery(operation: string, failures: number): void {
+  if (failures > 0) {
+    console.info(
+      `[indexer] RPC ${operation} recovered after ${failures} ` +
+        `${failures === 1 ? 'retry' : 'retries'}`,
+    );
+  }
+}
+
+async function pollHead(
+  prisma: PrismaClient,
+  client: PublicClient,
+  signal: AbortSignal,
+  wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
+  random: () => number,
+  now: () => Date,
+): Promise<number | undefined> {
+  const result = await requestRpcWithRetry(
+    prisma,
+    'getBlockNumber',
+    () => client.getBlockNumber(),
+    signal,
+    wait,
+    random,
+  );
+  if (result === undefined) return undefined;
+  const head = toDbInt(result.value, 'headBlock');
+  await prisma.indexerState.update({
+    where: { id: 1 },
+    data: {
+      headBlock: head,
+      lastSuccessfulPollAt: now(),
+      consecutiveRpcFailures: 0,
+    },
+  });
+  logRpcRecovery('getBlockNumber', result.failures);
+  return head;
 }
 
 export async function runIndexer(
@@ -244,21 +362,34 @@ export async function runIndexer(
   config: RuntimeConfig,
   options: IndexerOptions,
 ): Promise<void> {
-  const client = createArcClient(config.rpcUrl);
+  const client = options.client ?? createArcClient(config.rpcUrls);
+  const wait = options.wait ?? waitForPoll;
+  const random = options.random ?? Math.random;
+  const now = options.now ?? (() => new Date());
   await prisma.$transaction(
     (tx) => initializeReadModel(tx, config.deployBlock),
     { timeout: 30_000 },
   );
 
-  let stopping = false;
+  const stopController = new AbortController();
   const stop = (): void => {
-    stopping = true;
+    stopController.abort();
   };
+  if (options.signal?.aborted) stop();
+  options.signal?.addEventListener('abort', stop, { once: true });
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
   try {
-    let head = toDbInt(await client.getBlockNumber(), 'headBlock');
+    let head = await pollHead(
+      prisma,
+      client,
+      stopController.signal,
+      wait,
+      random,
+      now,
+    );
+    if (head === undefined) return;
     let state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
     if (state.lastBlock > head) {
       throw new Error(
@@ -283,39 +414,62 @@ export async function runIndexer(
         (replaying ? ' replay=true' : ''),
     );
 
-    while (!stopping) {
-      head = toDbInt(await client.getBlockNumber(), 'headBlock');
-      await prisma.indexerState.update({
-        where: { id: 1 },
-        data: { headBlock: head },
-      });
-
-      while (nextBlock <= head && !stopping) {
+    while (!stopController.signal.aborted) {
+      while (nextBlock <= head && !stopController.signal.aborted) {
         const toBlock = Math.min(head, nextBlock + config.blockChunk - 1);
-        const result = await ingestRange(
+        const decoded = await requestRpcWithRetry(
           prisma,
-          client,
+          `getLogs blocks=${nextBlock}-${toBlock}`,
+          () => decodedEventsForRange(client, nextBlock, toBlock),
+          stopController.signal,
+          wait,
+          random,
+        );
+        if (decoded === undefined) break;
+        const result = await applyRange(
+          prisma,
+          decoded.value,
           nextBlock,
           toBlock,
           head,
           options.onEvents,
           options.marketDedupIndexer,
+          now(),
         );
+        logRpcRecovery(`getLogs blocks=${nextBlock}-${toBlock}`, decoded.failures);
         console.info(
           `[indexer] ${result.fromBlock}-${result.toBlock} ` +
             `decoded=${result.decodedLogs} applied=${result.newlyAppliedLogs}`,
         );
         nextBlock = toBlock + 1;
+        if (
+          nextBlock <= head &&
+          !stopController.signal.aborted &&
+          config.chunkDelayMs > 0
+        ) {
+          await wait(config.chunkDelayMs, stopController.signal);
+        }
       }
 
-      if (replaying) {
+      if (replaying && !stopController.signal.aborted) {
         state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
         nextBlock = Math.max(config.deployBlock, state.lastBlock + 1);
         replaying = false;
       }
 
       if (options.once) break;
-      await waitForPoll(config.pollMs, () => stopping);
+      await wait(config.pollMs, stopController.signal);
+      if (stopController.signal.aborted) break;
+      const nextHead = await pollHead(
+        prisma,
+        client,
+        stopController.signal,
+        wait,
+        random,
+        now,
+      );
+      if (nextHead === undefined) break;
+      head = nextHead;
     }
 
     state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
@@ -324,6 +478,7 @@ export async function runIndexer(
         `lag=${Math.max(0, state.headBlock - state.lastBlock)}`,
     );
   } finally {
+    options.signal?.removeEventListener('abort', stop);
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
   }
