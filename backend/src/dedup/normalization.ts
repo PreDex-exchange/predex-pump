@@ -259,7 +259,11 @@ function extractDeadline(question: string): string | null {
     /\b(?:(next|this)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/u,
   );
   if (weekday !== null) {
-    return weekday[1] === undefined ? (weekday[2] ?? null) : `${weekday[1]} ${weekday[2]}`;
+    // "this friday" and a bare "friday" both mean the upcoming Friday, so the
+    // "this" qualifier is dropped; "next friday" is a genuinely different day
+    // and stays distinct.
+    const qualifier = weekday[1] === 'next' ? 'next ' : '';
+    return weekday[2] === undefined ? null : `${qualifier}${weekday[2]}`;
   }
 
   const relativeDay = normalized.match(/\b(today|tomorrow|tonight)\b/u);

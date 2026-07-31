@@ -85,4 +85,25 @@ describe('deterministic market fact extraction', () => {
       reason: expect.stringContaining('relative deadline'),
     });
   });
+
+  // Regression: "this friday" used to canonicalize differently from a bare
+  // "friday", so genuine same-fact duplicates were rejected and the merge
+  // router never fired on natural phrasing. "next friday" must stay distinct.
+  it('treats "this <weekday>" as the bare weekday but keeps "next" distinct', () => {
+    expect(
+      compareAuthoritativeFields(
+        extractFieldsLocally('Will BTC close above $70k this Friday?'),
+        extractFieldsLocally('Will Bitcoin close above $70,000 on Friday?'),
+      ),
+    ).toMatchObject({ compatible: true });
+    expect(
+      compareAuthoritativeFields(
+        extractFieldsLocally('Will BTC close above $70k this Friday?'),
+        extractFieldsLocally('Will BTC close above $70k next Friday?'),
+      ),
+    ).toMatchObject({
+      compatible: false,
+      reason: expect.stringContaining('deadline'),
+    });
+  });
 });
