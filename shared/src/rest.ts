@@ -5,6 +5,7 @@
 import type {
   Account,
   ActivityEvent,
+  DedupCandidate,
   Market,
   MarketPhase,
   OrderBook,
@@ -89,9 +90,22 @@ export interface HealthResponse {
   lagBlocks: number;
 }
 
+// POST /markets/dedup-check
+export interface DedupCheckRequest {
+  question: string;
+}
+
+export interface DedupCheckResponse {
+  available: boolean;
+  isDuplicate: boolean;
+  canonicalMarketId: string | null;
+  candidates: DedupCandidate[];
+}
+
 /** Canonical path builders (single source; import in both tiers). */
 export const routes = {
   markets: () => `/markets`,
+  marketDedupCheck: () => `/markets/dedup-check`,
   market: (id: string) => `/markets/${id}`,
   marketBook: (id: string) => `/markets/${id}/book`,
   marketPrices: (id: string) => `/markets/${id}/prices`,

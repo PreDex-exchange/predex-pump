@@ -2,6 +2,8 @@ import cors from '@fastify/cors';
 import type { PrismaClient } from '@prisma/client';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 
+import { unavailableDedupResponse } from '../dedup/service.js';
+import type { DedupChecker } from '../dedup/types.js';
 import type { ServerEventBus } from '../events/bus.js';
 import { registerRestRoutes } from './routes.js';
 import { registerWebsocketRoute } from './websocket.js';
@@ -9,6 +11,7 @@ import { registerWebsocketRoute } from './websocket.js';
 export interface BuildServerOptions {
   prisma: PrismaClient;
   eventBus: ServerEventBus;
+  dedupChecker?: DedupChecker;
   logger?: FastifyServerOptions['logger'];
 }
 
@@ -18,7 +21,11 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   });
   await app.register(cors, { origin: '*' });
   await registerWebsocketRoute(app, options.eventBus);
-  registerRestRoutes(app, options.prisma);
+  registerRestRoutes(
+    app,
+    options.prisma,
+    options.dedupChecker ?? { check: async () => unavailableDedupResponse() },
+  );
   await app.ready();
   return app;
 }

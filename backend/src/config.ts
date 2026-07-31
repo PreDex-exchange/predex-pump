@@ -26,6 +26,10 @@ export interface RuntimeConfig {
   apiPort: number;
   databasePoolSize: number;
   databasePoolTimeoutSeconds: number;
+  qdrantUrl: string;
+  openAiApiKey: string | undefined;
+  dedupTopK: number;
+  dedupTimeoutMs: number;
 }
 
 export function loadRuntimeConfig(): RuntimeConfig {
@@ -48,5 +52,9 @@ export function loadRuntimeConfig(): RuntimeConfig {
     apiPort,
     databasePoolSize: positiveInteger('DATABASE_POOL_SIZE', 32),
     databasePoolTimeoutSeconds: positiveInteger('DATABASE_POOL_TIMEOUT_SECONDS', 10),
+    qdrantUrl: process.env.QDRANT_URL ?? 'http://localhost:6333',
+    openAiApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
+    dedupTopK: positiveInteger('DEDUP_TOP_K', 5),
+    dedupTimeoutMs: positiveInteger('DEDUP_TIMEOUT_MS', 5_000),
   };
 }

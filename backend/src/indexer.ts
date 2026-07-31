@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 import { loadRuntimeConfig } from './config.js';
 import { prisma } from './db.js';
+import { createDedupRuntime } from './dedup/runtime.js';
 import { runIndexer, type IndexerOptions } from './indexer/runner.js';
 
 function parseOptions(argv: readonly string[]): IndexerOptions {
@@ -36,7 +37,13 @@ function parseOptions(argv: readonly string[]): IndexerOptions {
 }
 
 async function main(): Promise<void> {
-  await runIndexer(prisma, loadRuntimeConfig(), parseOptions(process.argv.slice(2)));
+  const config = loadRuntimeConfig();
+  const dedup = createDedupRuntime(config);
+  console.info(`[dedup] provider=${dedup.provider.mode} qdrant=${config.qdrantUrl}`);
+  await runIndexer(prisma, config, {
+    ...parseOptions(process.argv.slice(2)),
+    marketDedupIndexer: dedup.indexer,
+  });
 }
 
 main()

@@ -2,6 +2,7 @@ import type {
   AccountResponse,
   ActivityResponse,
   ConfigResponse,
+  DedupCheckResponse,
   HealthResponse,
   ListMarketsResponse,
   MarketBookResponse,
@@ -32,6 +33,25 @@ describe('REST shared contract', () => {
     app = await buildServer({
       prisma: testPrisma,
       eventBus: new ServerEventBus(),
+      dedupChecker: {
+        check: async (question) => {
+          if (question === 'force provider failure') {
+            throw new Error('provider unavailable');
+          }
+          return {
+            available: true,
+            isDuplicate: true,
+            canonicalMarketId: '1',
+            candidates: [
+              {
+                marketId: '1',
+                score: 0.98,
+                reason: `Same fact as "${question}"`,
+              },
+            ],
+          };
+        },
+      },
       logger: false,
     });
   });
@@ -108,6 +128,50 @@ describe('REST shared contract', () => {
     expect(filtered.json<ListMarketsResponse>().items.map((market) => market.id)).toEqual([
       '1',
     ]);
+  });
+
+  it('POST /markets/dedup-check implements the shared advisory contract', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/markets/dedup-check',
+      payload: { question: 'BTC > $70,000 by Friday close?' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<DedupCheckResponse>()).toEqual({
+      available: true,
+      isDuplicate: true,
+      canonicalMarketId: '1',
+      candidates: [
+        {
+          marketId: '1',
+          score: 0.98,
+          reason: 'Same fact as "BTC > $70,000 by Friday close?"',
+        },
+      ],
+    });
+
+    const degraded = await app.inject({
+      method: 'POST',
+      url: '/markets/dedup-check',
+      payload: { question: 'force provider failure' },
+    });
+    expect(degraded.statusCode).toBe(200);
+    expect(degraded.json<DedupCheckResponse>()).toEqual({
+      available: false,
+      isDuplicate: false,
+      canonicalMarketId: null,
+      candidates: [],
+    });
+
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/markets/dedup-check',
+          payload: { question: '   ' },
+        })
+      ).statusCode,
+    ).toBe(400);
   });
 
   it('GET /markets/:id returns market, recent trades, and resolution', async () => {

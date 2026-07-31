@@ -237,3 +237,21 @@ export interface RegistryConfig {
   maxTradingWindowSeconds?: number;
   committee: CommitteeInfo;
 }
+
+/** Normalized identity of the real-world fact asked by a market question. */
+export interface MarketFactFields {
+  subject: string | null;
+  comparator: string | null;
+  strike: string | null;
+  deadline: string | null;
+  basis: string | null;
+}
+
+/** An existing market considered by the creation-time duplicate check. */
+export interface DedupCandidate {
+  marketId: string;
+  /** Cosine similarity returned by the ANN index. */
+  score: number;
+  /** Conservative same-fact judgment or the authoritative field conflict. */
+  reason: string;
+}

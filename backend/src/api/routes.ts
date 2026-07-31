@@ -4,6 +4,7 @@ import {
   type AccountResponse,
   type ActivityResponse,
   type ConfigResponse,
+  type DedupCheckResponse,
   type HealthResponse,
   type ListMarketsResponse,
   type MarketBookResponse,
@@ -13,6 +14,8 @@ import {
 } from '@predex-pump/shared';
 import type { FastifyInstance } from 'fastify';
 
+import { unavailableDedupResponse } from '../dedup/service.js';
+import type { DedupChecker } from '../dedup/types.js';
 import {
   HttpError,
   parseAddress,
@@ -66,6 +69,17 @@ interface AccountParams {
   addr: string;
 }
 
+function parseDedupQuestion(body: unknown): string {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new HttpError(400, 'Request body must be an object');
+  }
+  const question = (body as Record<string, unknown>).question;
+  if (typeof question !== 'string' || question.trim() === '') {
+    throw new HttpError(400, 'question must be a non-empty string');
+  }
+  return question.trim();
+}
+
 function notFound(message: string): HttpError {
   return new HttpError(404, message);
 }
@@ -73,6 +87,7 @@ function notFound(message: string): HttpError {
 export function registerRestRoutes(
   app: FastifyInstance,
   prisma: PrismaClient,
+  dedupChecker: DedupChecker,
 ): void {
   const readConfig = createCachedConfigReader(prisma);
 
@@ -97,6 +112,19 @@ export function registerRestRoutes(
         limit: parsePositiveInteger('limit', request.query.limit, 50, 200),
         ...(cursor === undefined ? {} : { cursor }),
       });
+    },
+  );
+
+  app.post<{ Body: unknown }>(
+    routes.marketDedupCheck(),
+    async (request): Promise<DedupCheckResponse> => {
+      const question = parseDedupQuestion(request.body);
+      try {
+        return await dedupChecker.check(question);
+      } catch (error) {
+        request.log.warn({ err: error }, 'Dedup check failed open');
+        return unavailableDedupResponse();
+      }
     },
   );
 

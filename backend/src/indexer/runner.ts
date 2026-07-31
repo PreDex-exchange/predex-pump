@@ -12,8 +12,10 @@ import {
 } from 'viem';
 
 import type { RuntimeConfig } from '../config.js';
+import { parseMarketPhase } from '../dedup/indexer.js';
+import type { MarketDedupIndexer } from '../dedup/types.js';
 import { CONTRACT_BY_ADDRESS, TRACKED_ADDRESSES } from './abis.js';
-import { toDbInt } from './derive.js';
+import { bigintArg, toDbInt } from './derive.js';
 import {
   handleDecodedEvent,
   initializeReadModel,
@@ -34,6 +36,7 @@ export interface IndexerOptions {
   once: boolean;
   replayFrom?: number;
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>;
+  marketDedupIndexer?: MarketDedupIndexer;
 }
 
 export interface RangeResult {
@@ -141,6 +144,7 @@ export async function applyDecodedEvents(
   toBlock: number,
   headBlock: number,
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>,
+  marketDedupIndexer?: MarketDedupIndexer,
 ): Promise<number> {
   const newlyAppliedEvents = await prisma.$transaction(
     async (tx) => {
@@ -174,6 +178,27 @@ export async function applyDecodedEvents(
     // The WebSocket projection observes only committed database state.
     await onEvents(newlyAppliedEvents);
   }
+  if (newlyAppliedEvents.length > 0 && marketDedupIndexer !== undefined) {
+    for (const event of newlyAppliedEvents) {
+      if (event.source !== 'REGISTRY' || event.eventName !== 'MarketCreated') continue;
+      let marketId = 'unknown';
+      try {
+        marketId = bigintArg(event.args, 'marketId').toString();
+        const market = await prisma.market.findUniqueOrThrow({
+          where: { id: marketId },
+          select: { id: true, question: true, phase: true },
+        });
+        await marketDedupIndexer.indexMarket({
+          marketId: market.id,
+          question: market.question,
+          phase: parseMarketPhase(market.phase),
+        });
+      } catch (error) {
+        // This projection runs after commit and can never invalidate core indexing.
+        console.warn(`[dedup-index] market=${marketId} best-effort sync failed`, error);
+      }
+    }
+  }
   return newlyAppliedEvents.length;
 }
 
@@ -184,6 +209,7 @@ async function ingestRange(
   toBlock: number,
   headBlock: number,
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>,
+  marketDedupIndexer?: MarketDedupIndexer,
 ): Promise<RangeResult> {
   const events = await decodedEventsForRange(client, fromBlock, toBlock);
   const newlyAppliedLogs = await applyDecodedEvents(
@@ -192,6 +218,7 @@ async function ingestRange(
     toBlock,
     headBlock,
     onEvents,
+    marketDedupIndexer,
   );
 
   return {
@@ -272,6 +299,7 @@ export async function runIndexer(
           toBlock,
           head,
           options.onEvents,
+          options.marketDedupIndexer,
         );
         console.info(
           `[indexer] ${result.fromBlock}-${result.toBlock} ` +
