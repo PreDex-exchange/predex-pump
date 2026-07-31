@@ -33,13 +33,15 @@ import {
   defineChain,
   http,
   type Account,
+  type DefineChainReturnType,
   type Hex,
+  type PrivateKeyAccount,
   type Transport,
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
-export const arcAgentChain = defineChain({
+const arcAgentChainDefinition = {
   id: ARC.chainId,
   name: ARC.name,
   nativeCurrency: ARC.nativeCurrency,
@@ -49,7 +51,11 @@ export const arcAgentChain = defineChain({
     },
   },
   testnet: true,
-});
+} as const;
+
+export const arcAgentChain: DefineChainReturnType<
+  typeof arcAgentChainDefinition
+> = defineChain(arcAgentChainDefinition);
 
 export interface AgentWalletClientOptions {
   account: Account;
@@ -156,7 +162,7 @@ export function createWriteClient(options: AgentWalletClientOptions) {
 export function privateKeyAccountFromEnv(
   variableName: string,
   environment: NodeJS.ProcessEnv = process.env,
-) {
+): PrivateKeyAccount {
   const value = environment[variableName]?.trim();
   if (!value) {
     throw new Error(

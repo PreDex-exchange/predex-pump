@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@predex-pump/shared':
-        specifier: file:../shared
-        version: file:../shared(typescript@6.0.3)(zod@4.4.3)
+        specifier: link:../shared
+        version: link:../shared
       '@tanstack/react-query':
         specifier: ^5.90.5
         version: 5.101.4(react@19.2.8)
@@ -514,9 +514,6 @@ packages:
 
   '@oxc-project/types@0.142.0':
     resolution: {integrity: sha512-7W+2q5AKQVU36fkaryontrHn3YDt1RyUYXatw9i5H8ocYe2sPKSFB6eS8WNPeRKiN1qAWWZUPm7gwFzJGrccqQ==}
-
-  '@predex-pump/shared@file:../shared':
-    resolution: {directory: ../shared, type: directory}
 
   '@rolldown/binding-android-arm64@1.2.1':
     resolution: {integrity: sha512-02hOeOSryYxVrOIphmLAsqnCJWxwlzFk+pEt/N/i6OgT3lShHO7xGCU5cpgchRDHboAEbSjzgGh+O/u1GswQmA==}
@@ -2966,15 +2963,6 @@ snapshots:
   '@nolyfill/is-core-module@1.0.39': {}
 
   '@oxc-project/types@0.142.0': {}
-
-  '@predex-pump/shared@file:../shared(typescript@6.0.3)(zod@4.4.3)':
-    dependencies:
-      viem: 2.55.8(typescript@6.0.3)(zod@4.4.3)
-    transitivePeerDependencies:
-      - bufferutil
-      - typescript
-      - utf-8-validate
-      - zod
 
   '@rolldown/binding-android-arm64@1.2.1':
     optional: true

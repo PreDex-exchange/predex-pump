@@ -31,7 +31,7 @@
   "dependencies": {
     "@fastify/cors": "^11.3.0",
     "@fastify/websocket": "^11.3.0",
-    "@predex-pump/shared": "file:../shared",
+    "@predex-pump/shared": "link:../shared",
     "@prisma/client": "6.19.3",
     "dotenv": "17.2.2",
     "fastify": "^5.10.0",

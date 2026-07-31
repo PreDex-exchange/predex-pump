@@ -12,7 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@predex-pump/shared": "file:../shared",
+    "@predex-pump/shared": "link:../shared",
     "@tanstack/react-query": "^5.90.5",
     "next": "16.2.11",
     "react": "19.2.8",

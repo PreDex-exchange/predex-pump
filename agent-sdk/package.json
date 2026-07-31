@@ -24,7 +24,7 @@
     "example": "tsx examples/read-and-build-buy.ts"
   },
   "dependencies": {
-    "@predex-pump/shared": "file:../shared",
+    "@predex-pump/shared": "link:../shared",
     "viem": "2.55.8",
     "ws": "8.21.1"
   },
