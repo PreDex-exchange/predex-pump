@@ -1,0 +1,1194 @@
+{
+  "label": "isolated-remote-12ff858",
+  "generatedAt": "2026-07-31T16:12:56.211Z",
+  "branch": "dev",
+  "commit": "12ff858f01917084434d878d924e653252e34137",
+  "schema": "perf_bench",
+  "syntheticOnly": true,
+  "isolatedProcesses": true,
+  "environment": {
+    "node": "v24.18.1",
+    "platform": "linux 5.15.0-177-generic",
+    "cpu": "Intel(R) Xeon(R) CPU E5-2630 v3 @ 2.40GHz",
+    "logicalCpus": 32
+  },
+  "workload": {
+    "restRequestsPerScenario": 400,
+    "restConcurrency": 24,
+    "restWarmupRequests": 20,
+    "wsClients": 500,
+    "wsSubscribers": 5,
+    "wsEvents": 2000,
+    "ingestEvents": 10,
+    "ingestPositions": 100
+  },
+  "targets": {
+    "restP95Ms": 100,
+    "indexerEventsPerSecond": 20,
+    "wsPublishP95Us": 250
+  },
+  "observedScale": {
+    "markets": 2000,
+    "accounts": 20000,
+    "trades": 200000,
+    "positions": 100000,
+    "orders": 50000,
+    "fills": 25000,
+    "pricePoints": 200000,
+    "activityEvents": 1000000
+  },
+  "rest": [
+    {
+      "name": "markets.list",
+      "path": "/markets?limit=50",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 563.7668748991298,
+      "averagePayloadBytes": 49853,
+      "p50": 34.3776670000002,
+      "p95": 82.06574999999998,
+      "p99": 174.00790199999983
+    },
+    {
+      "name": "markets.phase",
+      "path": "/markets?phase=Graduated&limit=50",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 611.3813149893178,
+      "averagePayloadBytes": 50343,
+      "p50": 36.688474999999926,
+      "p95": 53.8521139999998,
+      "p99": 67.19040499999983
+    },
+    {
+      "name": "markets.deep-keyset",
+      "path": "/markets?limit=50&cursor=eyJraW5kIjoibWFya2V0cyIsImNyZWF0ZWRBdCI6MTc1MDA2MDAwMCwiaWQiOiIxMDAxIn0",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 925.9756628224078,
+      "averagePayloadBytes": 49754,
+      "p50": 22.631148999999823,
+      "p95": 42.49172099999987,
+      "p99": 48.277038000000175
+    },
+    {
+      "name": "market.detail",
+      "path": "/markets/1",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 807.5547783181776,
+      "averagePayloadBytes": 19732,
+      "p50": 26.382942000000185,
+      "p95": 48.17526500000031,
+      "p99": 57.264568000000054
+    },
+    {
+      "name": "market.book",
+      "path": "/markets/1/book",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 225.51970227479777,
+      "averagePayloadBytes": 162441,
+      "p50": 97.32845199999974,
+      "p95": 145.08658600000035,
+      "p99": 191.6778800000002
+    },
+    {
+      "name": "market.prices",
+      "path": "/markets/1/prices?fromTs=1750000000&limit=2000",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 204.9834947699979,
+      "averagePayloadBytes": 126027,
+      "p50": 109.79828499999985,
+      "p95": 167.3538580000004,
+      "p99": 181.22026499999993
+    },
+    {
+      "name": "orderbook.token",
+      "path": "/orderbook/1000000000",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 516.4438370961624,
+      "averagePayloadBytes": 54252,
+      "p50": 43.63666699999885,
+      "p95": 62.077901999999085,
+      "p99": 72.12794500000018
+    },
+    {
+      "name": "account.detail",
+      "path": "/accounts/0x0000000000000000000000000000000000000001",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 183.6998032887855,
+      "averagePayloadBytes": 253898,
+      "p50": 123.11424599999918,
+      "p95": 198.85197399999925,
+      "p99": 226.6702980000009
+    },
+    {
+      "name": "activity.list",
+      "path": "/activity?limit=50",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 1320.4764876022646,
+      "averagePayloadBytes": 16881,
+      "p50": 16.12384100000054,
+      "p95": 26.64464300000145,
+      "p99": 29.893781000000672
+    },
+    {
+      "name": "activity.market-deep-keyset",
+      "path": "/activity?marketId=1&limit=50&cursor=eyJraW5kIjoiYWN0aXZpdHkiLCJibG9ja051bWJlciI6NjAwNTAwMDAsImxvZ0luZGV4Ijo1fQ",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 1566.824275870818,
+      "averagePayloadBytes": 16781,
+      "p50": 13.449843000000328,
+      "p95": 23.961653000000297,
+      "p99": 27.111319999999978
+    },
+    {
+      "name": "config",
+      "path": "/config",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 2930.724580109417,
+      "averagePayloadBytes": 949,
+      "p50": 7.262698000000455,
+      "p95": 14.776382000000012,
+      "p99": 15.10861400000067
+    },
+    {
+      "name": "health",
+      "path": "/health",
+      "requests": 400,
+      "concurrency": 24,
+      "throughputRps": 2067.4756230151725,
+      "averagePayloadBytes": 202,
+      "p50": 9.297702000001664,
+      "p95": 23.6388079999997,
+      "p99": 25.00889400000051
+    }
+  ],
+  "plans": [
+    {
+      "name": "markets.list",
+      "executionMs": 0.134,
+      "planningMs": 2.638,
+      "nodes": [
+        {
+          "nodeType": "Limit",
+          "actualTotalMs": 0.061,
+          "actualRows": 51,
+          "loops": 1
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "Market",
+          "index": "Market_createdAt_id_idx",
+          "actualTotalMs": 0.053,
+          "actualRows": 51,
+          "loops": 1
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.28,
+            "Total Cost": 15.03,
+            "Plan Rows": 51,
+            "Plan Width": 850,
+            "Actual Startup Time": 0.034,
+            "Actual Total Time": 0.061,
+            "Actual Rows": 51,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 8,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "Market_createdAt_id_idx",
+                "Relation Name": "Market",
+                "Alias": "Market",
+                "Startup Cost": 0.28,
+                "Total Cost": 578.95,
+                "Plan Rows": 2000,
+                "Plan Width": 850,
+                "Actual Startup Time": 0.033,
+                "Actual Total Time": 0.053,
+                "Actual Rows": 51,
+                "Actual Loops": 1,
+                "Shared Hit Blocks": 8,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 304,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 2.638,
+          "Triggers": [],
+          "Execution Time": 0.134
+        }
+      ]
+    },
+    {
+      "name": "markets.phase",
+      "executionMs": 0.269,
+      "planningMs": 0.179,
+      "nodes": [
+        {
+          "nodeType": "Limit",
+          "actualTotalMs": 0.185,
+          "actualRows": 51,
+          "loops": 1
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "Market",
+          "index": "Market_createdAt_id_idx",
+          "actualTotalMs": 0.177,
+          "actualRows": 51,
+          "loops": 1,
+          "rowsRemovedByFilter": 153
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.28,
+            "Total Cost": 59.81,
+            "Plan Rows": 51,
+            "Plan Width": 850,
+            "Actual Startup Time": 0.032,
+            "Actual Total Time": 0.185,
+            "Actual Rows": 51,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 25,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "Market_createdAt_id_idx",
+                "Relation Name": "Market",
+                "Alias": "Market",
+                "Startup Cost": 0.28,
+                "Total Cost": 583.95,
+                "Plan Rows": 500,
+                "Plan Width": 850,
+                "Actual Startup Time": 0.031,
+                "Actual Total Time": 0.177,
+                "Actual Rows": 51,
+                "Actual Loops": 1,
+                "Filter": "(phase = 'Graduated'::text)",
+                "Rows Removed by Filter": 153,
+                "Shared Hit Blocks": 25,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 0,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 0.179,
+          "Triggers": [],
+          "Execution Time": 0.269
+        }
+      ]
+    },
+    {
+      "name": "markets.deep-keyset",
+      "executionMs": 0.259,
+      "planningMs": 0.226,
+      "nodes": [
+        {
+          "nodeType": "Limit",
+          "actualTotalMs": 0.065,
+          "actualRows": 51,
+          "loops": 1
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "Market",
+          "index": "Market_createdAt_id_idx",
+          "actualTotalMs": 0.055,
+          "actualRows": 51,
+          "loops": 1
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.28,
+            "Total Cost": 24.69,
+            "Plan Rows": 51,
+            "Plan Width": 850,
+            "Actual Startup Time": 0.033,
+            "Actual Total Time": 0.065,
+            "Actual Rows": 51,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 8,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "Market_createdAt_id_idx",
+                "Relation Name": "Market",
+                "Alias": "Market",
+                "Startup Cost": 0.28,
+                "Total Cost": 478.94,
+                "Plan Rows": 1000,
+                "Plan Width": 850,
+                "Actual Startup Time": 0.031,
+                "Actual Total Time": 0.055,
+                "Actual Rows": 51,
+                "Actual Loops": 1,
+                "Index Cond": "(ROW(\"createdAt\", id) < ROW(1750060000, '1001'::text))",
+                "Rows Removed by Index Recheck": 0,
+                "Shared Hit Blocks": 8,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 0,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 0.226,
+          "Triggers": [],
+          "Execution Time": 0.259
+        }
+      ]
+    },
+    {
+      "name": "market.recent-trades",
+      "executionMs": 0.139,
+      "planningMs": 1.717,
+      "nodes": [
+        {
+          "nodeType": "Limit",
+          "actualTotalMs": 0.091,
+          "actualRows": 50,
+          "loops": 1
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "Trade",
+          "index": "Trade_marketId_blockNumber_logIndex_idx",
+          "actualTotalMs": 0.08,
+          "actualRows": 50,
+          "loops": 1
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.42,
+            "Total Cost": 123.83,
+            "Plan Rows": 50,
+            "Plan Width": 299,
+            "Actual Startup Time": 0.059,
+            "Actual Total Time": 0.091,
+            "Actual Rows": 50,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 10,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "Trade_marketId_blockNumber_logIndex_idx",
+                "Relation Name": "Trade",
+                "Alias": "Trade",
+                "Startup Cost": 0.42,
+                "Total Cost": 25735.42,
+                "Plan Rows": 10427,
+                "Plan Width": 299,
+                "Actual Startup Time": 0.057,
+                "Actual Total Time": 0.08,
+                "Actual Rows": 50,
+                "Actual Loops": 1,
+                "Index Cond": "(\"marketId\" = '1'::text)",
+                "Rows Removed by Index Recheck": 0,
+                "Shared Hit Blocks": 10,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 128,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 1.717,
+          "Triggers": [],
+          "Execution Time": 0.139
+        }
+      ]
+    },
+    {
+      "name": "market.book",
+      "executionMs": 0.322,
+      "planningMs": 1.687,
+      "nodes": [
+        {
+          "nodeType": "Bitmap Heap Scan",
+          "relation": "Order",
+          "actualTotalMs": 0.228,
+          "actualRows": 375,
+          "loops": 1
+        },
+        {
+          "nodeType": "Bitmap Index Scan",
+          "index": "Order_marketId_open_idx",
+          "actualTotalMs": 0.056,
+          "actualRows": 375,
+          "loops": 1
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Relation Name": "Order",
+            "Alias": "Order",
+            "Startup Cost": 8.25,
+            "Total Cost": 949.58,
+            "Plan Rows": 386,
+            "Plan Width": 255,
+            "Actual Startup Time": 0.078,
+            "Actual Total Time": 0.228,
+            "Actual Rows": 375,
+            "Actual Loops": 1,
+            "Recheck Cond": "((\"marketId\" = '1'::text) AND open)",
+            "Rows Removed by Index Recheck": 0,
+            "Exact Heap Blocks": 18,
+            "Lossy Heap Blocks": 0,
+            "Shared Hit Blocks": 20,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Bitmap Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Index Name": "Order_marketId_open_idx",
+                "Startup Cost": 0,
+                "Total Cost": 8.15,
+                "Plan Rows": 386,
+                "Plan Width": 0,
+                "Actual Startup Time": 0.056,
+                "Actual Total Time": 0.056,
+                "Actual Rows": 375,
+                "Actual Loops": 1,
+                "Index Cond": "((\"marketId\" = '1'::text) AND (open = true))",
+                "Shared Hit Blocks": 2,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 124,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 1.687,
+          "Triggers": [],
+          "Execution Time": 0.322
+        }
+      ]
+    },
+    {
+      "name": "market.prices",
+      "executionMs": 1.445,
+      "planningMs": 1.28,
+      "nodes": [
+        {
+          "nodeType": "Limit",
+          "actualTotalMs": 1.218,
+          "actualRows": 2000,
+          "loops": 1
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "PricePoint",
+          "index": "PricePoint_marketId_ts_blockNumber_logIndex_idx",
+          "actualTotalMs": 0.871,
+          "actualRows": 2000,
+          "loops": 1
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.42,
+            "Total Cost": 4367.58,
+            "Plan Rows": 2000,
+            "Plan Width": 200,
+            "Actual Startup Time": 0.076,
+            "Actual Total Time": 1.218,
+            "Actual Rows": 2000,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 68,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "PricePoint_marketId_ts_blockNumber_logIndex_idx",
+                "Relation Name": "PricePoint",
+                "Alias": "PricePoint",
+                "Startup Cost": 0.42,
+                "Total Cost": 21761.98,
+                "Plan Rows": 9966,
+                "Plan Width": 200,
+                "Actual Startup Time": 0.075,
+                "Actual Total Time": 0.871,
+                "Actual Rows": 2000,
+                "Actual Loops": 1,
+                "Index Cond": "((\"marketId\" = '1'::text) AND (ts >= 1750000000))",
+                "Rows Removed by Index Recheck": 0,
+                "Shared Hit Blocks": 68,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 89,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 1.28,
+          "Triggers": [],
+          "Execution Time": 1.445
+        }
+      ]
+    },
+    {
+      "name": "account.positions",
+      "executionMs": 1.354,
+      "planningMs": 1.32,
+      "nodes": [
+        {
+          "nodeType": "Sort",
+          "actualTotalMs": 1.149,
+          "actualRows": 1002,
+          "loops": 1,
+          "sortMethod": "quicksort"
+        },
+        {
+          "nodeType": "Bitmap Heap Scan",
+          "relation": "Position",
+          "actualTotalMs": 0.466,
+          "actualRows": 1002,
+          "loops": 1
+        },
+        {
+          "nodeType": "Bitmap Index Scan",
+          "index": "Position_account_updatedAt_marketId_outcome_idx",
+          "actualTotalMs": 0.194,
+          "actualRows": 1002,
+          "loops": 1
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Sort",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 1483.34,
+            "Total Cost": 1485.81,
+            "Plan Rows": 987,
+            "Plan Width": 82,
+            "Actual Startup Time": 1.042,
+            "Actual Total Time": 1.149,
+            "Actual Rows": 1002,
+            "Actual Loops": 1,
+            "Sort Key": [
+              "\"updatedAt\" DESC",
+              "\"marketId\" DESC",
+              "outcome"
+            ],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 126,
+            "Sort Space Type": "Memory",
+            "Shared Hit Blocks": 42,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Bitmap Heap Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Relation Name": "Position",
+                "Alias": "p",
+                "Startup Cost": 64.07,
+                "Total Cost": 1434.25,
+                "Plan Rows": 987,
+                "Plan Width": 82,
+                "Actual Startup Time": 0.226,
+                "Actual Total Time": 0.466,
+                "Actual Rows": 1002,
+                "Actual Loops": 1,
+                "Recheck Cond": "(account = '0x0000000000000000000000000000000000000001'::text)",
+                "Rows Removed by Index Recheck": 0,
+                "Exact Heap Blocks": 17,
+                "Lossy Heap Blocks": 0,
+                "Shared Hit Blocks": 36,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Plans": [
+                  {
+                    "Node Type": "Bitmap Index Scan",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Index Name": "Position_account_updatedAt_marketId_outcome_idx",
+                    "Startup Cost": 0,
+                    "Total Cost": 63.82,
+                    "Plan Rows": 987,
+                    "Plan Width": 0,
+                    "Actual Startup Time": 0.194,
+                    "Actual Total Time": 0.194,
+                    "Actual Rows": 1002,
+                    "Actual Loops": 1,
+                    "Index Cond": "(account = '0x0000000000000000000000000000000000000001'::text)",
+                    "Shared Hit Blocks": 19,
+                    "Shared Read Blocks": 0,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 0,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 89,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 1.32,
+          "Triggers": [],
+          "Execution Time": 1.354
+        }
+      ]
+    },
+    {
+      "name": "account.recent-trades",
+      "executionMs": 0.154,
+      "planningMs": 0.133,
+      "nodes": [
+        {
+          "nodeType": "Limit",
+          "actualTotalMs": 0.109,
+          "actualRows": 50,
+          "loops": 1
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "Trade",
+          "index": "Trade_account_blockNumber_logIndex_idx",
+          "actualTotalMs": 0.099,
+          "actualRows": 50,
+          "loops": 1
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.42,
+            "Total Cost": 81.19,
+            "Plan Rows": 50,
+            "Plan Width": 299,
+            "Actual Startup Time": 0.066,
+            "Actual Total Time": 0.109,
+            "Actual Rows": 50,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 9,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "Trade_account_blockNumber_logIndex_idx",
+                "Relation Name": "Trade",
+                "Alias": "Trade",
+                "Startup Cost": 0.42,
+                "Total Cost": 33297.24,
+                "Plan Rows": 20613,
+                "Plan Width": 299,
+                "Actual Startup Time": 0.065,
+                "Actual Total Time": 0.099,
+                "Actual Rows": 50,
+                "Actual Loops": 1,
+                "Index Cond": "(account = '0x0000000000000000000000000000000000000001'::text)",
+                "Rows Removed by Index Recheck": 0,
+                "Shared Hit Blocks": 9,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 0,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 0.133,
+          "Triggers": [],
+          "Execution Time": 0.154
+        }
+      ]
+    },
+    {
+      "name": "activity.list",
+      "executionMs": 0.142,
+      "planningMs": 0.572,
+      "nodes": [
+        {
+          "nodeType": "Limit",
+          "actualTotalMs": 0.1,
+          "actualRows": 51,
+          "loops": 1
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "ActivityEvent",
+          "index": "ActivityEvent_blockNumber_logIndex_idx",
+          "actualTotalMs": 0.089,
+          "actualRows": 51,
+          "loops": 1,
+          "rowsRemovedByFilter": 0
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.45,
+            "Total Cost": 7,
+            "Plan Rows": 51,
+            "Plan Width": 270,
+            "Actual Startup Time": 0.054,
+            "Actual Total Time": 0.1,
+            "Actual Rows": 51,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 6,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "ActivityEvent_blockNumber_logIndex_idx",
+                "Relation Name": "ActivityEvent",
+                "Alias": "ActivityEvent",
+                "Startup Cost": 0.45,
+                "Total Cost": 128388.34,
+                "Plan Rows": 1000010,
+                "Plan Width": 270,
+                "Actual Startup Time": 0.053,
+                "Actual Total Time": 0.089,
+                "Actual Rows": 51,
+                "Actual Loops": 1,
+                "Filter": "(type = ANY ('{MarketCreated,Trade,MarketGraduated,BookSeeded,OrderPlaced,OrderFilled,OrderCancelled,ResolutionObserved,Closeout,Redeem}'::text[]))",
+                "Rows Removed by Filter": 0,
+                "Shared Hit Blocks": 6,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 33,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 0.572,
+          "Triggers": [],
+          "Execution Time": 0.142
+        }
+      ]
+    },
+    {
+      "name": "activity.market-deep-keyset",
+      "executionMs": 0.187,
+      "planningMs": 0.249,
+      "nodes": [
+        {
+          "nodeType": "Limit",
+          "actualTotalMs": 0.132,
+          "actualRows": 51,
+          "loops": 1
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "ActivityEvent",
+          "index": "ActivityEvent_marketId_blockNumber_logIndex_idx",
+          "actualTotalMs": 0.121,
+          "actualRows": 51,
+          "loops": 1,
+          "rowsRemovedByFilter": 0
+        }
+      ],
+      "raw": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.45,
+            "Total Cost": 155.14,
+            "Plan Rows": 51,
+            "Plan Width": 270,
+            "Actual Startup Time": 0.083,
+            "Actual Total Time": 0.132,
+            "Actual Rows": 51,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 6,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "ActivityEvent_marketId_blockNumber_logIndex_idx",
+                "Relation Name": "ActivityEvent",
+                "Alias": "ActivityEvent",
+                "Startup Cost": 0.45,
+                "Total Cost": 75188.94,
+                "Plan Rows": 24789,
+                "Plan Width": 270,
+                "Actual Startup Time": 0.082,
+                "Actual Total Time": 0.121,
+                "Actual Rows": 51,
+                "Actual Loops": 1,
+                "Index Cond": "((\"marketId\" = '1'::text) AND (ROW(\"blockNumber\", \"logIndex\") < ROW(60050000, 5)))",
+                "Rows Removed by Index Recheck": 0,
+                "Filter": "(type = ANY ('{MarketCreated,Trade,MarketGraduated,BookSeeded,OrderPlaced,OrderFilled,OrderCancelled,ResolutionObserved,Closeout,Redeem}'::text[]))",
+                "Rows Removed by Filter": 0,
+                "Shared Hit Blocks": 6,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 0,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 0.249,
+          "Triggers": [],
+          "Execution Time": 0.187
+        }
+      ]
+    }
+  ],
+  "indexer": {
+    "events": 10,
+    "positionsPerPriceTick": 100,
+    "applied": 10,
+    "durationMs": 274.1374539999997,
+    "eventsPerSecond": 36.47805089778068
+  },
+  "websocket": {
+    "clients": 500,
+    "targetSubscribers": 5,
+    "events": 2000,
+    "deliveredMessages": 10000,
+    "nonTargetDeliveries": 0,
+    "publishP50Us": 87.02600000106031,
+    "publishP95Us": 129.11899999744492,
+    "publishP99Us": 172.39100000006147,
+    "publishDurationMs": 176.3815020002512,
+    "publishesPerSecond": 11339.057539022157,
+    "endToEndDurationMs": 183.04664400000001
+  }
+}
