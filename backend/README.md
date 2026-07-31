@@ -78,11 +78,19 @@ Every route is declared in `shared/src/rest.ts`:
 | GET | `/markets/:id` | Market, recent trades, resolution |
 | GET | `/markets/:id/book` | YES and NO books |
 | GET | `/markets/:id/prices` | Indexed price curve (`fromTs`, `limit`) |
+| GET | `/truth/:marketId` | Explainable indexed fair value; x402-protected when seller mode is `circle` |
 | GET | `/orderbook/:tokenId` | One token's aggregated ladder and open orders |
 | GET | `/accounts/:addr` | Account, positions, recent trades, estimated PnL |
 | GET | `/activity` | Keyset-paginated activity (`marketId`, `account`, `limit`, `cursor`) |
 | GET | `/config` | Registry params, addresses, trading-window bounds, committee |
 | GET | `/health` | Indexed block, Arc head, and lag |
+
+The truth seller is gated separately so local Stage 1 development remains available. With
+`PREDEX_TRUTH_SELLER_MODE=disabled` (default), `/truth/:marketId` is unpaid. With `circle`, set the
+public `PREDEX_TRUTH_SELLER_ADDRESS`; unpaid requests receive 402 plus `PAYMENT-REQUIRED`, and paid
+requests are submitted through Circle Gateway's batched `settle` API. The backend keeps no payment
+ledger and never needs a wallet key. `PREDEX_TRUTH_PRICE_RAW` defaults to 100 ($0.0001) and must
+remain strictly below one cent.
 
 WebSocket clients send:
 

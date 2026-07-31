@@ -5,6 +5,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import { unavailableDedupResponse } from '../dedup/service.js';
 import type { DedupChecker } from '../dedup/types.js';
 import type { ServerEventBus } from '../events/bus.js';
+import type { TruthPaymentGate } from '../truth-payment/types.js';
 import { registerRestRoutes } from './routes.js';
 import { registerWebsocketRoute } from './websocket.js';
 
@@ -14,6 +15,7 @@ export interface BuildServerOptions {
   dedupChecker?: DedupChecker;
   indexerStallMs?: number;
   logger?: FastifyServerOptions['logger'];
+  truthPaymentGate?: TruthPaymentGate;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -27,6 +29,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     options.prisma,
     options.dedupChecker ?? { check: async () => unavailableDedupResponse() },
     options.indexerStallMs,
+    options.truthPaymentGate,
   );
   await app.ready();
   return app;

@@ -19,7 +19,25 @@ export interface TraderConfig {
   maxNotionalPerOrderRaw: bigint;
   maxOrdersInFlight: number;
   maxSessionSpendRaw: bigint;
+  truthMode: 'auto' | 'free' | 'paid' | 'skip';
+  truthMaxPaymentRaw: bigint;
   dryRun: boolean;
+}
+
+function truthMode(
+  value: string | undefined,
+): TraderConfig['truthMode'] {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return 'auto';
+  if (
+    normalized === 'auto' ||
+    normalized === 'free' ||
+    normalized === 'paid' ||
+    normalized === 'skip'
+  ) {
+    return normalized;
+  }
+  throw new Error('PREDEX_TRUTH_MODE must be auto, free, paid, or skip.');
 }
 
 function positiveBigInt(
@@ -154,6 +172,12 @@ export function loadTraderConfig(
       'PREDEX_MAX_SESSION_SPEND_RAW',
       environment.PREDEX_MAX_SESSION_SPEND_RAW,
       2_000_000n,
+    ),
+    truthMode: truthMode(environment.PREDEX_TRUTH_MODE),
+    truthMaxPaymentRaw: positiveBigInt(
+      'PREDEX_TRUTH_MAX_PAYMENT_RAW',
+      environment.PREDEX_TRUTH_MAX_PAYMENT_RAW,
+      100n,
     ),
     dryRun,
   };

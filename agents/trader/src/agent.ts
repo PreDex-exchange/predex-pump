@@ -20,9 +20,21 @@ export interface TraderDataClient {
   getOrderBook(marketId: string): Promise<MarketBookResponse>;
 }
 
+export interface TruthSignalReadInput {
+  marketId: string;
+  /** Remaining unified session-spend capacity; paid readers must enforce it before signing. */
+  maxPaymentRaw: bigint;
+}
+
+export interface TruthSignalReadResult {
+  signal: TruthSignalResponse;
+  /** Actual USDC paid for this read; zero for the unpaid Stage 1 endpoint. */
+  paymentSpendRaw: bigint;
+}
+
 export type TruthSignalReader = (
-  marketId: string,
-) => Promise<TruthSignalResponse>;
+  input: TruthSignalReadInput,
+) => Promise<TruthSignalReadResult>;
 
 export interface PlaceOrderAction {
   marketId: string;
@@ -671,6 +683,7 @@ export class TraderAgent {
       inFlight: effectiveRestOpen.length + this.pendingPlacedOrderIds.size,
       orderSnapshotComplete: snapshots.length === markets.length,
     };
+    let actualSignalSpendThisCycle = 0n;
 
     for (const snapshot of snapshots) {
       const { market, book } = snapshot;
@@ -706,7 +719,24 @@ export class TraderAgent {
 
       let signal: TruthSignalResponse;
       try {
-        signal = await this.options.readSignal(market.id);
+        const remainingSessionSpend =
+          this.options.maxSessionSpendRaw - risk.spendRaw;
+        const result = await this.options.readSignal({
+          marketId: market.id,
+          maxPaymentRaw:
+            remainingSessionSpend > 0n ? remainingSessionSpend : 0n,
+        });
+        if (
+          result.paymentSpendRaw < 0n ||
+          result.paymentSpendRaw > remainingSessionSpend
+        ) {
+          throw new Error(
+            `signal provider reported payment ${result.paymentSpendRaw} above remaining session cap ${remainingSessionSpend}`,
+          );
+        }
+        risk.spendRaw += result.paymentSpendRaw;
+        actualSignalSpendThisCycle += result.paymentSpendRaw;
+        signal = result.signal;
       } catch (error) {
         this.options.logger.write({
           level: 'error',
@@ -850,7 +880,9 @@ export class TraderAgent {
       }
     }
 
-    if (!this.options.dryRun) this.sessionSpendRaw = risk.spendRaw;
+    this.sessionSpendRaw = this.options.dryRun
+      ? this.sessionSpendRaw + actualSignalSpendThisCycle
+      : risk.spendRaw;
   }
 }
 

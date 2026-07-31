@@ -254,7 +254,10 @@ function createAgent(
   const actionExecutor = executor();
   const agent = new TraderAgent({
     dataClient: dataClient(),
-    readSignal: vi.fn(async (marketId) => signal(marketId)),
+    readSignal: vi.fn(async ({ marketId }) => ({
+      signal: signal(marketId),
+      paymentSpendRaw: 0n,
+    })),
     executor: actionExecutor,
     logger,
     traderAddress: TRADER,
@@ -368,6 +371,30 @@ describe('TraderAgent', () => {
         event: 'refused',
         action: 'PLACE',
         side: 'ASK',
+        reason: expect.stringContaining('max-total-session-spend cap'),
+      }),
+    );
+  });
+
+  it('counts paid truth reads inside the same total session spend cap', async () => {
+    const { agent, logger } = createAgent({
+      maxSessionSpendRaw: 100_000n,
+      readSignal: vi.fn(async ({ marketId, maxPaymentRaw }) => {
+        expect(maxPaymentRaw).toBe(100_000n);
+        return {
+          signal: signal(marketId),
+          paymentSpendRaw: 50_000n,
+        };
+      }),
+    });
+
+    await agent.runCycle();
+
+    expect(agent.getSessionSpendRaw()).toBe(50_000n);
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'refused',
+        side: 'BID',
         reason: expect.stringContaining('max-total-session-spend cap'),
       }),
     );
@@ -493,9 +520,9 @@ describe('TraderAgent', () => {
         ]),
         accountResponse: account([]),
       }),
-      readSignal: vi.fn(async (marketId) => {
+      readSignal: vi.fn(async ({ marketId }) => {
         if (marketId === '1') throw new Error('signal unavailable');
-        return signal(marketId);
+        return { signal: signal(marketId), paymentSpendRaw: 0n };
       }),
     });
 

@@ -17,6 +17,7 @@ describe('loadTraderConfig', () => {
 
     expect(config.dryRun).toBe(true);
     expect(config.traderAddress).toBeUndefined();
+    expect(config.truthMode).toBe('auto');
     expect('privateKey' in config).toBe(false);
   });
 
@@ -46,5 +47,19 @@ describe('loadTraderConfig', () => {
     expect(() =>
       loadTraderConfig({ PREDEX_MAX_SESSION_SPEND_RAW: '0' }, []),
     ).toThrow(/positive whole number/u);
+  });
+
+  it('requires an explicit paid truth mode and preserves its payment cap', () => {
+    const config = loadTraderConfig(
+      {
+        PREDEX_TRUTH_MODE: 'paid',
+        PREDEX_TRUTH_MAX_PAYMENT_RAW: '77',
+      },
+      [],
+    );
+
+    expect(config.truthMode).toBe('paid');
+    expect(config.truthMaxPaymentRaw).toBe(77n);
+    expect('privateKey' in config).toBe(false);
   });
 });

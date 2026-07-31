@@ -24,7 +24,9 @@
     "example": "tsx examples/read-and-build-buy.ts"
   },
   "dependencies": {
+    "@circle-fin/x402-batching": "3.2.0",
     "@predex-pump/shared": "link:../shared",
+    "@x402/core": "2.20.0",
     "viem": "2.55.8",
     "ws": "8.21.1"
   },

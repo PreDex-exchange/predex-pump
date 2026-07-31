@@ -12,6 +12,7 @@ export interface TraderLogEntry {
     | 'action-error'
     | 'backend-error'
     | 'signal-error'
+    | 'signal-payment'
     | 'loop-error'
     | 'stopped';
   message: string;

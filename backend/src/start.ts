@@ -8,16 +8,23 @@ import { ServerEventBus } from './events/bus.js';
 import { publishIndexedEvents } from './events/projector.js';
 import { terminateOnFatal } from './fatal.js';
 import { runIndexer } from './indexer/runner.js';
+import {
+  createTruthPaymentGate,
+  loadTruthSellerConfig,
+} from './truth-payment/config.js';
 
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();
   const dedup = createDedupRuntime(config);
+  const truthSeller = loadTruthSellerConfig();
+  const truthPaymentGate = createTruthPaymentGate(truthSeller);
   const eventBus = new ServerEventBus();
   const app = await buildServer({
     prisma,
     eventBus,
     dedupChecker: dedup.checker,
     indexerStallMs: config.indexerStallMs,
+    ...(truthPaymentGate === undefined ? {} : { truthPaymentGate }),
   });
 
   try {
@@ -27,6 +34,9 @@ async function main(): Promise<void> {
         `WebSocket=ws://${config.apiHost}:${config.apiPort}/ws`,
     );
     console.info(`[dedup] provider=${dedup.provider.mode} qdrant=${config.qdrantUrl}`);
+    console.info(
+      `[truth] seller=${truthSeller.mode} priceRaw=${truthSeller.amountRaw}`,
+    );
     await runIndexer(prisma, config, {
       once: false,
       onEvents: (events) => publishIndexedEvents(prisma, eventBus, events),

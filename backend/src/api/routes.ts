@@ -19,6 +19,13 @@ import { unavailableDedupResponse } from '../dedup/service.js';
 import type { DedupChecker } from '../dedup/types.js';
 import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
 import {
+  encodePaymentHeader,
+  PAYMENT_REQUIRED_HEADER,
+  PAYMENT_RESPONSE_HEADER,
+  PAYMENT_SIGNATURE_HEADER,
+  type TruthPaymentGate,
+} from '../truth-payment/types.js';
+import {
   HttpError,
   parseAddress,
   parseDecimalId,
@@ -96,6 +103,7 @@ export function registerRestRoutes(
   prisma: PrismaClient,
   dedupChecker: DedupChecker,
   indexerStallMs = DEFAULT_INDEXER_STALL_MS,
+  truthPaymentGate?: TruthPaymentGate,
 ): void {
   const readConfig = createCachedConfigReader(prisma);
 
@@ -183,10 +191,51 @@ export function registerRestRoutes(
 
   app.get<{ Params: TruthParams }>(
     routes.truth(':marketId'),
-    async (request): Promise<TruthSignalResponse> => {
+    async (request, reply) => {
       const marketId = parseDecimalId('market id', request.params.marketId);
       const response = await getTruthSignal(prisma, marketId);
       if (response === null) throw notFound(`Market ${marketId} was not found`);
+      if (truthPaymentGate === undefined) return response;
+
+      const challenge = truthPaymentGate.paymentRequiredHeader(request.url);
+      const paymentSignature = request.headers[PAYMENT_SIGNATURE_HEADER];
+      if (typeof paymentSignature !== 'string' || paymentSignature === '') {
+        return reply
+          .header(PAYMENT_REQUIRED_HEADER, challenge)
+          .code(402)
+          .send({
+            error: 'Payment required for this truth signal.',
+          });
+      }
+
+      let authorization;
+      try {
+        authorization = await truthPaymentGate.authorize(paymentSignature);
+      } catch (error) {
+        request.log.warn({ err: error }, 'Truth payment layer unavailable');
+        return reply.code(503).send({
+          error: 'Truth payment layer is temporarily unavailable.',
+        });
+      }
+      if (!authorization.success) {
+        return reply
+          .header(PAYMENT_REQUIRED_HEADER, challenge)
+          .code(402)
+          .send({
+            error: 'Truth payment was rejected.',
+            reason: authorization.errorReason ?? 'Unknown payment failure.',
+          });
+      }
+
+      reply.header(
+        PAYMENT_RESPONSE_HEADER,
+        encodePaymentHeader({
+          success: true,
+          transaction: authorization.transaction ?? '',
+          network: authorization.network,
+          payer: authorization.payer ?? '',
+        }),
+      );
       return response;
     },
   );
