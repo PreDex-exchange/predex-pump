@@ -1,3 +1,4 @@
+import { BatchEvmScheme } from '@circle-fin/x402-batching/client';
 import { ADDRESSES, type TruthSignalResponse } from '@predex-pump/shared';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -28,6 +29,7 @@ const REQUIREMENTS = {
     verifyingContract: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
   },
 };
+const SIGNATURE = `0x${'1'.repeat(130)}` as `0x${string}`;
 
 function encoded(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
@@ -70,9 +72,7 @@ function provider(): X402BuyerPaymentProvider & {
 
 describe('truth.buy Circle x402 buyer', () => {
   it('uses Circle BatchEvmScheme to sign a fundless EIP-3009 payload', async () => {
-    const signTypedData = vi.fn(async () =>
-      `0x${'1'.repeat(130)}` as `0x${string}`,
-    );
+    const signTypedData = vi.fn(async () => SIGNATURE);
     const paymentProvider = createCircleX402PaymentProvider({
       address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       signTypedData,
@@ -89,13 +89,22 @@ describe('truth.buy Circle x402 buyer', () => {
           to: '0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa',
           value: REQUIREMENTS.amount,
         },
-        signature: `0x${'1'.repeat(130)}`,
+        signature: SIGNATURE,
       },
     });
   });
 
-  it('attaches the signed PAYMENT-SIGNATURE and returns the paid signal', async () => {
-    const paymentProvider = provider();
+  it('enriches the real Circle signed core into the full PAYMENT-SIGNATURE envelope', async () => {
+    const signTypedData = vi.fn(async () => SIGNATURE);
+    const scheme = new BatchEvmScheme({
+      address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      signTypedData,
+    });
+    const paymentProvider: X402BuyerPaymentProvider = {
+      createPaymentPayload: vi.fn((x402Version, requirements) =>
+        scheme.createPaymentPayload(x402Version, requirements),
+      ),
+    };
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(paymentRequired())
@@ -132,21 +141,57 @@ describe('truth.buy Circle x402 buyer', () => {
       2,
       REQUIREMENTS,
     );
+    expect(signTypedData).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://predex.test/truth/1');
     const paidHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<
       string,
       string
     >;
-    expect(decoded(paidHeaders['Payment-Signature'] ?? '')).toEqual({
+    const paymentEnvelope = decoded(
+      paidHeaders['Payment-Signature'] ?? '',
+    ) as {
+      x402Version: number;
+      resource: Record<string, unknown>;
+      accepted: typeof REQUIREMENTS;
+      payload: {
+        authorization: Record<string, unknown>;
+        signature: string;
+      };
+    };
+    expect(Object.keys(paymentEnvelope)).toEqual([
+      'x402Version',
+      'resource',
+      'accepted',
+      'payload',
+    ]);
+    expect(Object.keys(paymentEnvelope.payload)).toEqual([
+      'authorization',
+      'signature',
+    ]);
+    expect(Object.keys(paymentEnvelope.payload.authorization)).toEqual([
+      'from',
+      'to',
+      'value',
+      'validAfter',
+      'validBefore',
+      'nonce',
+    ]);
+    expect(paymentEnvelope).toMatchObject({
       x402Version: 2,
-      payload: { authorization: { signature: 'mocked' } },
       resource: {
         url: '/truth/1',
         description: 'Truth signal',
         mimeType: 'application/json',
       },
       accepted: REQUIREMENTS,
+      payload: {
+        authorization: {
+          from: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          value: REQUIREMENTS.amount,
+        },
+        signature: SIGNATURE,
+      },
     });
     expect(result).toEqual({
       signal: SIGNAL,

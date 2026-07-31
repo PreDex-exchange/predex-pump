@@ -38,7 +38,10 @@ export interface TruthPaymentAuthorization {
 export interface TruthPaymentGate {
   readonly requirements: TruthPaymentRequirements;
   paymentRequiredHeader(resourceUrl: string): string;
-  authorize(paymentSignature: string): Promise<TruthPaymentAuthorization>;
+  authorize(
+    paymentSignature: string,
+    resourceUrl: string,
+  ): Promise<TruthPaymentAuthorization>;
 }
 
 export function encodePaymentHeader(value: unknown): string {

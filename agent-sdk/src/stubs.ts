@@ -87,7 +87,11 @@ export interface X402PaymentRequirements {
 
 interface PaymentRequired {
   x402Version: number;
-  resource?: Record<string, unknown>;
+  resource: {
+    url: string;
+    description: string;
+    mimeType: string;
+  };
   accepts: X402PaymentRequirements[];
 }
 
@@ -149,6 +153,10 @@ function paymentRequiredFrom(response: Response): PaymentRequired {
   if (
     !isRecord(decoded) ||
     typeof decoded.x402Version !== 'number' ||
+    !isRecord(decoded.resource) ||
+    typeof decoded.resource.url !== 'string' ||
+    typeof decoded.resource.description !== 'string' ||
+    typeof decoded.resource.mimeType !== 'string' ||
     !Array.isArray(decoded.accepts)
   ) {
     throw new Error('The PAYMENT-REQUIRED header is malformed.');
@@ -242,16 +250,20 @@ export function createTruthClient(options: TruthClientOptions = {}): TruthClient
           'Truth endpoint requires payment, but no x402 buyer provider is configured.',
         );
       }
-      const payload = await options.paymentProvider.createPaymentPayload(
+      const signed = await options.paymentProvider.createPaymentPayload(
         required.x402Version,
         selected,
       );
+      if (signed.x402Version !== required.x402Version) {
+        throw new Error(
+          'The x402 payment provider returned a payload for a different protocol version.',
+        );
+      }
       const paymentSignature = encodeHeader({
-        ...payload,
-        ...(required.resource === undefined
-          ? {}
-          : { resource: required.resource }),
+        x402Version: signed.x402Version,
+        resource: required.resource,
         accepted: selected,
+        payload: signed.payload,
       });
       const paid = await fetchImpl(sourceUrl, {
         headers: {

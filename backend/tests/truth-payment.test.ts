@@ -71,11 +71,23 @@ describe('Circle x402 truth seller', () => {
   });
 
   async function validPaymentPayload() {
+    const paymentRequired = decodePaymentHeader(
+      gate.paymentRequiredHeader('/truth/1'),
+    ) as TruthPaymentRequired;
     const scheme = new BatchEvmScheme({
       address: PAYER,
       signTypedData: vi.fn(async () => SIGNATURE),
     });
-    return scheme.createPaymentPayload(2, gate.requirements);
+    const signed = await scheme.createPaymentPayload(
+      paymentRequired.x402Version,
+      paymentRequired.accepts[0],
+    );
+    return {
+      x402Version: signed.x402Version,
+      resource: paymentRequired.resource,
+      accepted: paymentRequired.accepts[0],
+      payload: signed.payload,
+    };
   }
 
   async function validPaymentHeader(): Promise<string> {
@@ -120,9 +132,14 @@ describe('Circle x402 truth seller', () => {
     expect(settle).not.toHaveBeenCalled();
   });
 
-  it('passes the real Circle SDK payload shape to the Gateway facilitator', async () => {
+  it('passes the full envelope around the real Circle SDK payload to settlement', async () => {
     const paymentPayload = await validPaymentPayload();
-    expect(Object.keys(paymentPayload)).toEqual(['x402Version', 'payload']);
+    expect(Object.keys(paymentPayload)).toEqual([
+      'x402Version',
+      'resource',
+      'accepted',
+      'payload',
+    ]);
     expect(Object.keys(paymentPayload.payload)).toEqual([
       'authorization',
       'signature',
@@ -135,7 +152,6 @@ describe('Circle x402 truth seller', () => {
       'validBefore',
       'nonce',
     ]);
-    expect(paymentPayload).not.toHaveProperty('accepted');
 
     const response = await app.inject({
       method: 'GET',
@@ -173,6 +189,98 @@ describe('Circle x402 truth seller', () => {
     });
   });
 
+  it('rejects the unenriched Circle SDK payload before settlement', async () => {
+    const scheme = new BatchEvmScheme({
+      address: PAYER,
+      signTypedData: vi.fn(async () => SIGNATURE),
+    });
+    const signedCore = await scheme.createPaymentPayload(2, gate.requirements);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/truth/1',
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentHeader(signedCore),
+      },
+    });
+
+    expect(response.statusCode).toBe(402);
+    expect(settle).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['amount', { amount: '0100' }],
+    ['payTo', { payTo: '0xcccccccccccccccccccccccccccccccccccccccc' }],
+  ])(
+    'rejects an accepted entry with a mismatched %s before settlement',
+    async (_field, change) => {
+      const paymentPayload = await validPaymentPayload();
+      const mismatched = {
+        ...paymentPayload,
+        accepted: { ...paymentPayload.accepted, ...change },
+      };
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/truth/1',
+        headers: {
+          [PAYMENT_SIGNATURE_HEADER]: encodePaymentHeader(mismatched),
+        },
+      });
+
+      expect(response.statusCode).toBe(402);
+      expect(settle).not.toHaveBeenCalled();
+    },
+  );
+
+  it('compares accepted EVM addresses case-insensitively', async () => {
+    const paymentPayload = await validPaymentPayload();
+    const accepted = paymentPayload.accepted;
+    const differentlyCased = {
+      ...paymentPayload,
+      accepted: {
+        ...accepted,
+        payTo: accepted.payTo.toLowerCase(),
+        extra: {
+          ...accepted.extra,
+          verifyingContract: `0x${accepted.extra.verifyingContract
+            .slice(2)
+            .toUpperCase()}`,
+        },
+      },
+    };
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/truth/1',
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentHeader(differentlyCased),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(settle).toHaveBeenCalledWith(differentlyCased, gate.requirements);
+  });
+
+  it('rejects an envelope for a different resource before settlement', async () => {
+    const paymentPayload = await validPaymentPayload();
+    const mismatched = {
+      ...paymentPayload,
+      resource: { ...paymentPayload.resource, url: '/truth/2' },
+    };
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/truth/1',
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentHeader(mismatched),
+      },
+    });
+
+    expect(response.statusCode).toBe(402);
+    expect(settle).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed payments without calling settlement', async () => {
     const malformed = await app.inject({
       method: 'GET',
@@ -185,13 +293,12 @@ describe('Circle x402 truth seller', () => {
     expect(logWarn).not.toHaveBeenCalled();
   });
 
-  it('logs a rejected facilitator result without logging the signature', async () => {
+  it('logs the message from a 400-class facilitator rejection without the signature', async () => {
+    const facilitatorMessage =
+      'Invalid request: paymentPayload.resource: Required, paymentPayload.accepted: Required';
     settle.mockResolvedValueOnce({
       success: false,
-      errorReason: 'Gateway rejected payment',
-      payer: PAYER,
-      transaction: '',
-      network: 'eip155:5042002',
+      message: facilitatorMessage,
     });
 
     const response = await app.inject({
@@ -201,12 +308,13 @@ describe('Circle x402 truth seller', () => {
     });
 
     expect(response.statusCode).toBe(402);
+    expect(response.json()).toMatchObject({ reason: facilitatorMessage });
     expect(logWarn).toHaveBeenCalledWith(
       {
         success: false,
-        errorReason: 'Gateway rejected payment',
-        payer: PAYER,
-        transaction: '',
+        errorReason: facilitatorMessage,
+        payer: null,
+        transaction: null,
       },
       'Circle truth payment settlement rejected',
     );
@@ -227,6 +335,16 @@ describe('Circle x402 truth seller', () => {
       error: 'Truth payment layer is temporarily unavailable.',
     });
     expect(response.body).not.toContain('fairValueYesRaw');
+    expect(logWarn).toHaveBeenCalledWith(
+      {
+        success: false,
+        errorReason: 'Gateway unavailable',
+        payer: null,
+        transaction: null,
+      },
+      'Circle truth payment settlement failed',
+    );
+    expect(JSON.stringify(logWarn.mock.calls)).not.toContain(SIGNATURE);
   });
 });
 

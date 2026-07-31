@@ -210,7 +210,10 @@ export function registerRestRoutes(
 
       let authorization;
       try {
-        authorization = await truthPaymentGate.authorize(paymentSignature);
+        authorization = await truthPaymentGate.authorize(
+          paymentSignature,
+          request.url,
+        );
       } catch (error) {
         request.log.warn({ err: error }, 'Truth payment layer unavailable');
         return reply.code(503).send({

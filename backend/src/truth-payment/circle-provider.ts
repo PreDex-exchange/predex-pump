@@ -25,16 +25,29 @@ export const DEFAULT_GATEWAY_TESTNET_URL =
   'https://gateway-api-testnet.circle.com';
 
 interface CirclePaymentPayload {
-  x402Version: number;
-  payload: Record<string, unknown>;
+  x402Version: 2;
+  resource: TruthPaymentRequired['resource'];
+  accepted: TruthPaymentRequirements;
+  payload: {
+    authorization: {
+      from: string;
+      to: string;
+      value: string;
+      validAfter: string;
+      validBefore: string;
+      nonce: string;
+    };
+    signature: string;
+  };
 }
 
 interface CircleSettleResult {
   success: boolean;
   errorReason?: string;
+  message?: string;
   payer?: string;
-  transaction: string;
-  network: string;
+  transaction?: string;
+  network?: string;
 }
 
 export interface CircleFacilitator {
@@ -74,6 +87,82 @@ function sameAddress(left: unknown, right: string): boolean {
   return typeof left === 'string' && left.toLowerCase() === right.toLowerCase();
 }
 
+function acceptedMatches(
+  accepted: unknown,
+  expected: TruthPaymentRequirements,
+): boolean {
+  if (!isRecord(accepted) || !isRecord(accepted.extra)) return false;
+  return (
+    accepted.scheme === expected.scheme &&
+    accepted.network === expected.network &&
+    sameAddress(accepted.asset, expected.asset) &&
+    accepted.amount === expected.amount &&
+    sameAddress(accepted.payTo, expected.payTo) &&
+    accepted.maxTimeoutSeconds === expected.maxTimeoutSeconds &&
+    accepted.extra.name === expected.extra.name &&
+    accepted.extra.version === expected.extra.version &&
+    sameAddress(
+      accepted.extra.verifyingContract,
+      expected.extra.verifyingContract,
+    )
+  );
+}
+
+function truthResource(resourceUrl: string): TruthPaymentRequired['resource'] {
+  return {
+    url: resourceUrl,
+    description: 'Predex indexed market-microstructure truth signal',
+    mimeType: 'application/json',
+  };
+}
+
+function resourceMatches(
+  resource: unknown,
+  expected: TruthPaymentRequired['resource'],
+): boolean {
+  return (
+    isRecord(resource) &&
+    resource.url === expected.url &&
+    resource.description === expected.description &&
+    resource.mimeType === expected.mimeType
+  );
+}
+
+function resultErrorReason(result: CircleSettleResult): string | undefined {
+  if (typeof result.errorReason === 'string') return result.errorReason;
+  return typeof result.message === 'string' ? result.message : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : 'Circle facilitator threw a non-Error value.';
+}
+
+function redactSignature(
+  message: string,
+  paymentPayload: CirclePaymentPayload,
+): string {
+  const { signature } = paymentPayload.payload;
+  return signature === ''
+    ? message
+    : message.replaceAll(signature, '[redacted]');
+}
+
+function isPaymentAuthorization(
+  value: unknown,
+): value is CirclePaymentPayload['payload']['authorization'] {
+  return (
+    isRecord(value) &&
+    typeof value.from === 'string' &&
+    typeof value.to === 'string' &&
+    typeof value.value === 'string' &&
+    typeof value.validAfter === 'string' &&
+    typeof value.validBefore === 'string' &&
+    typeof value.nonce === 'string'
+  );
+}
+
 function parsePaymentPayload(encoded: string): CirclePaymentPayload | null {
   let value: unknown;
   try {
@@ -84,7 +173,12 @@ function parsePaymentPayload(encoded: string): CirclePaymentPayload | null {
   if (
     !isRecord(value) ||
     value.x402Version !== 2 ||
-    !isRecord(value.payload)
+    !isRecord(value.resource) ||
+    !isRecord(value.accepted) ||
+    !isRecord(value.payload) ||
+    !isPaymentAuthorization(value.payload.authorization) ||
+    typeof value.payload.signature !== 'string' ||
+    value.payload.signature === ''
   ) {
     return null;
   }
@@ -138,11 +232,7 @@ export class CircleTruthPaymentGate implements TruthPaymentGate {
   paymentRequiredHeader(resourceUrl: string): string {
     const paymentRequired: TruthPaymentRequired = {
       x402Version: 2,
-      resource: {
-        url: resourceUrl,
-        description: 'Predex indexed market-microstructure truth signal',
-        mimeType: 'application/json',
-      },
+      resource: truthResource(resourceUrl),
       accepts: [this.requirements],
     };
     return encodePaymentHeader(paymentRequired);
@@ -150,6 +240,7 @@ export class CircleTruthPaymentGate implements TruthPaymentGate {
 
   async authorize(
     paymentSignature: string,
+    resourceUrl: string,
   ): Promise<TruthPaymentAuthorization> {
     const payload = parsePaymentPayload(paymentSignature);
     if (payload === null) {
@@ -159,12 +250,45 @@ export class CircleTruthPaymentGate implements TruthPaymentGate {
         network: this.requirements.network,
       };
     }
-    const result = await this.facilitator.settle(payload, this.requirements);
+    if (!acceptedMatches(payload.accepted, this.requirements)) {
+      return {
+        success: false,
+        errorReason: 'Payment requirements do not match this truth resource.',
+        network: this.requirements.network,
+      };
+    }
+    if (!resourceMatches(payload.resource, truthResource(resourceUrl))) {
+      return {
+        success: false,
+        errorReason: 'Payment resource does not match this truth request.',
+        network: this.requirements.network,
+      };
+    }
+
+    let result: CircleSettleResult;
+    try {
+      result = await this.facilitator.settle(payload, this.requirements);
+    } catch (error) {
+      this.logger.warn(
+        {
+          success: false,
+          errorReason: redactSignature(errorMessage(error), payload),
+          payer: null,
+          transaction: null,
+        },
+        'Circle truth payment settlement failed',
+      );
+      throw error;
+    }
+    const errorReason = resultErrorReason(result);
     const settlementLog = {
       success: result.success,
-      errorReason: result.errorReason ?? null,
+      errorReason:
+        errorReason === undefined
+          ? null
+          : redactSignature(errorReason, payload),
       payer: result.payer ?? null,
-      transaction: result.transaction,
+      transaction: result.transaction ?? null,
     };
     if (result.success) {
       this.logger.info(
@@ -179,11 +303,11 @@ export class CircleTruthPaymentGate implements TruthPaymentGate {
     }
     return {
       success: result.success,
-      ...(result.errorReason === undefined
-        ? {}
-        : { errorReason: result.errorReason }),
+      ...(errorReason === undefined ? {} : { errorReason }),
       ...(result.payer === undefined ? {} : { payer: result.payer }),
-      transaction: result.transaction,
+      ...(result.transaction === undefined
+        ? {}
+        : { transaction: result.transaction }),
       network: result.network || this.requirements.network,
     };
   }
