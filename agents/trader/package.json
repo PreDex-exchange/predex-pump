@@ -1,0 +1,35 @@
+{
+  "name": "@predex-pump/trader-agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "start": "tsx --tsconfig tsconfig.runtime.json src/cli.ts"
+  },
+  "dependencies": {
+    "@predex-pump/agent-sdk": "link:../../agent-sdk",
+    "@predex-pump/shared": "link:../../shared",
+    "viem": "2.55.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.0"
+  },
+  "packageManager": "pnpm@10.29.2"
+}

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "noEmit": true,
+    "paths": {
+      "@predex-pump/agent-sdk": ["../../agent-sdk/src/index.ts"]
+    }
+  }
+}
