@@ -16,7 +16,7 @@ type FeedSort = 'trending' | 'newest' | 'volume';
 
 const FILTERS: { value: FeedFilter; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'incubating', label: 'Incubating' },
+  { value: 'incubating', label: 'Bootstrap' },
   { value: 'graduated', label: 'Graduated' },
   { value: 'resolved', label: 'Resolved' },
 ];

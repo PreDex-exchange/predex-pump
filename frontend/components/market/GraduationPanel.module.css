@@ -4,10 +4,6 @@
   gap: 18px;
 }
 
-.eggWrap {
-  flex: 0 0 92px;
-}
-
 .body {
   flex: 1;
 }
@@ -77,10 +73,6 @@
   .card {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .eggWrap {
-    align-self: center;
   }
 
   .row {

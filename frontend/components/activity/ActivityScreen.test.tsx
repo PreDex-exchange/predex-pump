@@ -1,0 +1,195 @@
+import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ActivityScreen, parseAgentAddresses } from './ActivityScreen';
+
+const mocks = vi.hoisted(() => ({
+  activityData: {
+    items: [] as ActivityEvent[],
+    nextCursor: null as string | null,
+  },
+  activityError: null as Error | null,
+  activityListener: null as ((message: { event: string; data: unknown }) => void) | null,
+  markets: [] as Market[],
+  refetch: vi.fn(),
+  statusListener: null as
+    | ((status: 'idle' | 'connecting' | 'live' | 'reconnecting') => void)
+    | null,
+}));
+
+vi.mock('@/lib/api/hooks', () => ({
+  useActivity: () => ({
+    data: mocks.activityData,
+    error: mocks.activityError,
+    isLoading: false,
+    refetch: mocks.refetch,
+  }),
+  useMarkets: () => ({
+    data: { items: mocks.markets, nextCursor: null },
+    error: null,
+    isLoading: false,
+    refetch: vi.fn(),
+  }),
+}));
+
+vi.mock('@/lib/api/websocket', () => ({
+  backendWsClient: {
+    subscribe: (
+      _channel: string,
+      listener: (message: { event: string; data: unknown }) => void,
+    ) => {
+      mocks.activityListener = listener;
+      return vi.fn();
+    },
+    subscribeStatus: (
+      listener: (
+        status: 'idle' | 'connecting' | 'live' | 'reconnecting',
+      ) => void,
+    ) => {
+      mocks.statusListener = listener;
+      listener('live');
+      return vi.fn();
+    },
+  },
+}));
+
+const AGENT = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const HUMAN = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const TX_A = `0x${'1'.repeat(64)}` as `0x${string}`;
+const TX_B = `0x${'2'.repeat(64)}` as `0x${string}`;
+
+const market: Market = {
+  id: '7',
+  creator: HUMAN,
+  question: 'Will Ethereum trade above $5,000 before January 1, 2027?',
+  phase: 'Opened',
+  conditionId: `0x${'3'.repeat(64)}`,
+  questionId: `0x${'4'.repeat(64)}`,
+  yesTokenId: '1',
+  noTokenId: '2',
+  seedRaw: '1000000',
+  yesPriceRaw: '540000',
+  noPriceRaw: '460000',
+  graduationActivityRaw: '0',
+  bookAddress: null,
+  frozenYesPriceRaw: null,
+  handoffSizeRaw: null,
+  tradeCount: 1,
+  volumeRaw: '135000',
+  params: {
+    seedFloorRaw: '1000000',
+    seedCapRaw: '5000000',
+    fCapRaw: '10000000',
+    graduationMoneyInThresholdRaw: '0',
+    graduationTollRaw: '100000',
+    inventoryTargetRaw: '20000000',
+    protocolFeeBps: 20,
+    depthFeeBps: 0,
+    tradingWindowSeconds: 2592000,
+    minimumTimeOpenSeconds: 0,
+  },
+  createdAt: 1_785_500_000,
+  tradingEndsAt: 1_788_092_000,
+  graduatedAt: null,
+  resolvedAt: null,
+};
+
+function trade(
+  id: string,
+  account: `0x${string}`,
+  txHash: `0x${string}`,
+): ActivityEvent {
+  return {
+    id,
+    type: 'Trade',
+    marketId: market.id,
+    account,
+    outcome: 'YES',
+    side: 'BID',
+    amountRaw: '250000',
+    priceRaw: '540000',
+    txHash,
+    ts: 1_785_500_100,
+  };
+}
+
+beforeEach(() => {
+  mocks.activityData = { items: [], nextCursor: null };
+  mocks.activityError = null;
+  mocks.activityListener = null;
+  mocks.markets = [market];
+  mocks.refetch.mockClear();
+  mocks.statusListener = null;
+});
+
+afterEach(cleanup);
+
+describe('ActivityScreen', () => {
+  it('labels configured agent addresses case-insensitively and distinguishes humans', () => {
+    mocks.activityData = {
+      items: [
+        trade('agent-event', AGENT.toUpperCase() as `0x${string}`, TX_A),
+        trade('human-event', HUMAN, TX_B),
+      ],
+      nextCursor: null,
+    };
+
+    render(
+      <ActivityScreen
+        agentAddresses={parseAgentAddresses(` ${AGENT},${AGENT.toUpperCase()} `)}
+      />,
+    );
+
+    expect(screen.getByText('Autonomous agent')).toBeTruthy();
+    expect(screen.getByText('Human wallet')).toBeTruthy();
+    expect(screen.getByText(/Agent 0XAAA/u)).toBeTruthy();
+    expect(screen.getByText(/Human 0xbbbbb/u)).toBeTruthy();
+    expect(screen.getAllByText(/0\.14 USDC/u)).toHaveLength(2);
+  });
+
+  it('appends a WebSocket activity event immediately', () => {
+    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+    expect(screen.getByText('Waiting for activity…')).toBeTruthy();
+
+    act(() => {
+      mocks.activityListener?.({
+        event: 'activity',
+        data: trade('live-event', AGENT, TX_A),
+      });
+      mocks.activityListener?.({
+        event: 'activity',
+        data: trade('second-live-event', HUMAN, TX_B),
+      });
+    });
+
+    expect(screen.queryByText('Waiting for activity…')).toBeNull();
+    expect(screen.getByText('Autonomous agent')).toBeTruthy();
+    expect(screen.getByText('Human wallet')).toBeTruthy();
+    expect(
+      screen.getByRole('link', { name: new RegExp(TX_A, 'u') }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('link', { name: new RegExp(TX_B, 'u') }),
+    ).toBeTruthy();
+  });
+
+  it('shows a clear waiting state when the indexed snapshot is empty', () => {
+    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+
+    expect(screen.getByText('Waiting for activity…')).toBeTruthy();
+    expect(screen.getByText(/will appear here live/u)).toBeTruthy();
+  });
+
+  it('shows reconnecting and refreshes indexed history once the stream returns', () => {
+    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+
+    act(() => mocks.statusListener?.('reconnecting'));
+    expect(screen.getByText('Reconnecting')).toBeTruthy();
+    expect(screen.getByText(/catching up from the index/u)).toBeTruthy();
+
+    act(() => mocks.statusListener?.('live'));
+    expect(screen.getByText('Live')).toBeTruthy();
+    expect(mocks.refetch).toHaveBeenCalledOnce();
+  });
+});

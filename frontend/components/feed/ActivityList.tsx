@@ -50,7 +50,7 @@ export function ActivityList({
   events,
   markets,
   title = 'Activity',
-  emptyMessage = 'The hatchery is quiet for now.',
+  emptyMessage = 'Waiting for on-chain activity…',
   sticky = true,
 }: ActivityListProps) {
   return (

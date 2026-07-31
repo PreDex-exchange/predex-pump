@@ -2,7 +2,6 @@
 
 import type { Market, Resolution } from '@predex-pump/shared/domain';
 
-import { HatchingChick } from '@/components/mascot/HatchingChick';
 import { OutcomeBadge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
@@ -13,9 +12,8 @@ import styles from './PhasePanels.module.css';
 export function HatchedHeader({ market }: { market: Market }) {
   return (
     <section className={styles.hatched}>
-      <HatchingChick decorative />
       <div>
-        <span className={styles.kicker}>The market hatched</span>
+        <span className={styles.kicker}>The market graduated</span>
         <h2>Order book now live</h2>
         <p>
           The bonding curve handed off{' '}

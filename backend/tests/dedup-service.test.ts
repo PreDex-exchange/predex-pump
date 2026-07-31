@@ -110,6 +110,23 @@ describe('retrieve-then-judge dedup service', () => {
     });
   });
 
+  it('recognizes the demo Manchester United alias without OpenAI', async () => {
+    const service = await serviceWithMarket(
+      'Will Manchester United score above 70 Premier League goals in the 2026-27 season?',
+      '77',
+    );
+
+    await expect(
+      service.check(
+        'Will Man Utd score over 70 goals in the 2026/27 Premier League season?',
+      ),
+    ).resolves.toMatchObject({
+      available: true,
+      isDuplicate: true,
+      canonicalMarketId: '77',
+    });
+  });
+
   it.each([
     // Objective fields stay a hard gate: a difference here is a different fact.
     ['strike', 'Will BTC close above $75k Friday?', 'Different strike'],

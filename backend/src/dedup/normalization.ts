@@ -29,6 +29,10 @@ const SUBJECT_ALIASES: readonly {
   { canonical: 'joe biden', pattern: /\b(?:joe\s+biden|biden)\b/u },
   { canonical: 's&p 500', pattern: /\b(?:s&p\s*500|spx)\b/u },
   { canonical: 'nasdaq 100', pattern: /\b(?:nasdaq\s*100|ndx)\b/u },
+  {
+    canonical: 'manchester united',
+    pattern: /\b(?:manchester\s+united|man\s+utd|man\s+united)\b/u,
+  },
 ];
 
 const COMPARATOR_ALIASES: readonly [RegExp, string][] = [
@@ -483,6 +487,10 @@ function canonicalizeAliases(value: string): string {
     .replace(/(?<![<>=])<(?!=)/gu, ' below ')
     .replace(/\b(?:bitcoin)\b/gu, 'btc')
     .replace(/\b(?:ethereum|ether)\b/gu, 'eth')
+    .replace(
+      /\b(?:manchester\s+united|man\s+utd|man\s+united)\b/gu,
+      'manchester_united',
+    )
     .replace(/\b(?:greater\s+than|higher\s+than|over|exceeds?)\b/gu, 'above')
     .replace(/\b(?:less\s+than|lower\s+than|under)\b/gu, 'below')
     .replace(/\b(?:closing|closed|closes)\b/gu, 'close')

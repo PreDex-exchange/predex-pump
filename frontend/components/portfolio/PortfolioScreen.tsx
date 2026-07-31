@@ -7,14 +7,13 @@ import type {
   Trade,
 } from '@predex-pump/shared/domain';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
 import { ActivityList } from '@/components/feed/ActivityList';
 import { OutcomeBadge } from '@/components/ui/Badge';
 import { Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { StatePanel } from '@/components/ui/StatePanel';
 import {
@@ -75,7 +74,6 @@ function tradeToActivity(trade: Trade): ActivityEvent {
 }
 
 export function PortfolioScreen() {
-  const [redeemOpen, setRedeemOpen] = useState(false);
   const { address, isConnected } = useWalletAccount();
   const {
     connect,
@@ -147,6 +145,7 @@ export function PortfolioScreen() {
   const redeemableValueRaw = redeemableRows
     .reduce((total, row) => total + BigInt(row.currentValueRaw), 0n)
     .toString();
+  const redeemMarketId = redeemableRows[0]?.position.marketId;
 
   const activityEvents = useMemo(() => {
     const byId = new Map<string, ActivityEvent>();
@@ -302,7 +301,7 @@ export function PortfolioScreen() {
         </Card>
       </section>
 
-      {redeemableRows.length > 0 && (
+      {redeemableRows.length > 0 && redeemMarketId && (
         <Card className={styles.redeemCallout} quiet>
           <div className={styles.redeemIcon} aria-hidden="true">
             ✓
@@ -313,7 +312,7 @@ export function PortfolioScreen() {
               <NumberDisplay size="body">
                 {formatUsdc(redeemableValueRaw)} USDC
               </NumberDisplay>{' '}
-              will be redeemable
+              ready to redeem
             </h2>
             <p>
               {redeemableRows.length}{' '}
@@ -321,9 +320,12 @@ export function PortfolioScreen() {
               resolution.
             </p>
           </div>
-          <Button onClick={() => setRedeemOpen(true)} variant="mint">
-            Review · coming soon
-          </Button>
+          <Link
+            className={buttonClassName('mint')}
+            href={`/market/${redeemMarketId}`}
+          >
+            Redeem on market
+          </Link>
         </Card>
       )}
 
@@ -424,42 +426,6 @@ export function PortfolioScreen() {
         />
       </section>
 
-      <ConfirmModal
-        confirmLabel="Close preview"
-        onClose={() => setRedeemOpen(false)}
-        onConfirm={() =>
-          console.info('Deferred CTF redemption preview', {
-            markets: redeemableRows.map((row) => row.position.marketId),
-          })
-        }
-        open={redeemOpen}
-        title="Redeem resolved positions"
-      >
-        <p className={styles.redeemIntro}>
-          Review the resolved outcome tokens. Redemption is coming soon and remains deferred in
-          Phase C3.
-        </p>
-        <ul className={styles.redeemList}>
-          {redeemableRows.map((row) => (
-            <li key={`${row.position.marketId}:${row.position.outcome}`}>
-              <div>
-                <OutcomeBadge outcome={row.position.outcome} />
-                <span>{row.market?.question ?? `Market #${row.position.marketId}`}</span>
-              </div>
-              <NumberDisplay size="small">
-                {formatUsdc(row.currentValueRaw)} USDC
-              </NumberDisplay>
-            </li>
-          ))}
-        </ul>
-        <div className={styles.redeemTotal}>
-          <span>Total redeemable</span>
-          <NumberDisplay size="body">{formatUsdc(redeemableValueRaw)} USDC</NumberDisplay>
-        </div>
-        <p className={styles.redeemNote}>
-          Coming soon. No Conditional Tokens redemption transaction will be sent from this preview.
-        </p>
-      </ConfirmModal>
     </main>
   );
 }

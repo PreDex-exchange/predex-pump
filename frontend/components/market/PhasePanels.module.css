@@ -13,12 +13,6 @@
   box-shadow: var(--shadow-card);
 }
 
-.hatched > svg {
-  width: 142px;
-  flex: none;
-  margin-block: -32px;
-}
-
 .hatched h2 {
   margin: 1px 0 4px;
   font-family: var(--font-fredoka), sans-serif;

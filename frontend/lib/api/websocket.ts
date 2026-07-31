@@ -8,6 +8,14 @@ const DEFAULT_WS_URL = 'ws://localhost:3001/ws';
 const MAX_RECONNECT_DELAY_MS = 15_000;
 
 export type BackendEventListener = (message: ServerMessage) => void;
+export type BackendConnectionStatus =
+  | 'idle'
+  | 'connecting'
+  | 'live'
+  | 'reconnecting';
+export type BackendConnectionListener = (
+  status: BackendConnectionStatus,
+) => void;
 
 function publicUrl(value: string | undefined, fallback: string) {
   return value?.trim() || fallback;
@@ -37,8 +45,18 @@ export const backendWsUrl = publicUrl(
 class BackendWebSocketClient {
   private socket: WebSocket | null = null;
   private readonly listeners = new Map<Channel, Set<BackendEventListener>>();
+  private readonly connectionListeners = new Set<BackendConnectionListener>();
+  private connectionStatus: BackendConnectionStatus = 'idle';
   private reconnectAttempt = 0;
   private reconnectTimer: number | null = null;
+
+  subscribeStatus(listener: BackendConnectionListener) {
+    this.connectionListeners.add(listener);
+    listener(this.connectionStatus);
+    return () => {
+      this.connectionListeners.delete(listener);
+    };
+  }
 
   subscribe(channel: Channel, listener: BackendEventListener) {
     const channelListeners =
@@ -76,6 +94,10 @@ class BackendWebSocketClient {
       return;
     }
 
+    this.setConnectionStatus(
+      this.reconnectAttempt === 0 ? 'connecting' : 'reconnecting',
+    );
+
     let socket: WebSocket;
     try {
       socket = new WebSocket(backendWsUrl);
@@ -88,6 +110,7 @@ class BackendWebSocketClient {
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return;
       this.reconnectAttempt = 0;
+      this.setConnectionStatus('live');
       this.send('subscribe', [...this.listeners.keys()]);
     });
 
@@ -109,6 +132,7 @@ class BackendWebSocketClient {
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.setConnectionStatus('reconnecting');
       this.scheduleReconnect();
     });
 
@@ -153,6 +177,13 @@ class BackendWebSocketClient {
     const socket = this.socket;
     this.socket = null;
     socket?.close(1000, 'No active subscriptions');
+    this.setConnectionStatus('idle');
+  }
+
+  private setConnectionStatus(status: BackendConnectionStatus) {
+    if (status === this.connectionStatus) return;
+    this.connectionStatus = status;
+    for (const listener of this.connectionListeners) listener(status);
   }
 }
 

@@ -117,7 +117,7 @@ export function shortAddress(address: string, leading = 4, trailing = 3) {
 
 export function phaseLabel(phase: MarketPhase) {
   const labels: Record<MarketPhase, string> = {
-    Opened: 'Incubating',
+    Opened: 'Bootstrap',
     Graduated: 'Graduated',
     ResolvedObserved: 'Resolved',
     ClosedOut: 'Closed out',

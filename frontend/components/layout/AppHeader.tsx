@@ -9,6 +9,7 @@ import styles from './AppHeader.module.css';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Feed' },
+  { href: '/activity', label: 'Agent activity' },
   { href: '/create', label: 'Create' },
   { href: '/portfolio', label: 'Portfolio' },
 ] as const;

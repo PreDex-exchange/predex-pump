@@ -3,7 +3,6 @@
 import type { Market, PricePoint } from '@predex-pump/shared/domain';
 import Link from 'next/link';
 
-import { CrackingEgg } from '@/components/mascot/HatchingChick';
 import { PhaseBadge } from '@/components/ui/Badge';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { usePriceHistory } from '@/lib/api/hooks';
@@ -44,13 +43,11 @@ function phaseDataValue(market: Market) {
 interface MarketCardProps {
   market: Market;
   href?: string | null;
-  showMascot?: boolean;
 }
 
 export function MarketCard({
   market,
   href = `/market/${market.id}`,
-  showMascot = true,
 }: MarketCardProps) {
   const { data: priceHistory } = usePriceHistory(market.id);
   const graduation = graduationPercent(market);
@@ -107,9 +104,7 @@ export function MarketCard({
                 aria-valuemin={0}
                 aria-valuenow={graduation}
               >
-                <span style={{ width: `${graduation}%` }}>
-                  {showMascot && <CrackingEgg progress={graduation} />}
-                </span>
+                <span style={{ width: `${graduation}%` }} />
               </div>
               <NumberDisplay className={styles.percent} size="small" tone="yes">
                 {graduation}%

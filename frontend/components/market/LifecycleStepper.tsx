@@ -4,12 +4,12 @@ import styles from './LifecycleStepper.module.css';
 
 const STEPS = [
   {
-    label: 'Incubating',
-    description: 'bonding curve · egg cracking',
+    label: 'Bootstrap',
+    description: 'LMSR curve live',
     icon: (
       <svg aria-hidden="true" viewBox="0 0 32 32">
-        <path d="M16 3C9 3 6 12 6 19c0 7 4 11 10 11s10-4 10-11C26 12 23 3 16 3Z" fill="#ffc24b" stroke="currentColor" strokeWidth="2" />
-        <path d="m8 17 5-4 4 5 5-5 3 4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+        <path d="M5 25V7M5 25h22" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+        <path d="m8 21 5-6 4 3 7-9" fill="none" stroke="#ff6b57" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
       </svg>
     ),
   },
@@ -18,11 +18,8 @@ const STEPS = [
     description: 'order book opens',
     icon: (
       <svg aria-hidden="true" viewBox="0 0 32 32">
-        <circle cx="16" cy="15" fill="#ffc24b" r="9" stroke="currentColor" strokeWidth="2" />
-        <circle cx="13" cy="14" fill="currentColor" r="1.4" />
-        <circle cx="19" cy="14" fill="currentColor" r="1.4" />
-        <path d="m14 17 4 0-2 3z" fill="#ff6b57" stroke="currentColor" strokeLinejoin="round" strokeWidth="1" />
-        <path d="M7 22 11 19l5 4 5-4 4 3c-2 5-16 5-18 0Z" fill="#fff" stroke="currentColor" strokeLinejoin="round" strokeWidth="2" />
+        <rect fill="#e4f6f0" height="20" rx="4" stroke="currentColor" strokeWidth="2" width="24" x="4" y="6" />
+        <path d="M9 12h14M9 16h9M9 20h12" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
       </svg>
     ),
   },
@@ -31,8 +28,8 @@ const STEPS = [
     description: 'committee settles',
     icon: (
       <svg aria-hidden="true" viewBox="0 0 32 32">
-        <path d="M7 20c6 1 10-3 12-9 1 5 3 7 7 8-4 2-8 5-10 9-1-4-4-6-9-8Z" fill="#e6f0fb" stroke="currentColor" strokeLinejoin="round" strokeWidth="2" />
-        <path d="m5 25 6-3" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+        <circle cx="16" cy="16" fill="#e6f0fb" r="11" stroke="currentColor" strokeWidth="2" />
+        <path d="m10 16 4 4 8-9" fill="none" stroke="#17b890" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
       </svg>
     ),
   },

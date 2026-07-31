@@ -4,7 +4,6 @@ import type { Market } from '@predex-pump/shared/domain';
 import { useState } from 'react';
 import { useAccount } from 'wagmi';
 
-import { CrackingEgg } from '@/components/mascot/HatchingChick';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -76,18 +75,15 @@ export function GraduationPanel({ market }: { market: Market }) {
   return (
     <>
       <Card className={styles.card}>
-        <div className={styles.eggWrap}>
-          <CrackingEgg progress={progress} />
-        </div>
         <div className={styles.body}>
-          <h2>This market is incubating</h2>
+          <h2>Bootstrap market</h2>
           <p>
             It trades on a bonding curve now. Once the live activity and time gates pass, a
             one-time{' '}
             <strong className="numeric">
               {formatUsdc(market.params.graduationTollRaw)} USDC
             </strong>{' '}
-            toll hatches it into the order book.
+            toll graduates it into the order book.
           </p>
           <div
             aria-label={`${progress}% to graduation`}

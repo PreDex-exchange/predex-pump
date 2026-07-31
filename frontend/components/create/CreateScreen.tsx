@@ -769,7 +769,7 @@ export function CreateScreen() {
                 </small>
               )}
             </div>
-            <MarketCard href={null} market={previewMarket} showMascot={false} />
+            <MarketCard href={null} market={previewMarket} />
           </section>
         </div>
       </div>

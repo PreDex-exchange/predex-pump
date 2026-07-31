@@ -248,15 +248,6 @@
   background: linear-gradient(90deg, var(--reward), var(--yes));
 }
 
-.bar svg {
-  position: absolute;
-  top: 50%;
-  right: -7px;
-  width: 18px;
-  transform: translateY(-50%);
-  filter: none;
-}
-
 .percent {
   min-width: 34px;
   text-align: right;
