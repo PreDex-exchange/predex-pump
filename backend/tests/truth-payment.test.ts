@@ -1,3 +1,4 @@
+import { BatchEvmScheme } from '@circle-fin/x402-batching/client';
 import type { TruthSignalResponse } from '@predex-pump/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,17 +27,21 @@ import { seedContractData } from './fixtures.js';
 const SELLER = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const PAYER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const TRANSACTION = `0x${'c'.repeat(64)}`;
+const SIGNATURE = `0x${'1'.repeat(130)}` as `0x${string}`;
 
 describe('Circle x402 truth seller', () => {
   let app: FastifyInstance;
   let gate: CircleTruthPaymentGate;
   const settle = vi.fn<CircleFacilitator['settle']>();
+  const logInfo = vi.fn();
+  const logWarn = vi.fn();
 
   beforeAll(async () => {
     gate = new CircleTruthPaymentGate({
       sellerAddress: SELLER,
       amountRaw: 100n,
       facilitator: { settle },
+      logger: { info: logInfo, warn: logWarn },
     });
     app = await buildServer({
       prisma: testPrisma,
@@ -48,6 +53,8 @@ describe('Circle x402 truth seller', () => {
 
   beforeEach(async () => {
     settle.mockReset();
+    logInfo.mockReset();
+    logWarn.mockReset();
     settle.mockResolvedValue({
       success: true,
       payer: PAYER,
@@ -63,13 +70,16 @@ describe('Circle x402 truth seller', () => {
     await testPrisma.$disconnect();
   });
 
-  function validPaymentHeader(): string {
-    return encodePaymentHeader({
-      x402Version: 2,
-      resource: { url: '/truth/1' },
-      accepted: gate.requirements,
-      payload: { authorization: { from: PAYER } },
+  async function validPaymentPayload() {
+    const scheme = new BatchEvmScheme({
+      address: PAYER,
+      signTypedData: vi.fn(async () => SIGNATURE),
     });
+    return scheme.createPaymentPayload(2, gate.requirements);
+  }
+
+  async function validPaymentHeader(): Promise<string> {
+    return encodePaymentHeader(await validPaymentPayload());
   }
 
   it('returns 402 plus verified Arc Testnet Gateway requirements when unpaid', async () => {
@@ -110,22 +120,48 @@ describe('Circle x402 truth seller', () => {
     expect(settle).not.toHaveBeenCalled();
   });
 
-  it('returns the signal only after the mocked Gateway facilitator settles', async () => {
+  it('passes the real Circle SDK payload shape to the Gateway facilitator', async () => {
+    const paymentPayload = await validPaymentPayload();
+    expect(Object.keys(paymentPayload)).toEqual(['x402Version', 'payload']);
+    expect(Object.keys(paymentPayload.payload)).toEqual([
+      'authorization',
+      'signature',
+    ]);
+    expect(Object.keys(paymentPayload.payload.authorization)).toEqual([
+      'from',
+      'to',
+      'value',
+      'validAfter',
+      'validBefore',
+      'nonce',
+    ]);
+    expect(paymentPayload).not.toHaveProperty('accepted');
+
     const response = await app.inject({
       method: 'GET',
       url: '/truth/1',
-      headers: { [PAYMENT_SIGNATURE_HEADER]: validPaymentHeader() },
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentHeader(paymentPayload),
+      },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json<TruthSignalResponse>().fairValueYesRaw).toBe('614166');
     expect(settle).toHaveBeenCalledWith(
-      expect.objectContaining({
-        x402Version: 2,
-        accepted: gate.requirements,
-      }),
+      paymentPayload,
       gate.requirements,
     );
+    expect(settle).toHaveBeenCalledOnce();
+    expect(logInfo).toHaveBeenCalledWith(
+      {
+        success: true,
+        errorReason: null,
+        payer: PAYER,
+        transaction: TRANSACTION,
+      },
+      'Circle truth payment settlement succeeded',
+    );
+    expect(logWarn).not.toHaveBeenCalled();
     const paymentResponse = decodePaymentHeader(
       response.headers[PAYMENT_RESPONSE_HEADER.toLowerCase()] as string,
     );
@@ -137,27 +173,44 @@ describe('Circle x402 truth seller', () => {
     });
   });
 
-  it('rejects malformed or mismatched payments without calling settlement', async () => {
+  it('rejects malformed payments without calling settlement', async () => {
     const malformed = await app.inject({
       method: 'GET',
       url: '/truth/1',
       headers: { [PAYMENT_SIGNATURE_HEADER]: 'not-base64-json' },
     });
     expect(malformed.statusCode).toBe(402);
+    expect(settle).not.toHaveBeenCalled();
+    expect(logInfo).not.toHaveBeenCalled();
+    expect(logWarn).not.toHaveBeenCalled();
+  });
 
-    const mismatched = await app.inject({
+  it('logs a rejected facilitator result without logging the signature', async () => {
+    settle.mockResolvedValueOnce({
+      success: false,
+      errorReason: 'Gateway rejected payment',
+      payer: PAYER,
+      transaction: '',
+      network: 'eip155:5042002',
+    });
+
+    const response = await app.inject({
       method: 'GET',
       url: '/truth/1',
-      headers: {
-        [PAYMENT_SIGNATURE_HEADER]: encodePaymentHeader({
-          x402Version: 2,
-          accepted: { ...gate.requirements, amount: '1' },
-          payload: {},
-        }),
-      },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: await validPaymentHeader() },
     });
-    expect(mismatched.statusCode).toBe(402);
-    expect(settle).not.toHaveBeenCalled();
+
+    expect(response.statusCode).toBe(402);
+    expect(logWarn).toHaveBeenCalledWith(
+      {
+        success: false,
+        errorReason: 'Gateway rejected payment',
+        payer: PAYER,
+        transaction: '',
+      },
+      'Circle truth payment settlement rejected',
+    );
+    expect(JSON.stringify(logWarn.mock.calls)).not.toContain(SIGNATURE);
   });
 
   it('returns 503 without leaking the signal when the payment layer is down', async () => {
@@ -166,7 +219,7 @@ describe('Circle x402 truth seller', () => {
     const response = await app.inject({
       method: 'GET',
       url: '/truth/1',
-      headers: { [PAYMENT_SIGNATURE_HEADER]: validPaymentHeader() },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: await validPaymentHeader() },
     });
 
     expect(response.statusCode).toBe(503);

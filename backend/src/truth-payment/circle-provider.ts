@@ -26,10 +26,7 @@ export const DEFAULT_GATEWAY_TESTNET_URL =
 
 interface CirclePaymentPayload {
   x402Version: number;
-  resource?: Record<string, unknown>;
-  accepted?: Record<string, unknown>;
   payload: Record<string, unknown>;
-  extensions?: Record<string, unknown>;
 }
 
 interface CircleSettleResult {
@@ -47,12 +44,27 @@ export interface CircleFacilitator {
   ): Promise<CircleSettleResult>;
 }
 
+export interface CircleTruthPaymentLogger {
+  info(fields: Record<string, unknown>, message: string): void;
+  warn(fields: Record<string, unknown>, message: string): void;
+}
+
 export interface CircleTruthPaymentGateOptions {
   sellerAddress: Address;
   amountRaw: bigint;
   facilitatorUrl?: string;
   facilitator?: CircleFacilitator;
+  logger?: CircleTruthPaymentLogger;
 }
+
+const DEFAULT_LOGGER: CircleTruthPaymentLogger = {
+  info(fields, message) {
+    console.info(`[truth-payment] ${message}`, fields);
+  },
+  warn(fields, message) {
+    console.warn(`[truth-payment] ${message}`, fields);
+  },
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -60,27 +72,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function sameAddress(left: unknown, right: string): boolean {
   return typeof left === 'string' && left.toLowerCase() === right.toLowerCase();
-}
-
-function acceptedMatches(
-  accepted: unknown,
-  expected: TruthPaymentRequirements,
-): boolean {
-  if (!isRecord(accepted) || !isRecord(accepted.extra)) return false;
-  return (
-    accepted.scheme === expected.scheme &&
-    accepted.network === expected.network &&
-    sameAddress(accepted.asset, expected.asset) &&
-    accepted.amount === expected.amount &&
-    sameAddress(accepted.payTo, expected.payTo) &&
-    accepted.maxTimeoutSeconds === expected.maxTimeoutSeconds &&
-    accepted.extra.name === expected.extra.name &&
-    accepted.extra.version === expected.extra.version &&
-    sameAddress(
-      accepted.extra.verifyingContract,
-      expected.extra.verifyingContract,
-    )
-  );
 }
 
 function parsePaymentPayload(encoded: string): CirclePaymentPayload | null {
@@ -103,6 +94,7 @@ function parsePaymentPayload(encoded: string): CirclePaymentPayload | null {
 export class CircleTruthPaymentGate implements TruthPaymentGate {
   readonly requirements: TruthPaymentRequirements;
   private readonly facilitator: CircleFacilitator;
+  private readonly logger: CircleTruthPaymentLogger;
 
   constructor(options: CircleTruthPaymentGateOptions) {
     if (options.amountRaw <= 0n || options.amountRaw >= 10_000n) {
@@ -140,6 +132,7 @@ export class CircleTruthPaymentGate implements TruthPaymentGate {
       (new BatchFacilitatorClient({
         url: options.facilitatorUrl ?? DEFAULT_GATEWAY_TESTNET_URL,
       }) as unknown as CircleFacilitator);
+    this.logger = options.logger ?? DEFAULT_LOGGER;
   }
 
   paymentRequiredHeader(resourceUrl: string): string {
@@ -166,14 +159,24 @@ export class CircleTruthPaymentGate implements TruthPaymentGate {
         network: this.requirements.network,
       };
     }
-    if (!acceptedMatches(payload.accepted, this.requirements)) {
-      return {
-        success: false,
-        errorReason: 'Payment requirements do not match this truth resource.',
-        network: this.requirements.network,
-      };
-    }
     const result = await this.facilitator.settle(payload, this.requirements);
+    const settlementLog = {
+      success: result.success,
+      errorReason: result.errorReason ?? null,
+      payer: result.payer ?? null,
+      transaction: result.transaction,
+    };
+    if (result.success) {
+      this.logger.info(
+        settlementLog,
+        'Circle truth payment settlement succeeded',
+      );
+    } else {
+      this.logger.warn(
+        settlementLog,
+        'Circle truth payment settlement rejected',
+      );
+    }
     return {
       success: result.success,
       ...(result.errorReason === undefined
