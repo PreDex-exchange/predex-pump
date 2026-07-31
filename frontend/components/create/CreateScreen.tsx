@@ -9,14 +9,13 @@ import { useState, type FormEvent } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
 import { MarketCard } from '@/components/feed/MarketCard';
-import { CrackingEgg, HatchingChick } from '@/components/mascot/HatchingChick';
 import { Badge } from '@/components/ui/Badge';
 import { Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { TxStatus } from '@/components/ui/TxStatus';
-import { useConfig } from '@/lib/api/hooks';
+import { useConfig, useDedupCheck } from '@/lib/api/hooks';
 import { arcTestnet } from '@/lib/chain/arc';
 import {
   buildMarketMetadata,
@@ -26,6 +25,7 @@ import { useTxFlow } from '@/lib/chain/useTxFlow';
 import { formatDateTime, formatUsdc, parseUsdcInput } from '@/lib/format';
 
 import styles from './CreateScreen.module.css';
+import { DedupHint } from './DedupHint';
 
 const QUESTION_MAX_LENGTH = 180;
 const CATEGORIES = [
@@ -242,6 +242,7 @@ export function CreateScreen() {
     error: configError,
     refetch: refetchConfig,
   } = useConfig();
+  const { data: dedupResult } = useDedupCheck(question);
 
   const seedRaw = parseUsdcInput(seed);
   const minTradingWindowSeconds = registryWindowBound(
@@ -372,9 +373,6 @@ export function CreateScreen() {
     return (
       <main className={`${styles.page} ${styles.successPage}`}>
         <Card className={styles.successCard}>
-          <div className={styles.successArt}>
-            <HatchingChick decorative />
-          </div>
           <div className={styles.successCopy}>
             <Badge tone="yes">Arc transaction confirmed</Badge>
             <h1>Your market is incubating.</h1>
@@ -427,7 +425,6 @@ export function CreateScreen() {
             number before this launch is signed and submitted to the live Arc registry.
           </p>
         </div>
-        <CrackingEgg progress={34} />
       </section>
 
       <div className={styles.layout}>
@@ -471,6 +468,7 @@ export function CreateScreen() {
                 </span>
               )}
             </label>
+            <DedupHint response={dedupResult} />
 
             <fieldset className={`${styles.field} ${styles.durationField}`}>
               <legend className={styles.labelRow}>
@@ -771,7 +769,7 @@ export function CreateScreen() {
                 </small>
               )}
             </div>
-            <MarketCard href={null} market={previewMarket} />
+            <MarketCard href={null} market={previewMarket} showMascot={false} />
           </section>
         </div>
       </div>

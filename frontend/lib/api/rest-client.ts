@@ -2,6 +2,8 @@ import type {
   AccountResponse,
   ActivityQuery,
   ActivityResponse,
+  DedupCheckRequest,
+  DedupCheckResponse,
   HealthResponse,
   ListMarketsQuery,
   ListMarketsResponse,
@@ -18,6 +20,12 @@ import type { BackendApiClient } from './types';
 const DEFAULT_API_URL = 'http://localhost:3001';
 
 type QueryValue = string | number | undefined;
+
+interface RequestOptions {
+  notFoundAsNull?: boolean;
+  method?: 'GET' | 'POST';
+  body?: unknown;
+}
 
 function publicUrl(value: string | undefined, fallback: string) {
   const normalized = value?.trim() || fallback;
@@ -62,13 +70,23 @@ export class BackendApiError extends Error {
 
 async function request<T>(
   path: string,
-  options: { notFoundAsNull?: boolean } = {},
+  options: RequestOptions = {},
 ): Promise<T> {
   let response: Response;
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+  };
+  if (options.body !== undefined) {
+    headers['content-type'] = 'application/json';
+  }
   try {
     response = await fetch(`${backendApiUrl}${path}`, {
       cache: 'no-store',
-      headers: { accept: 'application/json' },
+      ...(options.method === undefined ? {} : { method: options.method }),
+      headers,
+      ...(options.body === undefined
+        ? {}
+        : { body: JSON.stringify(options.body) }),
     });
   } catch {
     throw new Error(`The indexed API at ${backendApiUrl} could not be reached.`);
@@ -100,6 +118,13 @@ export const backendRestClient: BackendApiClient = {
         cursor: query.cursor,
       }),
     );
+  },
+
+  dedupCheck(input: DedupCheckRequest): Promise<DedupCheckResponse> {
+    return request(routes.marketDedupCheck(), {
+      method: 'POST',
+      body: input,
+    });
   },
 
   getMarket(id: string): Promise<MarketDetailResponse | null> {

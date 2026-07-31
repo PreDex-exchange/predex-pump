@@ -4,6 +4,8 @@ import {
   type ActivityQuery,
   type ActivityResponse,
   type ConfigResponse,
+  type DedupCheckRequest,
+  type DedupCheckResponse,
   type HealthResponse,
   type ListMarketsQuery,
   type ListMarketsResponse,
@@ -18,6 +20,12 @@ const DEFAULT_API_URL = 'http://localhost:3001';
 
 type QueryValue = string | number | undefined;
 
+interface RequestOptions {
+  notFoundAsNull?: boolean;
+  method?: 'GET' | 'POST';
+  body?: unknown;
+}
+
 export interface PredexRestClientOptions {
   baseUrl?: string;
   fetch?: typeof globalThis.fetch;
@@ -25,6 +33,7 @@ export interface PredexRestClientOptions {
 
 export interface PredexRestClient {
   listMarkets(query?: ListMarketsQuery): Promise<ListMarketsResponse>;
+  dedupCheck(input: DedupCheckRequest): Promise<DedupCheckResponse>;
   getMarket(id: string): Promise<MarketDetailResponse | null>;
   getAccount(address: string): Promise<AccountResponse>;
   getOrderBook(marketId: string): Promise<MarketBookResponse>;
@@ -87,10 +96,20 @@ class FetchPredexRestClient implements PredexRestClient {
 
   private async request<T>(
     path: string,
-    options: { notFoundAsNull?: boolean } = {},
+    options: RequestOptions = {},
   ): Promise<T> {
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+    };
+    if (options.body !== undefined) {
+      headers['content-type'] = 'application/json';
+    }
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-      headers: { accept: 'application/json' },
+      ...(options.method === undefined ? {} : { method: options.method }),
+      headers,
+      ...(options.body === undefined
+        ? {}
+        : { body: JSON.stringify(options.body) }),
     });
     if (response.status === 404 && options.notFoundAsNull) {
       return null as T;
@@ -119,6 +138,27 @@ class FetchPredexRestClient implements PredexRestClient {
         cursor: query.cursor,
       }),
     );
+  }
+
+  async dedupCheck(input: DedupCheckRequest) {
+    try {
+      return await this.request<DedupCheckResponse>(
+        routes.marketDedupCheck(),
+        {
+          method: 'POST',
+          body: input,
+        },
+      );
+    } catch {
+      // Dedup is advisory. A transport or backend failure must never become a
+      // market-creation gate for SDK callers.
+      return {
+        available: false,
+        isDuplicate: false,
+        canonicalMarketId: null,
+        candidates: [],
+      };
+    }
   }
 
   getMarket(id: string) {

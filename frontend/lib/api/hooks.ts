@@ -4,6 +4,7 @@ import type {
   AccountResponse,
   ActivityQuery,
   ActivityResponse,
+  DedupCheckResponse,
   HealthResponse,
   ListMarketsQuery,
   ListMarketsResponse,
@@ -22,7 +23,7 @@ import {
   useQueryClient,
   type QueryKey,
 } from '@tanstack/react-query';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { backendRestClient as apiClient } from './rest-client';
 import { backendWsClient } from './websocket';
@@ -30,6 +31,7 @@ import { backendWsClient } from './websocket';
 const MARKET_BACKGROUND_REFRESH_MS = 60_000;
 const MARKET_DETAIL_FALLBACK_REFRESH_MS = 15_000;
 const HEALTH_REFRESH_MS = 15_000;
+export const DEDUP_CHECK_DEBOUNCE_MS = 500;
 
 interface ResourceState<T> {
   data: T | null;
@@ -76,6 +78,40 @@ export function useMarkets(query: ListMarketsQuery = {}) {
     load,
     { refetchInterval: MARKET_BACKGROUND_REFRESH_MS },
   );
+}
+
+export function useDedupCheck(
+  question: string,
+  debounceMs = DEDUP_CHECK_DEBOUNCE_MS,
+): ResourceState<DedupCheckResponse> {
+  const normalizedQuestion = question.trim();
+  const [debouncedQuestion, setDebouncedQuestion] = useState('');
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedQuestion(normalizedQuestion);
+    }, normalizedQuestion ? debounceMs : 0);
+    return () => window.clearTimeout(timeout);
+  }, [debounceMs, normalizedQuestion]);
+
+  const query = useQuery<DedupCheckResponse, Error>({
+    queryKey: ['dedup-check', debouncedQuestion],
+    queryFn: () =>
+      apiClient.dedupCheck({ question: debouncedQuestion }),
+    enabled: debouncedQuestion.length > 0,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const isCurrent = normalizedQuestion === debouncedQuestion;
+
+  return {
+    data: isCurrent ? (query.data ?? null) : null,
+    isLoading: isCurrent && query.isLoading,
+    error: isCurrent ? query.error : null,
+    refetch: () => {
+      void query.refetch();
+    },
+  };
 }
 
 export function useMarket(id: string) {

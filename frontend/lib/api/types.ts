@@ -3,6 +3,8 @@ import type {
   ActivityQuery,
   ActivityResponse,
   ConfigResponse,
+  DedupCheckRequest,
+  DedupCheckResponse,
   HealthResponse,
   ListMarketsQuery,
   ListMarketsResponse,
@@ -15,6 +17,7 @@ import type {
 
 export interface ApiClient {
   listMarkets(query?: ListMarketsQuery): Promise<ListMarketsResponse>;
+  dedupCheck(input: DedupCheckRequest): Promise<DedupCheckResponse>;
   getMarket(id: string): Promise<MarketDetailResponse | null>;
   getAccount(address: string): Promise<AccountResponse>;
   getOrderBook(marketId: string): Promise<MarketBookResponse>;

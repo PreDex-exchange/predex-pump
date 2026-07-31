@@ -8,22 +8,19 @@ importers:
 
   .:
     dependencies:
+      '@predex-pump/agent-sdk':
+        specifier: file:../../agent-sdk
+        version: file:../../agent-sdk(typescript@5.9.3)
       '@predex-pump/shared':
-        specifier: file:../shared
-        version: file:../shared(typescript@5.9.3)
+        specifier: file:../../shared
+        version: file:../../shared(typescript@5.9.3)
       viem:
         specifier: 2.55.8
         version: 2.55.8(typescript@5.9.3)
-      ws:
-        specifier: 8.21.1
-        version: 8.21.1
     devDependencies:
       '@types/node':
         specifier: 24.10.1
         version: 24.10.1
-      '@types/ws':
-        specifier: 8.18.1
-        version: 8.18.1
       tsx:
         specifier: 4.23.1
         version: 4.23.1
@@ -229,8 +226,12 @@ packages:
   '@oxc-project/types@0.142.0':
     resolution: {integrity: sha512-7W+2q5AKQVU36fkaryontrHn3YDt1RyUYXatw9i5H8ocYe2sPKSFB6eS8WNPeRKiN1qAWWZUPm7gwFzJGrccqQ==}
 
-  '@predex-pump/shared@file:../shared':
-    resolution: {directory: ../shared, type: directory}
+  '@predex-pump/agent-sdk@file:../../agent-sdk':
+    resolution: {directory: ../../agent-sdk, type: directory}
+    engines: {node: '>=20'}
+
+  '@predex-pump/shared@file:../../shared':
+    resolution: {directory: ../../shared, type: directory}
 
   '@rolldown/binding-android-arm64@1.2.1':
     resolution: {integrity: sha512-02hOeOSryYxVrOIphmLAsqnCJWxwlzFk+pEt/N/i6OgT3lShHO7xGCU5cpgchRDHboAEbSjzgGh+O/u1GswQmA==}
@@ -355,9 +356,6 @@ packages:
 
   '@types/node@24.10.1':
     resolution: {integrity: sha512-GNWcUTRBgIRJD5zj+Tq0fKOJ5XZajIiBroOF0yvj2bSU1WvNdYS/dn9UxwsujGW4JX06dnHyjV2y9rRaybH0iQ==}
-
-  '@types/ws@8.18.1':
-    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@vitest/expect@4.1.0':
     resolution: {integrity: sha512-EIxG7k4wlWweuCLG9Y5InKFwpMEOyrMb6ZJ1ihYu02LVj/bzUwn2VMU+13PinsjRW75XnITeFrQBMH5+dLvCDA==}
@@ -840,7 +838,18 @@ snapshots:
 
   '@oxc-project/types@0.142.0': {}
 
-  '@predex-pump/shared@file:../shared(typescript@5.9.3)':
+  '@predex-pump/agent-sdk@file:../../agent-sdk(typescript@5.9.3)':
+    dependencies:
+      '@predex-pump/shared': file:../../shared(typescript@5.9.3)
+      viem: 2.55.8(typescript@5.9.3)
+      ws: 8.21.1
+    transitivePeerDependencies:
+      - bufferutil
+      - typescript
+      - utf-8-validate
+      - zod
+
+  '@predex-pump/shared@file:../../shared(typescript@5.9.3)':
     dependencies:
       viem: 2.55.8(typescript@5.9.3)
     transitivePeerDependencies:
@@ -932,10 +941,6 @@ snapshots:
   '@types/node@24.10.1':
     dependencies:
       undici-types: 7.16.0
-
-  '@types/ws@8.18.1':
-    dependencies:
-      '@types/node': 24.10.1
 
   '@vitest/expect@4.1.0':
     dependencies:

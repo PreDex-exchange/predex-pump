@@ -17,11 +17,6 @@
   max-width: 720px;
 }
 
-.hero > svg {
-  width: 104px;
-  flex: none;
-}
-
 .kicker,
 .step {
   color: var(--brand-ink);
@@ -294,6 +289,86 @@
   color: var(--error);
 }
 
+.dedupHint {
+  padding: 14px;
+  margin: -8px 0 20px;
+  border: 2px solid var(--reward);
+  border-radius: var(--radius-input);
+  background: #fff8e8;
+  box-shadow: 0 5px 18px rgb(83 57 26 / 7%);
+}
+
+.dedupHint strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.dedupHint p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.dedupCandidates {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0;
+  margin: var(--space-3) 0 0;
+  list-style: none;
+}
+
+.dedupCandidates li {
+  padding-top: var(--space-2);
+  border-top: 1px solid rgb(83 57 26 / 14%);
+}
+
+.dedupCandidateMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.dedupCandidateMeta a {
+  color: var(--brand-ink);
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.dedupCandidateMeta > span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dedupCandidates small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.dedupTradeLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--brand-ink);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.dedupTradeLink:hover {
+  text-decoration: underline;
+}
+
 .committee {
   padding: 12px 14px;
   margin-bottom: var(--space-4);
@@ -541,21 +616,11 @@
 }
 
 .successCard {
-  display: grid;
-  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 1.25fr);
-  align-items: center;
-  gap: var(--space-8);
-  width: min(100%, 900px);
+  width: min(100%, 720px);
   overflow: hidden;
   background:
     radial-gradient(circle at 15% 25%, rgb(255 194 75 / 24%), transparent 36%),
     var(--surface);
-}
-
-.successArt svg {
-  width: 100%;
-  max-width: 320px;
-  margin: 0 auto;
 }
 
 .successCopy h1 {
@@ -629,12 +694,7 @@
   }
 
   .successCard {
-    grid-template-columns: 1fr;
     text-align: center;
-  }
-
-  .successArt svg {
-    max-width: 230px;
   }
 
   .successActions {
@@ -643,10 +703,6 @@
 }
 
 @media (max-width: 500px) {
-  .hero > svg {
-    display: none;
-  }
-
   .walletNotice,
   .configError {
     align-items: stretch;

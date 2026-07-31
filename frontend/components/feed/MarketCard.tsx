@@ -44,11 +44,13 @@ function phaseDataValue(market: Market) {
 interface MarketCardProps {
   market: Market;
   href?: string | null;
+  showMascot?: boolean;
 }
 
 export function MarketCard({
   market,
   href = `/market/${market.id}`,
+  showMascot = true,
 }: MarketCardProps) {
   const { data: priceHistory } = usePriceHistory(market.id);
   const graduation = graduationPercent(market);
@@ -106,7 +108,7 @@ export function MarketCard({
                 aria-valuenow={graduation}
               >
                 <span style={{ width: `${graduation}%` }}>
-                  <CrackingEgg progress={graduation} />
+                  {showMascot && <CrackingEgg progress={graduation} />}
                 </span>
               </div>
               <NumberDisplay className={styles.percent} size="small" tone="yes">

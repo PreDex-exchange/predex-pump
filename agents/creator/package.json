@@ -1,5 +1,5 @@
 {
-  "name": "@predex-pump/agent-sdk",
+  "name": "@predex-pump/creator-agent",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -11,26 +11,22 @@
       "import": "./dist/src/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
-    "example": "tsx examples/read-and-build-buy.ts"
+    "start": "tsx --tsconfig tsconfig.runtime.json src/cli.ts"
   },
   "dependencies": {
-    "@predex-pump/shared": "file:../shared",
-    "viem": "2.55.8",
-    "ws": "8.21.1"
+    "@predex-pump/agent-sdk": "file:../../agent-sdk",
+    "@predex-pump/shared": "file:../../shared",
+    "viem": "2.55.8"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
-    "@types/ws": "8.18.1",
     "tsx": "4.23.1",
     "typescript": "5.9.3",
     "vitest": "4.1.0"
