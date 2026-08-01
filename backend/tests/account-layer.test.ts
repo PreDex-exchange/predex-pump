@@ -4,13 +4,8 @@ import type {
   SiweNonceResponse,
 } from '@predex-pump/shared';
 import type { FastifyInstance } from 'fastify';
-import {
-  createPublicClient,
-  custom,
-  type LocalAccount,
-} from 'viem';
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { createSiweMessage, verifySiweMessage } from 'viem/siwe';
+import type { Address, Hex } from 'viem';
+import { createSiweMessage } from 'viem/siwe';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AccountLayerConfig } from '../src/account/config.js';
@@ -37,21 +32,12 @@ const accountConfig: AccountLayerConfig = {
   rpcUrl: 'http://unused.invalid',
 };
 
-const verificationClient = createPublicClient({
-  transport: custom({
-    request: async () => {
-      throw new Error('Tests never make contract-wallet RPC calls');
-    },
-  }),
-});
+const SIGNER_ADDRESS = `0x${'12'.repeat(20)}` as Address;
+const VALID_SIGNATURE = `0x${'34'.repeat(65)}` as Hex;
+const WRONG_SIGNATURE = `0x${'56'.repeat(65)}` as Hex;
 
-const testVerifier: SiweVerifier = async (input: SiweVerifierInput) => {
-  try {
-    return await verifySiweMessage(verificationClient, input);
-  } catch {
-    return false;
-  }
-};
+const testVerifier: SiweVerifier = async (input: SiweVerifierInput) =>
+  input.signature === VALID_SIGNATURE;
 
 const gatewayBalanceReader: GatewayBalanceReader = {
   read: vi.fn(),
@@ -67,7 +53,7 @@ function sessionCookie(response: { headers: Record<string, unknown> }): string {
 
 async function issueMessage(
   app: FastifyInstance,
-  signer: LocalAccount,
+  address: Address,
   domain = accountConfig.siweDomain,
 ) {
   const nonceResponse = await app.inject({
@@ -77,7 +63,7 @@ async function issueMessage(
   expect(nonceResponse.statusCode).toBe(200);
   const nonce = nonceResponse.json<SiweNonceResponse>();
   const message = createSiweMessage({
-    address: signer.address,
+    address,
     chainId: nonce.chainId,
     domain,
     uri: nonce.uri,
@@ -90,9 +76,9 @@ async function issueMessage(
   return { nonce, message };
 }
 
-async function signIn(app: FastifyInstance, signer: LocalAccount) {
-  const issued = await issueMessage(app, signer);
-  const signature = await signer.signMessage({ message: issued.message });
+async function signIn(app: FastifyInstance, address: Address) {
+  const issued = await issueMessage(app, address);
+  const signature = VALID_SIGNATURE;
   const response = await app.inject({
     method: 'POST',
     url: '/auth/siwe/verify',
@@ -104,7 +90,6 @@ async function signIn(app: FastifyInstance, signer: LocalAccount) {
 
 describe('wallet-native account layer', () => {
   let app: FastifyInstance;
-  let signer: LocalAccount;
 
   beforeAll(async () => {
     app = await buildServer({
@@ -120,8 +105,6 @@ describe('wallet-native account layer', () => {
   beforeEach(async () => {
     await resetDatabase();
     await seedContractData();
-    // Ephemeral in-memory test signer; no private key is stored or logged.
-    signer = privateKeyToAccount(generatePrivateKey());
     vi.mocked(gatewayBalanceReader.read).mockReset();
     vi.mocked(gatewayBalanceReader.read).mockResolvedValue({
       totalRaw: '2500000',
@@ -135,10 +118,10 @@ describe('wallet-native account layer', () => {
   });
 
   it('verifies EIP-4361, binds an HttpOnly cookie to the address, and rejects replay', async () => {
-    const signedIn = await signIn(app, signer);
+    const signedIn = await signIn(app, SIGNER_ADDRESS);
     expect(signedIn.response.json<SessionResponse>()).toMatchObject({
       authenticated: true,
-      address: signer.address.toLowerCase(),
+      address: SIGNER_ADDRESS.toLowerCase(),
     });
     expect(signedIn.response.headers['set-cookie']).toContain('HttpOnly');
     expect(signedIn.response.headers['set-cookie']).toContain('SameSite=Lax');
@@ -150,7 +133,7 @@ describe('wallet-native account layer', () => {
     });
     expect(persisted.json<SessionResponse>()).toMatchObject({
       authenticated: true,
-      address: signer.address.toLowerCase(),
+      address: SIGNER_ADDRESS.toLowerCase(),
     });
 
     const replay = await app.inject({
@@ -165,7 +148,7 @@ describe('wallet-native account layer', () => {
   });
 
   it('persists a database session across a fresh server instance and signs out', async () => {
-    const signedIn = await signIn(app, signer);
+    const signedIn = await signIn(app, SIGNER_ADDRESS);
     const reloadedServer = await buildServer({
       prisma: testPrisma,
       eventBus: new ServerEventBus(),
@@ -181,7 +164,7 @@ describe('wallet-native account layer', () => {
       });
       expect(session.json<SessionResponse>()).toMatchObject({
         authenticated: true,
-        address: signer.address.toLowerCase(),
+        address: SIGNER_ADDRESS.toLowerCase(),
       });
       const signOut = await reloadedServer.inject({
         method: 'POST',
@@ -205,50 +188,45 @@ describe('wallet-native account layer', () => {
   });
 
   it('rejects an expired nonce before creating a session', async () => {
-    const issued = await issueMessage(app, signer);
+    const issued = await issueMessage(app, SIGNER_ADDRESS);
     await testPrisma.siweNonce.update({
       where: { nonce: issued.nonce.nonce },
       data: { expiresAt: new Date(Date.now() - 1_000) },
     });
-    const signature = await signer.signMessage({ message: issued.message });
     const response = await app.inject({
       method: 'POST',
       url: '/auth/siwe/verify',
-      payload: { message: issued.message, signature },
+      payload: { message: issued.message, signature: VALID_SIGNATURE },
     });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toEqual({ error: 'SIWE nonce has expired' });
     expect(await testPrisma.authSession.count()).toBe(0);
   });
 
-  it('rejects a signature from a different address without consuming the nonce', async () => {
-    const issued = await issueMessage(app, signer);
-    const otherSigner = privateKeyToAccount(generatePrivateKey());
-    const wrongSignature = await otherSigner.signMessage({ message: issued.message });
+  it('rejects a wrong signature without consuming the nonce', async () => {
+    const issued = await issueMessage(app, SIGNER_ADDRESS);
     const rejected = await app.inject({
       method: 'POST',
       url: '/auth/siwe/verify',
-      payload: { message: issued.message, signature: wrongSignature },
+      payload: { message: issued.message, signature: WRONG_SIGNATURE },
     });
     expect(rejected.statusCode).toBe(401);
     expect(rejected.json()).toEqual({ error: 'SIWE signature is invalid' });
 
-    const correctSignature = await signer.signMessage({ message: issued.message });
     const accepted = await app.inject({
       method: 'POST',
       url: '/auth/siwe/verify',
-      payload: { message: issued.message, signature: correctSignature },
+      payload: { message: issued.message, signature: VALID_SIGNATURE },
     });
     expect(accepted.statusCode).toBe(200);
   });
 
-  it('rejects a correctly signed message for the wrong domain', async () => {
-    const issued = await issueMessage(app, signer, 'evil.example');
-    const signature = await signer.signMessage({ message: issued.message });
+  it('rejects a message for the wrong domain', async () => {
+    const issued = await issueMessage(app, SIGNER_ADDRESS, 'evil.example');
     const response = await app.inject({
       method: 'POST',
       url: '/auth/siwe/verify',
-      payload: { message: issued.message, signature },
+      payload: { message: issued.message, signature: VALID_SIGNATURE },
     });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toEqual({
@@ -257,7 +235,7 @@ describe('wallet-native account layer', () => {
   });
 
   it('round-trips watchlist and modest behavior state per signed-in address', async () => {
-    const { cookie } = await signIn(app, signer);
+    const { cookie } = await signIn(app, SIGNER_ADDRESS);
     const auth = { cookie };
     expect(
       (
@@ -321,7 +299,7 @@ describe('wallet-native account layer', () => {
     expect(
       await testPrisma.accountBehaviorEvent.count({
         where: {
-          accountAddress: signer.address.toLowerCase(),
+          accountAddress: SIGNER_ADDRESS.toLowerCase(),
           type: 'MARKET_VIEWED',
         },
       }),
@@ -339,7 +317,7 @@ describe('wallet-native account layer', () => {
   });
 
   it('assembles created/traded markets and track record only from indexed data', async () => {
-    const address = signer.address.toLowerCase();
+    const address = SIGNER_ADDRESS.toLowerCase();
     await testPrisma.market.update({
       where: { id: '1' },
       data: { creator: address },
@@ -358,7 +336,7 @@ describe('wallet-native account layer', () => {
         unrealizedPnlRaw: '500000',
       },
     });
-    const { cookie } = await signIn(app, signer);
+    const { cookie } = await signIn(app, SIGNER_ADDRESS);
     const response = await app.inject({
       method: 'GET',
       url: '/account/profile',
@@ -395,7 +373,7 @@ describe('wallet-native account layer', () => {
   });
 
   it('returns Gateway balance reads and degrades without breaking Stage 1', async () => {
-    const { cookie } = await signIn(app, signer);
+    const { cookie } = await signIn(app, SIGNER_ADDRESS);
     const balance = await app.inject({
       method: 'GET',
       url: '/account/gateway/balance',
@@ -407,7 +385,7 @@ describe('wallet-native account layer', () => {
       availableRaw: '2000000',
     });
     expect(gatewayBalanceReader.read).toHaveBeenCalledWith(
-      signer.address.toLowerCase(),
+      SIGNER_ADDRESS.toLowerCase(),
     );
 
     vi.mocked(gatewayBalanceReader.read).mockRejectedValueOnce(
