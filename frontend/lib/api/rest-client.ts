@@ -1,5 +1,6 @@
 import type {
   AccountResponse,
+  AccountProfileResponse,
   ActivityQuery,
   ActivityResponse,
   DedupCheckRequest,
@@ -12,6 +13,13 @@ import type {
   OrderBookResponse,
   PriceHistoryQuery,
   PriceHistoryResponse,
+  RecordAccountBehaviorRequest,
+  RecordAccountBehaviorResponse,
+  SessionResponse,
+  SiweNonceResponse,
+  SiweVerifyRequest,
+  UpdateAccountProfileRequest,
+  WatchlistMutationResponse,
 } from '@predex-pump/shared/rest';
 import { routes } from '@predex-pump/shared/rest';
 
@@ -23,7 +31,7 @@ type QueryValue = string | number | undefined;
 
 interface RequestOptions {
   notFoundAsNull?: boolean;
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
 }
 
@@ -82,6 +90,7 @@ async function request<T>(
   try {
     response = await fetch(`${backendApiUrl}${path}`, {
       cache: 'no-store',
+      credentials: 'include',
       ...(options.method === undefined ? {} : { method: options.method }),
       headers,
       ...(options.body === undefined
@@ -109,6 +118,47 @@ async function request<T>(
 }
 
 export const backendRestClient: BackendApiClient = {
+  getSiweNonce(): Promise<SiweNonceResponse> {
+    return request(routes.siweNonce(), { method: 'POST' });
+  },
+
+  verifySiwe(input: SiweVerifyRequest): Promise<SessionResponse> {
+    return request(routes.siweVerify(), { method: 'POST', body: input });
+  },
+
+  getSession(): Promise<SessionResponse> {
+    return request(routes.session());
+  },
+
+  signOut(): Promise<SessionResponse> {
+    return request(routes.signOut(), { method: 'POST' });
+  },
+
+  getAccountProfile(): Promise<AccountProfileResponse> {
+    return request(routes.accountProfile());
+  },
+
+  updateAccountProfile(
+    input: UpdateAccountProfileRequest,
+  ): Promise<AccountProfileResponse> {
+    return request(routes.accountProfile(), { method: 'PATCH', body: input });
+  },
+
+  setWatchlist(
+    marketId: string,
+    watchlisted: boolean,
+  ): Promise<WatchlistMutationResponse> {
+    return request(routes.accountWatchlist(encodeURIComponent(marketId)), {
+      method: watchlisted ? 'PUT' : 'DELETE',
+    });
+  },
+
+  recordAccountBehavior(
+    input: RecordAccountBehaviorRequest,
+  ): Promise<RecordAccountBehaviorResponse> {
+    return request(routes.accountBehavior(), { method: 'POST', body: input });
+  },
+
   listMarkets(query: ListMarketsQuery = {}): Promise<ListMarketsResponse> {
     return request(
       withQuery(routes.markets(), {

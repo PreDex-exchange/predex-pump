@@ -1,18 +1,23 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAccount as useWalletAccount } from 'wagmi';
 
+import { Button } from '@/components/ui/Button';
 import { PhaseBadge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { StatePanel } from '@/components/ui/StatePanel';
+import { useAuth } from '@/components/providers/AuthProvider';
 import {
   useAccount as useIndexedAccount,
+  useAccountProfile,
   useMarket,
   useOrderBook,
   usePriceHistory,
 } from '@/lib/api/hooks';
+import { backendRestClient } from '@/lib/api/rest-client';
 import {
   formatDateTime,
   relativeTime,
@@ -33,11 +38,22 @@ import styles from './MarketScreen.module.css';
 
 export function MarketScreen({ marketId }: { marketId: string }) {
   const [clockSeconds, setClockSeconds] = useState(0);
+  const [watchlistBusy, setWatchlistBusy] = useState(false);
+  const [watchlistError, setWatchlistError] = useState<Error | null>(null);
+  const recordedView = useRef<string | null>(null);
+  const queryClient = useQueryClient();
   const { address } = useWalletAccount();
+  const { session, isSigningIn, signIn } = useAuth();
+  const authenticated = session?.authenticated === true;
   const { data: detail, isLoading, error } = useMarket(marketId);
   const { data: priceHistory } = usePriceHistory(marketId);
   const { data: book, isLoading: bookLoading } = useOrderBook(marketId);
   const { data: account } = useIndexedAccount(address);
+  const {
+    data: accountProfile,
+    isLoading: profileLoading,
+    error: profileError,
+  } = useAccountProfile(authenticated);
 
   useEffect(() => {
     const updateClock = () => setClockSeconds(Math.floor(Date.now() / 1000));
@@ -48,6 +64,30 @@ export function MarketScreen({ marketId }: { marketId: string }) {
       window.clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      !detail ||
+      !session?.authenticated ||
+      !accountProfile?.profile.preferences.rememberRecentlyViewed
+    ) {
+      return;
+    }
+    const key = `${session.address.toLowerCase()}:${detail.market.id}`;
+    if (recordedView.current === key) return;
+    recordedView.current = key;
+    void backendRestClient
+      .recordAccountBehavior({
+        type: 'MARKET_VIEWED',
+        marketId: detail.market.id,
+      })
+      .then(() =>
+        queryClient.invalidateQueries({ queryKey: ['account-profile'] }),
+      )
+      .catch(() => {
+        // Recently viewed is additive and must never disrupt the market/trade path.
+      });
+  }, [accountProfile, authenticated, detail, queryClient, session]);
 
   if (isLoading) {
     return (
@@ -98,6 +138,29 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     isObserved ||
     resolution !== null ||
     clockSeconds >= market.tradingEndsAt;
+  const isWatchlisted =
+    accountProfile?.watchlist.some((item) => item.id === market.id) ?? false;
+
+  async function toggleWatchlist() {
+    if (!authenticated) {
+      await signIn();
+      return;
+    }
+    setWatchlistBusy(true);
+    setWatchlistError(null);
+    try {
+      await backendRestClient.setWatchlist(market.id, !isWatchlisted);
+      await queryClient.invalidateQueries({ queryKey: ['account-profile'] });
+    } catch (caught) {
+      setWatchlistError(
+        caught instanceof Error
+          ? caught
+          : new Error('The watchlist could not be updated.'),
+      );
+    } finally {
+      setWatchlistBusy(false);
+    }
+  }
 
   return (
     <main className={styles.page}>
@@ -105,15 +168,40 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         ← Feed
       </Link>
       <header className={styles.marketHeader}>
-        <div className={styles.metaRow}>
-          <PhaseBadge phase={market.phase} />
-          <span>
-            by <code className="mono">{shortAddress(market.creator, 4, 3)}</code>
-          </span>
-          <span>opened {relativeTime(market.createdAt)}</span>
-          <span>trading ends {formatDateTime(market.tradingEndsAt)}</span>
+        <div className={styles.headerRow}>
+          <div>
+            <div className={styles.metaRow}>
+              <PhaseBadge phase={market.phase} />
+              <span>
+                by <code className="mono">{shortAddress(market.creator, 4, 3)}</code>
+              </span>
+              <span>opened {relativeTime(market.createdAt)}</span>
+              <span>trading ends {formatDateTime(market.tradingEndsAt)}</span>
+            </div>
+            <h1>{market.question}</h1>
+          </div>
+          <div className={styles.watchlistControl}>
+            <Button
+              disabled={watchlistBusy || isSigningIn || (authenticated && profileLoading)}
+              onClick={() => void toggleWatchlist()}
+              size="small"
+              variant={isWatchlisted ? 'mint' : 'neutral'}
+            >
+              {watchlistBusy
+                ? 'Saving…'
+                : isWatchlisted
+                  ? '✓ In watchlist'
+                  : authenticated
+                    ? '+ Add to watchlist'
+                    : 'Sign in to watch'}
+            </Button>
+            {(watchlistError || profileError) && (
+              <small role="alert">
+                {watchlistError?.message ?? 'Watchlist is temporarily unavailable.'}
+              </small>
+            )}
+          </div>
         </div>
-        <h1>{market.question}</h1>
       </header>
 
       <LifecycleStepper

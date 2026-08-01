@@ -7,6 +7,8 @@ import { WagmiProvider, type State } from 'wagmi';
 import { BackendLiveSync } from '@/lib/api/live';
 import { getWagmiConfig } from '@/lib/chain/config';
 
+import { AuthProvider } from './AuthProvider';
+
 interface AppProvidersProps {
   children: ReactNode;
   initialState?: State;
@@ -23,8 +25,10 @@ export function AppProviders({ children, initialState }: AppProvidersProps) {
       reconnectOnMount
     >
       <QueryClientProvider client={queryClient}>
-        <BackendLiveSync />
-        {children}
+        <AuthProvider>
+          <BackendLiveSync />
+          {children}
+        </AuthProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );

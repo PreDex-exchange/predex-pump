@@ -8,6 +8,7 @@ import {
   useSwitchChain,
 } from 'wagmi';
 
+import { useAuth } from '@/components/providers/AuthProvider';
 import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
 import { collateralErc20Abi } from '@/lib/chain/contracts';
 import { formatUsdc, shortAddress } from '@/lib/format';
@@ -24,11 +25,65 @@ export function WalletBar() {
   const { connect, connectors, error: connectError, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const {
+    session,
+    isLoading: isAuthLoading,
+    isSigningIn,
+    error: authError,
+    signIn,
+    signOut,
+  } = useAuth();
+  const {
     switchChain,
     error: switchError,
     isPending: isSwitching,
   } = useSwitchChain();
   const isWrongNetwork = isConnected && chainId !== arcTestnet.id;
+  const isSignedIn = session?.authenticated === true;
+  const sessionMatchesWallet =
+    isSignedIn &&
+    Boolean(address) &&
+    session.address.toLowerCase() === address?.toLowerCase();
+
+  const authControl = isAuthLoading ? (
+    <button className={`${styles.auth} ${styles.pending}`} disabled type="button">
+      Checking sign-in…
+    </button>
+  ) : sessionMatchesWallet ? (
+    <button
+      className={`${styles.auth} ${styles.signed}`}
+      onClick={() => void signOut()}
+      title={authError?.message ?? 'Signed in. Click to sign out.'}
+      type="button"
+    >
+      <span aria-hidden="true">✓</span>
+      Signed in
+    </button>
+  ) : isSignedIn && !address ? (
+    <button
+      className={`${styles.auth} ${styles.signed}`}
+      onClick={() => void signOut()}
+      title={`Signed in as ${session.address}. Click to sign out.`}
+      type="button"
+    >
+      <span aria-hidden="true">✓</span>
+      {shortAddress(session.address)}
+    </button>
+  ) : (
+    <button
+      className={styles.auth}
+      disabled={!address || isSigningIn}
+      onClick={() => void signIn()}
+      title={
+        authError?.message ??
+        (isSignedIn
+          ? `The saved session belongs to ${session.address}. Sign in with this wallet to replace it.`
+          : 'Sign in with Ethereum to save profile features')
+      }
+      type="button"
+    >
+      {isSigningIn ? 'Signing…' : 'Sign in'}
+    </button>
+  );
 
   const { data: usdcBalance, isLoading: isBalanceLoading } = useReadContract({
     address: arcAddresses.usdc,
@@ -58,6 +113,7 @@ export function WalletBar() {
         >
           {isConnecting ? 'Connecting…' : connector ? 'Connect wallet' : 'No wallet found'}
         </button>
+        {authControl}
       </div>
     );
   }
@@ -78,6 +134,7 @@ export function WalletBar() {
         >
           {isSwitching ? 'Switching…' : 'Switch to Arc'}
         </button>
+        {authControl}
       </div>
     );
   }
@@ -99,6 +156,7 @@ export function WalletBar() {
           {isBalanceLoading ? '…' : formatWalletBalance(usdcBalance)} USDC
         </span>
       </button>
+      {authControl}
     </div>
   );
 }

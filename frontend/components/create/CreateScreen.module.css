@@ -365,6 +365,36 @@
   text-decoration: none;
 }
 
+.dedupActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dedupReject {
+  padding: 7px 11px;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: var(--text-small);
+  font-weight: 800;
+}
+
+.dedupFeedbackNote,
+.dedupFeedbackError {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-2);
+  color: var(--muted);
+}
+
+.dedupFeedbackError {
+  color: var(--error);
+}
+
 .dedupTradeLink:hover {
   text-decoration: underline;
 }

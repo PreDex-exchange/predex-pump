@@ -238,6 +238,64 @@ model Account {
   unrealizedPnlRaw String @default("0")
 }
 
+// Additive, off-chain account data. The indexer-owned Account model above
+// remains the source for every chain-derived field.
+model UserAccount {
+  address              String                 @id
+  displayName          String?
+  rememberRecentlyViewed Boolean              @default(true)
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  sessions             AuthSession[]
+  watchlist            AccountWatchlist[]
+  behavior             AccountBehaviorEvent[]
+}
+
+model SiweNonce {
+  nonce       String    @id
+  domain      String
+  uri         String
+  issuedAt    DateTime  @default(now())
+  expiresAt   DateTime
+  consumedAt  DateTime?
+
+  @@index([expiresAt])
+}
+
+model AuthSession {
+  tokenHash      String      @id
+  accountAddress String
+  createdAt      DateTime    @default(now())
+  expiresAt      DateTime
+  account        UserAccount @relation(fields: [accountAddress], references: [address], onDelete: Cascade)
+
+  @@index([accountAddress, expiresAt])
+  @@index([expiresAt])
+}
+
+model AccountWatchlist {
+  accountAddress String
+  marketId       String
+  addedAt        DateTime    @default(now())
+  account        UserAccount @relation(fields: [accountAddress], references: [address], onDelete: Cascade)
+
+  @@id([accountAddress, marketId])
+  @@index([marketId])
+}
+
+model AccountBehaviorEvent {
+  id             String      @id @default(cuid())
+  accountAddress String
+  type           String
+  marketId       String
+  occurredAt     DateTime    @default(now())
+  account        UserAccount @relation(fields: [accountAddress], references: [address], onDelete: Cascade)
+
+  // Retain only the latest view/decision for a market and behavior type.
+  @@unique([accountAddress, type, marketId])
+  @@index([accountAddress, occurredAt(sort: Desc)])
+}
+
 // One row for every decoded contract event. This is also the atomic per-log
 // idempotency guard for all derived writes.
 model ActivityEvent {

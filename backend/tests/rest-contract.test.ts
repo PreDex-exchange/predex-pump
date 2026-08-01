@@ -71,10 +71,13 @@ describe('REST shared contract', () => {
     const firstResponse = await app.inject({
       method: 'GET',
       url: '/markets?limit=1',
-      headers: { origin: 'http://localhost:5173' },
+      headers: { origin: 'http://localhost:3000' },
     });
     expect(firstResponse.statusCode).toBe(200);
-    expect(firstResponse.headers['access-control-allow-origin']).toBe('*');
+    expect(firstResponse.headers['access-control-allow-origin']).toBe(
+      'http://localhost:3000',
+    );
+    expect(firstResponse.headers['access-control-allow-credentials']).toBe('true');
     const first = firstResponse.json<ListMarketsResponse>();
     expect(first.items).toHaveLength(1);
     expect(first.items[0]).toEqual({

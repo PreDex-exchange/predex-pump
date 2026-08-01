@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: '/activity', label: 'Agent activity' },
   { href: '/create', label: 'Create' },
   { href: '/portfolio', label: 'Portfolio' },
+  { href: '/account', label: 'Account' },
 ] as const;
 
 function BrandMark() {

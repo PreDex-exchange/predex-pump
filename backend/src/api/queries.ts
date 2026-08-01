@@ -5,6 +5,7 @@ import type {
   ConfigResponse,
   HealthResponse,
   ListMarketsResponse,
+  Market,
   MarketBookResponse,
   MarketDetailResponse,
   OrderBook,
@@ -219,6 +220,23 @@ export async function getMarketDto(
     select: MARKET_SELECT,
   });
   return market === null ? null : toMarketDto(market);
+}
+
+/** Resolve indexed markets while preserving the caller's recency/order semantics. */
+export async function getMarketsByIds(
+  prisma: PrismaClient,
+  marketIds: readonly string[],
+): Promise<Market[]> {
+  if (marketIds.length === 0) return [];
+  const rows = await prisma.market.findMany({
+    where: { id: { in: [...new Set(marketIds)] } },
+    select: MARKET_SELECT,
+  });
+  const byId = new Map(rows.map((row) => [row.id, toMarketDto(row)]));
+  return marketIds.flatMap((id) => {
+    const market = byId.get(id);
+    return market === undefined ? [] : [market];
+  });
 }
 
 export async function getMarketDetail(

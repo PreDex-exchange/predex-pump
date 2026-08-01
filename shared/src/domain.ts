@@ -170,6 +170,46 @@ export interface Account {
   tradeCount: number;
 }
 
+/**
+ * Deliberately small, off-chain profile state. This record excludes positions,
+ * trades, PnL, wallet metadata, IP addresses, and device identifiers.
+ */
+export interface AccountProfile {
+  address: Address;
+  displayName: string | null;
+  preferences: {
+    /** Controls both retention and display of the recently-viewed list. */
+    rememberRecentlyViewed: boolean;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The only modest behavior signals persisted by the account layer. */
+export type AccountBehaviorType =
+  | 'MARKET_VIEWED'
+  | 'DEDUP_SUGGESTION_ACCEPTED'
+  | 'DEDUP_SUGGESTION_REJECTED';
+
+export interface AccountBehaviorRecord {
+  type: AccountBehaviorType;
+  /** Viewed market, or the existing market suggested by the dedup feature. */
+  marketId: string;
+  occurredAt: string;
+}
+
+/** All monetary fields remain derived from the indexed on-chain read model. */
+export interface AccountTrackRecord {
+  marketsCreated: number;
+  marketsTraded: number;
+  tradeCount: number;
+  volumeTradedRaw: Raw;
+  realizedPnlRaw: Raw;
+  unrealizedPnlRaw: Raw;
+  dedupSuggestionsAccepted: number;
+  dedupSuggestionsRejected: number;
+}
+
 export type ActivityType =
   | 'MarketCreated'
   | 'Trade'

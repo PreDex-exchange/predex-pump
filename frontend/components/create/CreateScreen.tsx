@@ -9,6 +9,7 @@ import { useState, type FormEvent } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
 import { MarketCard } from '@/components/feed/MarketCard';
+import { useAuth } from '@/components/providers/AuthProvider';
 import { Badge } from '@/components/ui/Badge';
 import { Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -16,6 +17,7 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { TxStatus } from '@/components/ui/TxStatus';
 import { useConfig, useDedupCheck } from '@/lib/api/hooks';
+import { backendRestClient } from '@/lib/api/rest-client';
 import { arcTestnet } from '@/lib/chain/arc';
 import {
   buildMarketMetadata,
@@ -225,10 +227,13 @@ export function CreateScreen() {
   const [createdMarketId, setCreatedMarketId] = useState<string | null | undefined>(
     undefined,
   );
+  const [dismissedDedupKey, setDismissedDedupKey] = useState<string | null>(null);
+  const [dedupFeedbackError, setDedupFeedbackError] = useState<string | null>(null);
 
   const router = useRouter();
   const queryClient = useQueryClient();
   const { address, chainId, isConnected } = useWalletAccount();
+  const { session } = useAuth();
   const tx = useTxFlow();
   const {
     connect,
@@ -243,6 +248,27 @@ export function CreateScreen() {
     refetch: refetchConfig,
   } = useConfig();
   const { data: dedupResult } = useDedupCheck(question);
+  const authenticated = session?.authenticated === true;
+  const dedupKey = dedupResult?.canonicalMarketId
+    ? `${question.trim()}:${dedupResult.canonicalMarketId}`
+    : null;
+  const visibleDedupResult =
+    dedupKey !== null && dedupKey === dismissedDedupKey ? null : dedupResult;
+
+  function recordDedupFeedback(
+    type: 'DEDUP_SUGGESTION_ACCEPTED' | 'DEDUP_SUGGESTION_REJECTED',
+    marketId: string,
+  ) {
+    if (!authenticated || !marketId) return;
+    setDedupFeedbackError(null);
+    void backendRestClient
+      .recordAccountBehavior({ type, marketId })
+      .catch((error: unknown) => {
+        setDedupFeedbackError(
+          error instanceof Error ? error.message : 'Dedup feedback could not be saved.',
+        );
+      });
+  }
 
   const seedRaw = parseUsdcInput(seed);
   const minTradingWindowSeconds = registryWindowBound(
@@ -468,7 +494,18 @@ export function CreateScreen() {
                 </span>
               )}
             </label>
-            <DedupHint response={dedupResult} />
+            <DedupHint
+              feedbackEnabled={authenticated}
+              feedbackError={dedupFeedbackError}
+              onAccept={(marketId) =>
+                recordDedupFeedback('DEDUP_SUGGESTION_ACCEPTED', marketId)
+              }
+              onReject={(marketId) => {
+                if (dedupKey) setDismissedDedupKey(dedupKey);
+                recordDedupFeedback('DEDUP_SUGGESTION_REJECTED', marketId);
+              }}
+              response={visibleDedupResult}
+            />
 
             <fieldset className={`${styles.field} ${styles.durationField}`}>
               <legend className={styles.labelRow}>

@@ -2,6 +2,7 @@
 
 import type {
   AccountResponse,
+  AccountProfileResponse,
   ActivityQuery,
   ActivityResponse,
   DedupCheckResponse,
@@ -42,6 +43,7 @@ interface ResourceState<T> {
 
 interface ResourceOptions {
   refetchInterval?: number;
+  enabled?: boolean;
 }
 
 function useApiResource<T>(
@@ -55,6 +57,7 @@ function useApiResource<T>(
     staleTime: 30_000,
     refetchInterval: options.refetchInterval,
     refetchIntervalInBackground: false,
+    enabled: options.enabled,
   });
 
   return {
@@ -153,6 +156,13 @@ export function useAccount(address?: string) {
   }, [address, normalizedAddress, queryClient]);
 
   return useApiResource<AccountResponse | null>(['account', address], load);
+}
+
+export function useAccountProfile(enabled = true) {
+  const load = useCallback(() => apiClient.getAccountProfile(), []);
+  return useApiResource<AccountProfileResponse>(['account-profile'], load, {
+    enabled,
+  });
 }
 
 export function usePosition(

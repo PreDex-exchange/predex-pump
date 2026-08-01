@@ -1,5 +1,6 @@
 import type {
   AccountResponse,
+  AccountProfileResponse,
   ActivityQuery,
   ActivityResponse,
   ConfigResponse,
@@ -13,6 +14,13 @@ import type {
   OrderBookResponse,
   PriceHistoryQuery,
   PriceHistoryResponse,
+  RecordAccountBehaviorRequest,
+  RecordAccountBehaviorResponse,
+  SessionResponse,
+  SiweNonceResponse,
+  SiweVerifyRequest,
+  UpdateAccountProfileRequest,
+  WatchlistMutationResponse,
 } from '@predex-pump/shared/rest';
 
 export interface ApiClient {
@@ -32,4 +40,19 @@ export interface ApiClient {
 export interface BackendApiClient extends ApiClient {
   getTokenOrderBook(tokenId: string): Promise<OrderBookResponse>;
   getHealth(): Promise<HealthResponse>;
+  getSiweNonce(): Promise<SiweNonceResponse>;
+  verifySiwe(input: SiweVerifyRequest): Promise<SessionResponse>;
+  getSession(): Promise<SessionResponse>;
+  signOut(): Promise<SessionResponse>;
+  getAccountProfile(): Promise<AccountProfileResponse>;
+  updateAccountProfile(
+    input: UpdateAccountProfileRequest,
+  ): Promise<AccountProfileResponse>;
+  setWatchlist(
+    marketId: string,
+    watchlisted: boolean,
+  ): Promise<WatchlistMutationResponse>;
+  recordAccountBehavior(
+    input: RecordAccountBehaviorRequest,
+  ): Promise<RecordAccountBehaviorResponse>;
 }

@@ -5,9 +5,19 @@ import styles from './CreateScreen.module.css';
 
 export interface DedupHintProps {
   response: DedupCheckResponse | null;
+  feedbackEnabled?: boolean;
+  feedbackError?: string | null;
+  onAccept?: (marketId: string) => void;
+  onReject?: (marketId: string) => void;
 }
 
-export function DedupHint({ response }: DedupHintProps) {
+export function DedupHint({
+  response,
+  feedbackEnabled = false,
+  feedbackError = null,
+  onAccept,
+  onReject,
+}: DedupHintProps) {
   if (!response?.available || !response.isDuplicate) return null;
 
   return (
@@ -28,7 +38,10 @@ export function DedupHint({ response }: DedupHintProps) {
           {response.candidates.map((candidate) => (
             <li key={candidate.marketId}>
               <span className={styles.dedupCandidateMeta}>
-                <Link href={`/market/${candidate.marketId}`}>
+                <Link
+                  href={`/market/${candidate.marketId}`}
+                  onClick={() => onAccept?.(candidate.marketId)}
+                >
                   Market #{candidate.marketId}
                 </Link>
                 <span>score {candidate.score.toFixed(3)}</span>
@@ -39,14 +52,30 @@ export function DedupHint({ response }: DedupHintProps) {
         </ul>
       )}
       {response.canonicalMarketId && (
-        <Link
-          className={styles.dedupTradeLink}
-          href={`/market/${response.canonicalMarketId}`}
-        >
-          Trade it instead
-          <span aria-hidden="true">→</span>
-        </Link>
+        <div className={styles.dedupActions}>
+          <Link
+            className={styles.dedupTradeLink}
+            href={`/market/${response.canonicalMarketId}`}
+            onClick={() => onAccept?.(response.canonicalMarketId ?? '')}
+          >
+            Trade it instead
+            <span aria-hidden="true">→</span>
+          </Link>
+          <button
+            className={styles.dedupReject}
+            onClick={() => onReject?.(response.canonicalMarketId ?? '')}
+            type="button"
+          >
+            Keep my draft
+          </button>
+        </div>
       )}
+      <small className={feedbackError ? styles.dedupFeedbackError : styles.dedupFeedbackNote}>
+        {feedbackError ??
+          (feedbackEnabled
+            ? 'Your accept/reject choice is saved to improve your account experience.'
+            : 'Sign in if you want this accept/reject choice saved to your account.')}
+      </small>
     </aside>
   );
 }
