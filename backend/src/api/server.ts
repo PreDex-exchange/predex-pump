@@ -8,6 +8,10 @@ import { unavailableDedupResponse } from '../dedup/service.js';
 import type { DedupChecker } from '../dedup/types.js';
 import type { ServerEventBus } from '../events/bus.js';
 import type { TruthPaymentGate } from '../truth-payment/types.js';
+import {
+  CircleGatewayBalanceReader,
+  type GatewayBalanceReader,
+} from '../gateway/balance.js';
 import { registerAccountRoutes } from './account-routes.js';
 import { registerRestRoutes } from './routes.js';
 import { registerWebsocketRoute } from './websocket.js';
@@ -21,6 +25,7 @@ export interface BuildServerOptions {
   truthPaymentGate?: TruthPaymentGate;
   accountLayerConfig?: AccountLayerConfig;
   siweVerifier?: SiweVerifier;
+  gatewayBalanceReader?: GatewayBalanceReader;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -43,6 +48,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   registerAccountRoutes(
     app,
     new AccountService(options.prisma, accountLayerConfig, options.siweVerifier),
+    options.gatewayBalanceReader ?? new CircleGatewayBalanceReader(),
   );
   await app.ready();
   return app;

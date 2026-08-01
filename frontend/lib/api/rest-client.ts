@@ -6,6 +6,7 @@ import type {
   DedupCheckRequest,
   DedupCheckResponse,
   HealthResponse,
+  GatewayBalanceResponse,
   ListMarketsQuery,
   ListMarketsResponse,
   MarketBookResponse,
@@ -118,6 +119,10 @@ async function request<T>(
 }
 
 export const backendRestClient: BackendApiClient = {
+  getGatewayBalance(): Promise<GatewayBalanceResponse> {
+    return request(routes.gatewayBalance());
+  },
+
   getSiweNonce(): Promise<SiweNonceResponse> {
     return request(routes.siweNonce(), { method: 'POST' });
   },

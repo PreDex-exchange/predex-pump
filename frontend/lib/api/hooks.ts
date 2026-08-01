@@ -7,6 +7,7 @@ import type {
   ActivityResponse,
   DedupCheckResponse,
   HealthResponse,
+  GatewayBalanceResponse,
   ListMarketsQuery,
   ListMarketsResponse,
   MarketBookResponse,
@@ -163,6 +164,25 @@ export function useAccountProfile(enabled = true) {
   return useApiResource<AccountProfileResponse>(['account-profile'], load, {
     enabled,
   });
+}
+
+export function useGatewayBalance(enabled = true) {
+  const load = useCallback(() => apiClient.getGatewayBalance(), []);
+  const query = useQuery<GatewayBalanceResponse, Error>({
+    queryKey: ['gateway-balance'],
+    queryFn: load,
+    enabled,
+    retry: false,
+    staleTime: 10_000,
+  });
+  return {
+    data: query.data ?? null,
+    isLoading: query.isLoading,
+    error: query.error,
+    refetch: () => {
+      void query.refetch();
+    },
+  };
 }
 
 export function usePosition(

@@ -1,5 +1,6 @@
 import type {
   AccountProfileResponse,
+  GatewayBalanceResponse,
   RecordAccountBehaviorResponse,
   SessionResponse,
   SiweNonceResponse,
@@ -19,6 +20,7 @@ import {
   serializeClearedSessionCookie,
   serializeSessionCookie,
 } from '../account/service.js';
+import type { GatewayBalanceReader } from '../gateway/balance.js';
 import { HttpError, parseDecimalId } from './input.js';
 
 interface MarketParams {
@@ -125,6 +127,7 @@ function privateResponse(reply: FastifyReply): FastifyReply {
 export function registerAccountRoutes(
   app: FastifyInstance,
   service: AccountService,
+  gatewayBalanceReader: GatewayBalanceReader,
 ): void {
   app.post(
     routes.siweNonce(),
@@ -217,6 +220,22 @@ export function registerAccountRoutes(
       const input = parseBehaviorBody(request.body);
       privateResponse(reply);
       return service.recordBehavior(address, input.type, input.marketId);
+    },
+  );
+
+  app.get(
+    routes.gatewayBalance(),
+    async (request, reply): Promise<GatewayBalanceResponse | FastifyReply> => {
+      const address = await requireAddress(service, request);
+      privateResponse(reply);
+      try {
+        return await gatewayBalanceReader.read(address as `0x${string}`);
+      } catch (error) {
+        request.log.warn({ err: error }, 'Circle Gateway balance read failed');
+        return reply.code(503).send({
+          error: 'Circle Gateway balance is temporarily unavailable.',
+        });
+      }
     },
   );
 }

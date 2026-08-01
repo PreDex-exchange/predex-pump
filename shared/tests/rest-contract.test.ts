@@ -25,6 +25,7 @@ describe('account REST contract', () => {
     expect(routes.accountProfile()).toBe('/account/profile');
     expect(routes.accountWatchlist('42')).toBe('/account/watchlist/42');
     expect(routes.accountBehavior()).toBe('/account/behavior');
+    expect(routes.gatewayBalance()).toBe('/account/gateway/balance');
 
     const session = null as SessionResponse | null;
     const profile = null as AccountProfileResponse | null;

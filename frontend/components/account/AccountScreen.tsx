@@ -20,6 +20,7 @@ import {
   shortAddress,
 } from '@/lib/format';
 
+import { GatewayDepositPanel } from './GatewayDepositPanel';
 import styles from './AccountScreen.module.css';
 
 function InlineState({ title, message }: { title: string; message: string }) {
@@ -323,6 +324,8 @@ export function AccountScreen() {
           </p>
         </Card>
       </section>
+
+      <GatewayDepositPanel sessionAddress={session.address} />
 
       <MarketSection
         description="Markets you explicitly saved from a market page."

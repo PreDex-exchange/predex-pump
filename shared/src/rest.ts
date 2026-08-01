@@ -17,6 +17,7 @@ import type {
   Pnl,
   Position,
   PricePoint,
+  Raw,
   RegistryConfig,
   Resolution,
   Trade,
@@ -152,6 +153,12 @@ export interface RecordAccountBehaviorResponse {
   behavior: AccountBehaviorRecord;
 }
 
+// GET /account/gateway/balance (plain Circle Gateway read; nothing is stored)
+export interface GatewayBalanceResponse {
+  totalRaw: Raw;
+  availableRaw: Raw;
+}
+
 // GET /activity?marketId=&account=&limit=&cursor=
 export interface ActivityQuery {
   marketId?: string;
@@ -196,6 +203,7 @@ export const routes = {
   accountProfile: () => `/account/profile`,
   accountWatchlist: (marketId: string) => `/account/watchlist/${marketId}`,
   accountBehavior: () => `/account/behavior`,
+  gatewayBalance: () => `/account/gateway/balance`,
   markets: () => `/markets`,
   marketDedupCheck: () => `/markets/dedup-check`,
   market: (id: string) => `/markets/${id}`,

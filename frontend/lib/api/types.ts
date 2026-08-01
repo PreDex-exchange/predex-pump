@@ -7,6 +7,7 @@ import type {
   DedupCheckRequest,
   DedupCheckResponse,
   HealthResponse,
+  GatewayBalanceResponse,
   ListMarketsQuery,
   ListMarketsResponse,
   MarketBookResponse,
@@ -40,6 +41,7 @@ export interface ApiClient {
 export interface BackendApiClient extends ApiClient {
   getTokenOrderBook(tokenId: string): Promise<OrderBookResponse>;
   getHealth(): Promise<HealthResponse>;
+  getGatewayBalance(): Promise<GatewayBalanceResponse>;
   getSiweNonce(): Promise<SiweNonceResponse>;
   verifySiwe(input: SiweVerifyRequest): Promise<SessionResponse>;
   getSession(): Promise<SessionResponse>;

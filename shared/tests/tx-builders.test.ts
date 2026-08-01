@@ -4,6 +4,9 @@ import {
   addSlippage,
   buildBuyTx,
   buildCreateMarketTx,
+  buildCircleGatewayApprovalTx,
+  buildCircleGatewayDepositTx,
+  CIRCLE_GATEWAY_WALLET_ADDRESS,
   buildMiniClobPlaceTx,
   deadlineFromTimestamp,
   subtractSlippage,
@@ -59,5 +62,20 @@ describe('transaction builder golden calldata', () => {
     expect(addSlippage(1n, 50)).toBe(2n);
     expect(subtractSlippage(101n, 50)).toBe(100n);
     expect(deadlineFromTimestamp(1_800_000_000n)).toBe(1_800_001_200n);
+  });
+
+  it('matches the installed Circle SDK approve and deposit calldata for Arc USDC', () => {
+    const approval = buildCircleGatewayApprovalTx(1_000_000n);
+    const deposit = buildCircleGatewayDepositTx(1_000_000n);
+
+    expect(approval.to).toBe('0x3600000000000000000000000000000000000000');
+    expect(approval.data).toBe(
+      '0x095ea7b30000000000000000000000000077777d7eba4688bdef3e311b846f25870a19b900000000000000000000000000000000000000000000000000000000000f4240',
+    );
+    expect(deposit.to).toBe(CIRCLE_GATEWAY_WALLET_ADDRESS);
+    expect(deposit.data).toBe(
+      '0x47e7ef24000000000000000000000000360000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f4240',
+    );
+    expect(deposit.value).toBe(0n);
   });
 });

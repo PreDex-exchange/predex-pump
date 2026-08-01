@@ -11,13 +11,14 @@ import {
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { createSiweMessage, verifySiweMessage } from 'viem/siwe';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AccountLayerConfig } from '../src/account/config.js';
 import type {
   SiweVerifier,
   SiweVerifierInput,
 } from '../src/account/service.js';
+import type { GatewayBalanceReader } from '../src/gateway/balance.js';
 import { buildServer } from '../src/api/server.js';
 import { ServerEventBus } from '../src/events/bus.js';
 import { resetDatabase, testPrisma } from './database.js';
@@ -50,6 +51,10 @@ const testVerifier: SiweVerifier = async (input: SiweVerifierInput) => {
   } catch {
     return false;
   }
+};
+
+const gatewayBalanceReader: GatewayBalanceReader = {
+  read: vi.fn(),
 };
 
 function sessionCookie(response: { headers: Record<string, unknown> }): string {
@@ -107,6 +112,7 @@ describe('wallet-native account layer', () => {
       eventBus: new ServerEventBus(),
       accountLayerConfig: accountConfig,
       siweVerifier: testVerifier,
+      gatewayBalanceReader,
       logger: false,
     });
   });
@@ -116,6 +122,11 @@ describe('wallet-native account layer', () => {
     await seedContractData();
     // Ephemeral in-memory test signer; no private key is stored or logged.
     signer = privateKeyToAccount(generatePrivateKey());
+    vi.mocked(gatewayBalanceReader.read).mockReset();
+    vi.mocked(gatewayBalanceReader.read).mockResolvedValue({
+      totalRaw: '2500000',
+      availableRaw: '2000000',
+    });
   });
 
   afterAll(async () => {
@@ -381,5 +392,42 @@ describe('wallet-native account layer', () => {
     expect((await app.inject({ method: 'GET', url: '/markets/1' })).statusCode).toBe(
       200,
     );
+  });
+
+  it('returns Gateway balance reads and degrades without breaking Stage 1', async () => {
+    const { cookie } = await signIn(app, signer);
+    const balance = await app.inject({
+      method: 'GET',
+      url: '/account/gateway/balance',
+      headers: { cookie },
+    });
+    expect(balance.statusCode).toBe(200);
+    expect(balance.json()).toEqual({
+      totalRaw: '2500000',
+      availableRaw: '2000000',
+    });
+    expect(gatewayBalanceReader.read).toHaveBeenCalledWith(
+      signer.address.toLowerCase(),
+    );
+
+    vi.mocked(gatewayBalanceReader.read).mockRejectedValueOnce(
+      new Error('Circle is unreachable'),
+    );
+    const unavailable = await app.inject({
+      method: 'GET',
+      url: '/account/gateway/balance',
+      headers: { cookie },
+    });
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.json()).toEqual({
+      error: 'Circle Gateway balance is temporarily unavailable.',
+    });
+
+    const profile = await app.inject({
+      method: 'GET',
+      url: '/account/profile',
+      headers: { cookie },
+    });
+    expect(profile.statusCode).toBe(200);
   });
 });

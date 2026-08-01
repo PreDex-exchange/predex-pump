@@ -17,6 +17,8 @@ import {
 import {
   addSlippage,
   buildClaimFundingResidualTx,
+  buildCircleGatewayApprovalTx,
+  buildCircleGatewayDepositTx,
   buildCloseoutTx,
   buildCommitteeResolutionDigest,
   buildCommitteeResolveTx,
@@ -33,6 +35,7 @@ import {
   buildRedeemTx,
   buildSellTx,
   buildSweepProtocolAfterCloseoutTx,
+  CIRCLE_GATEWAY_DEPOSIT_GAS_LIMIT,
   cumulativeMiniClobPaymentRaw,
   deadlineFromTimestamp,
   MINI_CLOB_PRICE_SCALE,
@@ -195,6 +198,7 @@ async function sendAndConfirm(
     approval?: boolean;
   },
   report: TxReporter,
+  options: { gas?: bigint } = {},
 ) {
   assertConnectedAccount(account);
   report({
@@ -209,6 +213,7 @@ async function sendAndConfirm(
       to: write.to,
       data: write.data,
       value: write.value,
+      ...(options.gas === undefined ? {} : { gas: options.gas }),
     } as never,
   );
   report({
@@ -232,6 +237,60 @@ async function sendAndConfirm(
     hash,
   });
   return receipt;
+}
+
+export interface CircleGatewayDepositResult {
+  approvalTxHash: Hash;
+  depositTxHash: Hash;
+}
+
+export async function depositToCircleGatewayOnArc({
+  account,
+  amountRaw,
+  report,
+}: {
+  account: Address;
+  amountRaw: bigint;
+  report: TxReporter;
+}): Promise<CircleGatewayDepositResult> {
+  assertConnectedAccount(account);
+  if (amountRaw <= 0n) throw new Error('Enter a positive Gateway deposit amount.');
+
+  report({
+    phase: 'checking',
+    message: 'Checking the connected Arc USDC balance for this Gateway deposit…',
+  });
+  const balance = await readCollateralBalance(account);
+  if (balance < amountRaw) {
+    throw new Error('The connected wallet does not have enough Arc USDC.');
+  }
+
+  const approval = await sendAndConfirm(
+    account,
+    buildCircleGatewayApprovalTx(amountRaw),
+    {
+      awaiting: 'Step 1 of 2: approve Circle Gateway to move this exact USDC amount.',
+      pending: 'Step 1 of 2: waiting for the Circle Gateway approval on Arc…',
+      confirmed: 'Step 1 of 2 confirmed. Preparing the Gateway deposit.',
+      approval: true,
+    },
+    report,
+  );
+  const deposit = await sendAndConfirm(
+    account,
+    buildCircleGatewayDepositTx(amountRaw),
+    {
+      awaiting: 'Step 2 of 2: deposit into your own Circle Gateway balance.',
+      pending: 'Step 2 of 2: waiting for the Gateway deposit on Arc…',
+      confirmed: 'Circle Gateway deposit confirmed on Arc.',
+    },
+    report,
+    { gas: CIRCLE_GATEWAY_DEPOSIT_GAS_LIMIT },
+  );
+  return {
+    approvalTxHash: approval.transactionHash,
+    depositTxHash: deposit.transactionHash,
+  };
 }
 
 async function readAllowance(account: Address, spender: Address) {
