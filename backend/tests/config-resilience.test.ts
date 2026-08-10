@@ -44,7 +44,7 @@ describe('indexer RPC configuration', () => {
   });
 
   it('uses rate-limit-friendly polling, chunk pacing, and stall defaults', () => {
-    expect(DEFAULT_INDEXER_POLL_MS).toBe(300_000);
+    expect(DEFAULT_INDEXER_POLL_MS).toBe(30_000);
     expect(DEFAULT_INDEXER_FALLBACK_POLL_MS).toBe(10_000);
     expect(DEFAULT_INDEXER_CHUNK_DELAY_MS).toBe(200);
     expect(DEFAULT_INDEXER_STALL_MS).toBe(90_000);

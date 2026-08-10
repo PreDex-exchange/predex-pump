@@ -11,7 +11,6 @@ import {
 
 import {
   COLLATERAL_APPROVAL_EVENT,
-  COLLATERAL_TRANSFER_EVENT,
   CORE_TRACKED_ADDRESSES,
   CTF_APPROVAL_EVENT,
   CTF_EVENT_ABI,
@@ -187,10 +186,8 @@ function eventSelector(event: AbiEvent): Hex {
   return selector;
 }
 
-function logSubscriptionSpecs(
-  collateralOwners: readonly Address[],
-): SubscriptionSpec[] {
-  const specs: SubscriptionSpec[] = [
+function logSubscriptionSpecs(): SubscriptionSpec[] {
+  return [
     {
       label: 'core contracts',
       parameters: [
@@ -233,37 +230,6 @@ function logSubscriptionSpecs(
       ],
     },
   ];
-
-  if (collateralOwners.length > 0) {
-    specs.push(
-      {
-        label: 'collateral transfers in',
-        parameters: [
-          'logs',
-          {
-            address: ADDRESSES.usdc,
-            topics: topicsForEvent(COLLATERAL_TRANSFER_EVENT, {
-              to: [...collateralOwners],
-            }),
-          },
-        ],
-      },
-      {
-        label: 'collateral transfers out',
-        parameters: [
-          'logs',
-          {
-            address: ADDRESSES.usdc,
-            topics: topicsForEvent(COLLATERAL_TRANSFER_EVENT, {
-              from: [...collateralOwners],
-            }),
-          },
-        ],
-      },
-    );
-  }
-
-  return specs;
 }
 
 function objectValue(value: unknown, key: string): unknown {
@@ -295,12 +261,6 @@ function errorFrom(value: unknown): Error {
     if (typeof message === 'string') return new Error(message);
   }
   return new Error(String(value));
-}
-
-function ownerFingerprint(owners: readonly Address[]): string {
-  return [...new Set(owners.map((owner) => owner.toLowerCase()))]
-    .sort()
-    .join(',');
 }
 
 class WakeSignal {
@@ -356,10 +316,8 @@ export interface SubscriptionSupervisorOptions {
   now: () => Date;
   stallMs: number;
   heartbeatMs: number;
-  ownerRefreshMs: number;
   reconnectBaseMs: number;
   reconnectMaxMs: number;
-  loadCollateralOwners: () => Promise<readonly Address[]>;
   createTransport: IndexerSubscriptionTransportFactory;
   onConnecting: (url: string) => Promise<void>;
   onConnected: (details: {
@@ -379,7 +337,6 @@ export interface SubscriptionSupervisorOptions {
     generation: number;
     receivedAt: Date;
   }) => Promise<void>;
-  onOwnerFilterRefresh: (ownerCount: number) => void;
 }
 
 export async function runSubscriptionSupervisor(
@@ -400,7 +357,6 @@ export async function runSubscriptionSupervisor(
     let active = true;
     let sessionError: Error | undefined;
     let connectedGeneration: number | undefined;
-    let refreshOwners = false;
 
     const failSession = (error: unknown): void => {
       if (!active || sessionError !== undefined) return;
@@ -410,15 +366,12 @@ export async function runSubscriptionSupervisor(
 
     try {
       await options.onConnecting(url);
-      const collateralOwners = await options.loadCollateralOwners();
-      let ownersFingerprint = ownerFingerprint(collateralOwners);
-      const specs = logSubscriptionSpecs(collateralOwners);
+      const specs = logSubscriptionSpecs();
       transport = options.createTransport(url);
 
       let latestHead: number | undefined;
       let lastHeadAt = options.now().getTime();
       let lastHeartbeatAt = lastHeadAt;
-      let nextOwnerRefreshAt = lastHeadAt + options.ownerRefreshMs;
 
       try {
         handles.push(
@@ -502,11 +455,7 @@ export async function runSubscriptionSupervisor(
             ? Number.POSITIVE_INFINITY
             : lastHeartbeatAt + options.heartbeatMs;
         const nextStallCheckAt = lastHeadAt + options.stallMs;
-        const wakeAt = Math.min(
-          nextHeartbeatAt,
-          nextStallCheckAt,
-          nextOwnerRefreshAt,
-        );
+        const wakeAt = Math.min(nextHeartbeatAt, nextStallCheckAt);
         await sessionWake.wait(
           Math.max(1, wakeAt - currentTime),
           options.signal,
@@ -535,24 +484,10 @@ export async function runSubscriptionSupervisor(
           });
           lastHeartbeatAt = afterWait;
         }
-
-        if (afterWait >= nextOwnerRefreshAt) {
-          const nextOwners = await options.loadCollateralOwners();
-          const nextFingerprint = ownerFingerprint(nextOwners);
-          nextOwnerRefreshAt = afterWait + options.ownerRefreshMs;
-          if (nextFingerprint !== ownersFingerprint) {
-            ownersFingerprint = nextFingerprint;
-            refreshOwners = true;
-            options.onOwnerFilterRefresh(nextOwners.length);
-            break;
-          }
-        }
       }
 
       if (options.signal.aborted) break;
-      if (refreshOwners) {
-        failureCount = 0;
-      } else if (sessionError === undefined) {
+      if (sessionError === undefined) {
         sessionError = new Error('WebSocket subscription session ended');
       }
     } catch (error) {
@@ -565,25 +500,18 @@ export async function runSubscriptionSupervisor(
 
     if (options.signal.aborted) break;
 
-    const retryInMs = refreshOwners
-      ? 0
-      : Math.min(
-          options.reconnectMaxMs,
-          options.reconnectBaseMs * 2 ** Math.min(failureCount, 20),
-        );
-    if (!refreshOwners) {
-      failureCount += 1;
-      urlIndex = (urlIndex + 1) % options.urls.length;
-    }
+    const retryInMs = Math.min(
+      options.reconnectMaxMs,
+      options.reconnectBaseMs * 2 ** Math.min(failureCount, 20),
+    );
+    failureCount += 1;
+    urlIndex = (urlIndex + 1) % options.urls.length;
     await options.onDisconnected({
       generation: connectedGeneration,
-      error:
-        sessionError ?? new Error('Refreshing dynamic collateral-owner filters'),
+      error: sessionError ?? new Error('WebSocket subscription session ended'),
       retryInMs,
     });
-    if (retryInMs > 0) {
-      await options.wait(retryInMs, options.signal);
-    }
+    await options.wait(retryInMs, options.signal);
   }
 }
 

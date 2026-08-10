@@ -666,10 +666,8 @@ export async function runIndexer(
           now,
           stallMs: config.webSocketStallMs,
           heartbeatMs: config.webSocketHeartbeatMs,
-          ownerRefreshMs: config.webSocketOwnerRefreshMs,
           reconnectBaseMs: config.webSocketReconnectBaseMs,
           reconnectMaxMs: config.webSocketReconnectMaxMs,
-          loadCollateralOwners: () => loadCollateralOwners(prisma),
           createTransport: createSubscriptionTransport,
           async onConnecting(url) {
             await setSubscriptionStatus(prisma, 'connecting');
@@ -731,11 +729,6 @@ export async function runIndexer(
               prisma,
               blockNumber,
               receivedAt,
-            );
-          },
-          onOwnerFilterRefresh(ownerCount) {
-            console.info(
-              `[indexer] websocket=refreshing collateralOwners=${ownerCount}`,
             );
           },
         }).catch(async (error: unknown) => {

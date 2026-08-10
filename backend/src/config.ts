@@ -3,9 +3,9 @@ import { ARC, DEPLOY_BLOCK } from '@predex-pump/shared';
 const DEFAULT_DATABASE_URL =
   'postgresql://predex:predex@localhost:5432/predex_pump?schema=public';
 
-// WebSocket subscriptions are the primary activity signal. This scan only
-// closes holes from provider bugs or unusual subscription races.
-export const DEFAULT_INDEXER_POLL_MS = 300_000;
+// WebSocket subscriptions are the primary activity signal. This scan also
+// bounds tracked-maker collateral staleness for bare transfers.
+export const DEFAULT_INDEXER_POLL_MS = 30_000;
 // When subscriptions are unavailable, retain the old HTTP polling cadence so
 // an HTTP-only deployment remains correct.
 export const DEFAULT_INDEXER_FALLBACK_POLL_MS = 10_000;
@@ -14,7 +14,6 @@ export const DEFAULT_INDEXER_STALL_MS = 90_000;
 export const DEFAULT_INDEXER_WS_COALESCE_MS = 250;
 export const DEFAULT_INDEXER_WS_STALL_MS = 15_000;
 export const DEFAULT_INDEXER_WS_HEARTBEAT_MS = 5_000;
-export const DEFAULT_INDEXER_WS_OWNER_REFRESH_MS = 30_000;
 export const DEFAULT_INDEXER_WS_RECONNECT_BASE_MS = 1_000;
 export const DEFAULT_INDEXER_WS_RECONNECT_MAX_MS = 30_000;
 
@@ -83,7 +82,6 @@ export interface RuntimeConfig {
   webSocketCoalesceMs: number;
   webSocketStallMs: number;
   webSocketHeartbeatMs: number;
-  webSocketOwnerRefreshMs: number;
   webSocketReconnectBaseMs: number;
   webSocketReconnectMaxMs: number;
   apiHost: string;
@@ -156,10 +154,6 @@ export function loadRuntimeConfig(): RuntimeConfig {
     webSocketHeartbeatMs: positiveInteger(
       'INDEXER_WS_HEARTBEAT_MS',
       DEFAULT_INDEXER_WS_HEARTBEAT_MS,
-    ),
-    webSocketOwnerRefreshMs: positiveInteger(
-      'INDEXER_WS_OWNER_REFRESH_MS',
-      DEFAULT_INDEXER_WS_OWNER_REFRESH_MS,
     ),
     webSocketReconnectBaseMs,
     webSocketReconnectMaxMs,

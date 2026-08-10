@@ -18,7 +18,10 @@ import {
 
 import { getHealth } from '../src/api/queries.js';
 import { loadRuntimeConfig, type RuntimeConfig } from '../src/config.js';
-import { CONTRACT_BY_ADDRESS } from '../src/indexer/abis.js';
+import {
+  COLLATERAL_TRANSFER_EVENT,
+  CONTRACT_BY_ADDRESS,
+} from '../src/indexer/abis.js';
 import { runIndexer } from '../src/indexer/runner.js';
 import {
   runSubscriptionSupervisor,
@@ -96,20 +99,24 @@ function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
     webSocketCoalesceMs: 10,
     webSocketStallMs: 500,
     webSocketHeartbeatMs: 50,
-    webSocketOwnerRefreshMs: 1_000,
     webSocketReconnectBaseMs: 10,
     webSocketReconnectMaxMs: 20,
     ...overrides,
   };
 }
 
+interface FakeGetLogsParameters {
+  address?: unknown;
+  fromBlock?: bigint;
+  toBlock?: bigint;
+  event?: { name?: string };
+  events?: readonly unknown[];
+  args?: Record<string, unknown>;
+}
+
 function asClient(methods: {
   getBlockNumber: () => Promise<bigint>;
-  getLogs: (parameters: {
-    address?: unknown;
-    fromBlock?: bigint;
-    toBlock?: bigint;
-  }) => Promise<unknown[]>;
+  getLogs: (parameters: FakeGetLogsParameters) => Promise<unknown[]>;
   getBlock?: () => Promise<{ timestamp: bigint }>;
 }): PublicClient {
   return {
@@ -140,6 +147,91 @@ function registeredMarketTypeLog(blockNumber = 100) {
     transactionHash: `0x${'c'.repeat(64)}` as Hex,
     transactionIndex: 0,
   };
+}
+
+function collateralTransferLog(input: {
+  blockNumber: number;
+  from: Address;
+  to: Address;
+  value: bigint;
+}) {
+  const abi = CONTRACT_BY_ADDRESS.get(ADDRESSES.usdc.toLowerCase())?.abi;
+  if (abi === undefined) throw new Error('Collateral ABI unavailable');
+  return {
+    address: ADDRESSES.usdc,
+    blockHash: `0x${'d'.repeat(64)}` as Hex,
+    blockNumber: BigInt(input.blockNumber),
+    data: encodeAbiParameters(
+      [{ name: 'value', type: 'uint256' }],
+      [input.value],
+    ),
+    logIndex: 1,
+    removed: false,
+    topics: encodeEventTopics({
+      abi,
+      eventName: 'Transfer',
+      args: { from: input.from, to: input.to },
+    }),
+    transactionHash: `0x${'e'.repeat(64)}` as Hex,
+    transactionIndex: 0,
+  };
+}
+
+async function seedTrackedMaker(
+  owner: Address,
+  snapshotBlock = 99,
+): Promise<void> {
+  const conditionId = `0x${'1'.repeat(64)}`;
+  await testPrisma.market.create({
+    data: {
+      id: '1',
+      creator: owner,
+      question: 'Static subscription test market',
+      ancillaryData: '0x',
+      ancillaryDataHash: `0x${'2'.repeat(64)}`,
+      metadataHash: `0x${'3'.repeat(64)}`,
+      conditionId,
+      questionId: `0x${'4'.repeat(64)}`,
+      marketTypeVersion: 1,
+      createdAt: 1_700_000_000,
+    },
+  });
+  await testPrisma.signedOrder.create({
+    data: {
+      orderHash: `0x${'5'.repeat(64)}`,
+      saltRaw: '1',
+      maker: owner.toLowerCase(),
+      signer: owner.toLowerCase(),
+      taker: '0x0000000000000000000000000000000000000000',
+      tokenId: '1',
+      makerAmountRaw: '1000',
+      takerAmountRaw: '500',
+      expiration: 1_900_000_000,
+      nonceRaw: '0',
+      feeRateBpsRaw: '0',
+      exchangeSide: 0,
+      signatureType: 0,
+      signature: '0x',
+      marketId: '1',
+      conditionId,
+      outcome: 'YES',
+      side: 'BID',
+      priceRaw: '500000',
+      sizeRaw: '1000',
+      remainingRaw: '1000',
+      createdAt: 1_700_000_000,
+      updatedAt: 1_700_000_000,
+    },
+  });
+  await testPrisma.collateralBalance.create({
+    data: {
+      owner: owner.toLowerCase(),
+      balanceRaw: '1000',
+      blockNumber: snapshotBlock,
+      logIndex: 0,
+      updatedAt: 1_700_000_000,
+    },
+  });
 }
 
 async function waitUntil(
@@ -300,10 +392,7 @@ describe('WebSocket-driven indexer', () => {
     expect(headCalls).toBe(2);
   });
 
-  it('subscribes to exact dynamic collateral-owner transfer topics', async () => {
-    const owner =
-      '0x1111111111111111111111111111111111111111' as Address;
-    const ownerTopic = `0x${owner.slice(2).padStart(64, '0')}`;
+  it('installs only the four static log subscriptions', async () => {
     const controller = new AbortController();
     const transport = new FakeSubscriptionTransport();
     let markConnected!: () => void;
@@ -317,18 +406,18 @@ describe('WebSocket-driven indexer', () => {
       now: () => new Date(),
       stallMs: 1_000,
       heartbeatMs: 100,
-      ownerRefreshMs: 1_000,
       reconnectBaseMs: 10,
       reconnectMaxMs: 20,
-      loadCollateralOwners: async () => [owner],
       createTransport: () => transport,
       onConnecting: async () => undefined,
-      onConnected: async () => markConnected(),
+      onConnected: async ({ logSubscriptionCount }) => {
+        expect(logSubscriptionCount).toBe(4);
+        markConnected();
+      },
       onDisconnected: async () => undefined,
       onHead: () => undefined,
       onActivity: () => undefined,
       onHeartbeat: async () => undefined,
-      onOwnerFilterRefresh: () => undefined,
     });
 
     try {
@@ -336,34 +425,144 @@ describe('WebSocket-driven indexer', () => {
       const logSubscriptions = transport.subscriptions.filter(
         ({ parameters }) => parameters[0] === 'logs',
       );
-      expect(logSubscriptions).toHaveLength(6);
-      const incoming = logSubscriptions.at(-2)?.parameters;
-      const outgoing = logSubscriptions.at(-1)?.parameters;
-      if (incoming?.[0] !== 'logs' || outgoing?.[0] !== 'logs') {
-        throw new Error('Dynamic collateral subscriptions were not installed');
-      }
-      expect(incoming[1].address).toBe(ADDRESSES.usdc);
-      expect(incoming[1].topics?.[1]).toBeNull();
-      expect(incoming[1].topics?.[2]).toEqual([ownerTopic]);
-      expect(outgoing[1].address).toBe(ADDRESSES.usdc);
-      expect(outgoing[1].topics?.[1]).toEqual([ownerTopic]);
-      expect(outgoing[1].topics?.[2]).toBeNull();
+      expect(logSubscriptions).toHaveLength(4);
+      expect(
+        logSubscriptions.map(({ parameters }) =>
+          parameters[0] === 'logs' ? parameters[1].address : undefined,
+        ),
+      ).toEqual([
+        expect.any(Array),
+        ADDRESSES.ctf,
+        ADDRESSES.ctf,
+        ADDRESSES.usdc,
+      ]);
+      const transferSelector = encodeEventTopics({
+        abi: [COLLATERAL_TRANSFER_EVENT],
+        eventName: 'Transfer',
+      })[0];
+      expect(JSON.stringify(logSubscriptions)).not.toContain(transferSelector);
     } finally {
       controller.abort();
       await supervisor;
     }
   });
 
+  it('keeps one healthy session while a new maker transfer is indexed by the safety sweep', async () => {
+    const owner =
+      '0x1111111111111111111111111111111111111111' as Address;
+    const recipient =
+      '0x2222222222222222222222222222222222222222' as Address;
+    const transport = new FakeSubscriptionTransport();
+    const createTransport = vi.fn(() => transport);
+    const sweptOwnerFilters: unknown[] = [];
+    let head = 99n;
+    let headCalls = 0;
+    const client = asClient({
+      getBlockNumber: async () => {
+        headCalls += 1;
+        return head;
+      },
+      getLogs: async ({ event, args, fromBlock }) => {
+        if (event?.name !== 'Transfer' || args?.from === undefined) return [];
+        sweptOwnerFilters.push(args.from);
+        return fromBlock === 100n
+          ? [
+              collateralTransferLog({
+                blockNumber: 100,
+                from: owner,
+                to: recipient,
+                value: 250n,
+              }),
+            ]
+          : [];
+      },
+      getBlock: async () => ({ timestamp: 1_700_000_100n }),
+    });
+    start(
+      testConfig({ pollMs: 25, webSocketStallMs: 1_000 }),
+      client,
+      createTransport,
+    );
+
+    await waitUntil(
+      async () =>
+        (await testPrisma.indexerSubscriptionState.findUnique({
+          where: { id: 1 },
+        }))?.status === 'connected',
+      'the static subscription to become trusted',
+    );
+    const subscriptionBeforeOwnerChange =
+      await testPrisma.indexerSubscriptionState.findUniqueOrThrow({
+        where: { id: 1 },
+      });
+
+    await seedTrackedMaker(owner);
+    head = 100n;
+
+    await waitUntil(
+      async () =>
+        (await testPrisma.collateralBalance.findUnique({
+          where: { owner: owner.toLowerCase() },
+        }))?.balanceRaw === '750',
+      'the safety sweep to apply the maker transfer',
+    );
+
+    const subscriptionAfterSweep =
+      await testPrisma.indexerSubscriptionState.findUniqueOrThrow({
+        where: { id: 1 },
+      });
+    expect(sweptOwnerFilters).toContainEqual([owner.toLowerCase()]);
+    expect(headCalls).toBeGreaterThanOrEqual(3);
+    expect(createTransport).toHaveBeenCalledTimes(1);
+    expect(transport.subscriptions).toHaveLength(5);
+    expect(transport.close).not.toHaveBeenCalled();
+    for (const subscription of transport.subscriptions) {
+      expect(subscription.unsubscribe).not.toHaveBeenCalled();
+    }
+    expect(subscriptionAfterSweep).toMatchObject({ status: 'connected' });
+    expect(subscriptionAfterSweep.updatedAt).toEqual(
+      subscriptionBeforeOwnerChange.updatedAt,
+    );
+    expect(await getHealth(testPrisma, 1_000)).toMatchObject({
+      ok: true,
+      indexerStatus: 'healthy',
+      indexedBlock: 100,
+    });
+  });
+
   it('backfills the disconnected gap before trusting a replacement subscription', async () => {
+    const owner =
+      '0x1111111111111111111111111111111111111111' as Address;
+    const recipient =
+      '0x2222222222222222222222222222222222222222' as Address;
     let head = 99n;
     const coreRanges: Array<[bigint | undefined, bigint | undefined]> = [];
+    const collateralRanges: Array<[
+      bigint | undefined,
+      bigint | undefined,
+    ]> = [];
     const transports: FakeSubscriptionTransport[] = [];
     const client = asClient({
       getBlockNumber: async () => head,
-      getLogs: async ({ address, fromBlock, toBlock }) => {
-        if (!Array.isArray(address)) return [];
-        coreRanges.push([fromBlock, toBlock]);
-        return fromBlock === 100n ? [registeredMarketTypeLog()] : [];
+      getLogs: async ({ address, event, args, fromBlock, toBlock }) => {
+        if (Array.isArray(address)) {
+          coreRanges.push([fromBlock, toBlock]);
+          return fromBlock === 100n ? [registeredMarketTypeLog()] : [];
+        }
+        if (event?.name === 'Transfer' && args?.from !== undefined) {
+          collateralRanges.push([fromBlock, toBlock]);
+          return fromBlock === 100n
+            ? [
+                collateralTransferLog({
+                  blockNumber: 100,
+                  from: owner,
+                  to: recipient,
+                  value: 250n,
+                }),
+              ]
+            : [];
+        }
+        return [];
       },
       getBlock: async () => ({ timestamp: 1_700_000_000n }),
     });
@@ -380,6 +579,7 @@ describe('WebSocket-driven indexer', () => {
         }))?.status === 'connected',
       'the first subscription',
     );
+    await seedTrackedMaker(owner);
     head = 101n;
     transports[0]?.fail();
 
@@ -393,6 +593,12 @@ describe('WebSocket-driven indexer', () => {
     expect(transports.length).toBeGreaterThanOrEqual(2);
     expect(transports[0]?.close).toHaveBeenCalledTimes(1);
     expect(coreRanges).toEqual([[100n, 101n]]);
+    expect(collateralRanges).toEqual([[100n, 101n]]);
+    expect(
+      await testPrisma.collateralBalance.findUniqueOrThrow({
+        where: { owner: owner.toLowerCase() },
+      }),
+    ).toMatchObject({ balanceRaw: '750', blockNumber: 100 });
     expect(
       await testPrisma.indexerState.findUniqueOrThrow({ where: { id: 1 } }),
     ).toMatchObject({
