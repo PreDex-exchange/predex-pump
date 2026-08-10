@@ -711,7 +711,10 @@ export async function getHealth(
   stallAfterMs = DEFAULT_INDEXER_STALL_MS,
   now = new Date(),
 ): Promise<HealthResponse> {
-  const state = await prisma.indexerState.findUnique({ where: { id: 1 } });
+  const [state, subscription] = await Promise.all([
+    prisma.indexerState.findUnique({ where: { id: 1 } }),
+    prisma.indexerSubscriptionState.findUnique({ where: { id: 1 } }),
+  ]);
   if (state === null) {
     return {
       ok: false,
@@ -724,10 +727,14 @@ export async function getHealth(
       secondsSinceLastSuccessfulPoll: null,
     };
   }
+  const lastSuccessfulLivenessAt =
+    subscription?.status === 'connected'
+      ? (subscription.lastMessageAt ?? state.lastSuccessfulPollAt)
+      : state.lastSuccessfulPollAt;
   const millisecondsSinceLastSuccessfulPoll =
-    state.lastSuccessfulPollAt === null
+    lastSuccessfulLivenessAt === null
       ? null
-      : Math.max(0, now.getTime() - state.lastSuccessfulPollAt.getTime());
+      : Math.max(0, now.getTime() - lastSuccessfulLivenessAt.getTime());
   const secondsSinceLastSuccessfulPoll =
     millisecondsSinceLastSuccessfulPoll === null
       ? null
@@ -737,17 +744,22 @@ export async function getHealth(
     millisecondsSinceLastSuccessfulPoll > stallAfterMs;
   const indexerStatus = stalled
     ? 'stalled'
-    : state.consecutiveRpcFailures > 0
+    : state.consecutiveRpcFailures > 0 ||
+        subscription?.status !== 'connected'
       ? 'degraded'
       : 'healthy';
+  const headBlock = Math.max(
+    state.headBlock,
+    subscription?.headBlock ?? state.headBlock,
+  );
   return {
-    ok: !stalled && state.lastBlock <= state.headBlock,
+    ok: !stalled && state.lastBlock <= headBlock,
     chainId: state.chainId,
     indexedBlock: state.lastBlock,
-    headBlock: state.headBlock,
-    lagBlocks: Math.max(0, state.headBlock - state.lastBlock),
+    headBlock,
+    lagBlocks: Math.max(0, headBlock - state.lastBlock),
     indexerStatus,
-    lastSuccessfulPollAt: state.lastSuccessfulPollAt?.toISOString() ?? null,
+    lastSuccessfulPollAt: lastSuccessfulLivenessAt?.toISOString() ?? null,
     secondsSinceLastSuccessfulPoll,
   };
 }

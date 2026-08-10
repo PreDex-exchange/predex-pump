@@ -551,3 +551,13 @@ model IndexerState {
   consecutiveRpcFailures Int       @default(0)
   updatedAt              DateTime  @updatedAt
 }
+
+// Kept separate from IndexerState so high-frequency subscription liveness
+// never contends with the serializable cursor/event transaction.
+model IndexerSubscriptionState {
+  id            Int       @id @default(1)
+  status        String    @default("polling")
+  headBlock     Int       @default(0)
+  lastMessageAt DateTime?
+  updatedAt     DateTime  @updatedAt
+}

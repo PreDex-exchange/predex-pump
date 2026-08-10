@@ -14,6 +14,11 @@ export const ARC = {
     'https://rpc.testnet.arc.network',
     'https://rpc.drpc.testnet.arc.network',
   ],
+  webSocketRpcUrls: [
+    'wss://rpc.testnet.arc.network',
+    'wss://rpc.testnet.arc.io',
+    'wss://rpc.drpc.testnet.arc.network',
+  ],
   nativeCurrency: { name: 'USD Coin', symbol: 'USDC', decimals: 18 },
   // The collateral is read/written as a 6-decimal ERC-20. 1_000_000 raw = 1 USDC.
   usdcErc20Decimals: 6,

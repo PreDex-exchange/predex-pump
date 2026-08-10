@@ -3,9 +3,20 @@ import { ARC, DEPLOY_BLOCK } from '@predex-pump/shared';
 const DEFAULT_DATABASE_URL =
   'postgresql://predex:predex@localhost:5432/predex_pump?schema=public';
 
-export const DEFAULT_INDEXER_POLL_MS = 10_000;
+// WebSocket subscriptions are the primary activity signal. This scan only
+// closes holes from provider bugs or unusual subscription races.
+export const DEFAULT_INDEXER_POLL_MS = 300_000;
+// When subscriptions are unavailable, retain the old HTTP polling cadence so
+// an HTTP-only deployment remains correct.
+export const DEFAULT_INDEXER_FALLBACK_POLL_MS = 10_000;
 export const DEFAULT_INDEXER_CHUNK_DELAY_MS = 200;
 export const DEFAULT_INDEXER_STALL_MS = 90_000;
+export const DEFAULT_INDEXER_WS_COALESCE_MS = 250;
+export const DEFAULT_INDEXER_WS_STALL_MS = 15_000;
+export const DEFAULT_INDEXER_WS_HEARTBEAT_MS = 5_000;
+export const DEFAULT_INDEXER_WS_OWNER_REFRESH_MS = 30_000;
+export const DEFAULT_INDEXER_WS_RECONNECT_BASE_MS = 1_000;
+export const DEFAULT_INDEXER_WS_RECONNECT_MAX_MS = 30_000;
 
 function positiveInteger(name: string, fallback: number): number {
   const value = process.env[name];
@@ -44,15 +55,37 @@ export function resolveRpcUrls(
   return [first, ...urls.slice(1)];
 }
 
+export function resolveWebSocketRpcUrls(
+  configuredUrl: string | undefined,
+): readonly string[] {
+  // An explicitly empty value is the supported way to run HTTP-only. An
+  // omitted value uses the public Arc WebSocket endpoints from shared config.
+  const candidates =
+    configuredUrl === undefined
+      ? [...ARC.webSocketRpcUrls]
+      : configuredUrl.trim() === ''
+        ? []
+        : [configuredUrl.trim()];
+  return [...new Set(candidates.map((url) => url.trim()).filter(Boolean))];
+}
+
 export interface RuntimeConfig {
   databaseUrl: string;
   rpcUrl: string;
   rpcUrls: readonly [string, ...string[]];
+  webSocketRpcUrls: readonly string[];
   deployBlock: number;
   blockChunk: number;
   pollMs: number;
+  fallbackPollMs: number;
   chunkDelayMs: number;
   indexerStallMs: number;
+  webSocketCoalesceMs: number;
+  webSocketStallMs: number;
+  webSocketHeartbeatMs: number;
+  webSocketOwnerRefreshMs: number;
+  webSocketReconnectBaseMs: number;
+  webSocketReconnectMaxMs: number;
   apiHost: string;
   apiPort: number;
   databasePoolSize: number;
@@ -74,14 +107,36 @@ export function loadRuntimeConfig(): RuntimeConfig {
   }
 
   const rpcUrls = resolveRpcUrls(process.env.ARC_RPC_URL);
+  const webSocketRpcUrls = resolveWebSocketRpcUrls(
+    process.env.ARC_WS_RPC_URL,
+  );
+  const webSocketReconnectBaseMs = positiveInteger(
+    'INDEXER_WS_RECONNECT_BASE_MS',
+    DEFAULT_INDEXER_WS_RECONNECT_BASE_MS,
+  );
+  const webSocketReconnectMaxMs = positiveInteger(
+    'INDEXER_WS_RECONNECT_MAX_MS',
+    DEFAULT_INDEXER_WS_RECONNECT_MAX_MS,
+  );
+  if (webSocketReconnectMaxMs < webSocketReconnectBaseMs) {
+    throw new Error(
+      'INDEXER_WS_RECONNECT_MAX_MS must be greater than or equal to ' +
+        'INDEXER_WS_RECONNECT_BASE_MS',
+    );
+  }
 
   return {
     databaseUrl,
     rpcUrl: rpcUrls[0],
     rpcUrls,
+    webSocketRpcUrls,
     deployBlock: DEPLOY_BLOCK,
     blockChunk: positiveInteger('INDEXER_BLOCK_CHUNK', 2_000),
     pollMs: positiveInteger('INDEXER_POLL_MS', DEFAULT_INDEXER_POLL_MS),
+    fallbackPollMs: positiveInteger(
+      'INDEXER_FALLBACK_POLL_MS',
+      DEFAULT_INDEXER_FALLBACK_POLL_MS,
+    ),
     chunkDelayMs: nonNegativeInteger(
       'INDEXER_CHUNK_DELAY_MS',
       DEFAULT_INDEXER_CHUNK_DELAY_MS,
@@ -90,6 +145,24 @@ export function loadRuntimeConfig(): RuntimeConfig {
       'INDEXER_STALL_MS',
       DEFAULT_INDEXER_STALL_MS,
     ),
+    webSocketCoalesceMs: positiveInteger(
+      'INDEXER_WS_COALESCE_MS',
+      DEFAULT_INDEXER_WS_COALESCE_MS,
+    ),
+    webSocketStallMs: positiveInteger(
+      'INDEXER_WS_STALL_MS',
+      DEFAULT_INDEXER_WS_STALL_MS,
+    ),
+    webSocketHeartbeatMs: positiveInteger(
+      'INDEXER_WS_HEARTBEAT_MS',
+      DEFAULT_INDEXER_WS_HEARTBEAT_MS,
+    ),
+    webSocketOwnerRefreshMs: positiveInteger(
+      'INDEXER_WS_OWNER_REFRESH_MS',
+      DEFAULT_INDEXER_WS_OWNER_REFRESH_MS,
+    ),
+    webSocketReconnectBaseMs,
+    webSocketReconnectMaxMs,
     apiHost: process.env.API_HOST ?? '0.0.0.0',
     apiPort,
     databasePoolSize: positiveInteger('DATABASE_POOL_SIZE', 32),

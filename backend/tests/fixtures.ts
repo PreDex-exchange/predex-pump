@@ -47,6 +47,14 @@ export async function seedContractData(): Promise<void> {
       lastSuccessfulPollAt: new Date(),
     },
   });
+  await testPrisma.indexerSubscriptionState.create({
+    data: {
+      id: 1,
+      status: 'connected',
+      headBlock: 103,
+      lastMessageAt: new Date(),
+    },
+  });
   await testPrisma.committeeMember.createMany({
     data: [
       {

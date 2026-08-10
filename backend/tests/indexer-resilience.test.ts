@@ -32,6 +32,8 @@ function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
     deployBlock: 100,
     blockChunk: 1,
     pollMs: 25,
+    fallbackPollMs: 25,
+    webSocketRpcUrls: [],
     chunkDelayMs: 0,
     indexerStallMs: 1_000,
     ...overrides,
@@ -225,7 +227,7 @@ describe('indexer RPC resilience', () => {
         random: () => 0,
         signal: controller.signal,
         wait: async (milliseconds) => {
-          if (milliseconds === config.pollMs) return;
+          if (milliseconds === config.fallbackPollMs) return;
           markRetryReached();
           await retryRelease;
         },
@@ -252,7 +254,7 @@ describe('indexer RPC resilience', () => {
           (await app.inject({ method: 'GET', url: '/health' })).json(),
         ).toMatchObject({
           ok: true,
-          indexerStatus: 'healthy',
+          indexerStatus: 'degraded',
           indexedBlock: 101,
           headBlock: 101,
         });

@@ -574,13 +574,20 @@ describe('REST shared contract', () => {
   });
 
   it('marks stale indexer liveness stalled and becomes healthy after recovery', async () => {
-    await testPrisma.indexerState.update({
-      where: { id: 1 },
-      data: {
-        consecutiveRpcFailures: 4,
-        lastSuccessfulPollAt: new Date(Date.now() - 91_000),
-      },
-    });
+    const staleAt = new Date(Date.now() - 91_000);
+    await testPrisma.$transaction([
+      testPrisma.indexerState.update({
+        where: { id: 1 },
+        data: {
+          consecutiveRpcFailures: 4,
+          lastSuccessfulPollAt: staleAt,
+        },
+      }),
+      testPrisma.indexerSubscriptionState.update({
+        where: { id: 1 },
+        data: { lastMessageAt: staleAt },
+      }),
+    ]);
     const stalled = (
       await app.inject({ method: 'GET', url: '/health' })
     ).json<HealthResponse>();
@@ -590,13 +597,20 @@ describe('REST shared contract', () => {
     });
     expect(stalled.secondsSinceLastSuccessfulPoll).toBeGreaterThanOrEqual(91);
 
-    await testPrisma.indexerState.update({
-      where: { id: 1 },
-      data: {
-        consecutiveRpcFailures: 0,
-        lastSuccessfulPollAt: new Date(),
-      },
-    });
+    const recoveredAt = new Date();
+    await testPrisma.$transaction([
+      testPrisma.indexerState.update({
+        where: { id: 1 },
+        data: {
+          consecutiveRpcFailures: 0,
+          lastSuccessfulPollAt: recoveredAt,
+        },
+      }),
+      testPrisma.indexerSubscriptionState.update({
+        where: { id: 1 },
+        data: { lastMessageAt: recoveredAt },
+      }),
+    ]);
     expect(
       (await app.inject({ method: 'GET', url: '/health' })).json<HealthResponse>(),
     ).toMatchObject({

@@ -1600,6 +1600,11 @@ export async function initializeReadModel(tx: Tx, deployBlock: number): Promise<
     },
     update: {},
   });
+  await tx.indexerSubscriptionState.upsert({
+    where: { id: 1 },
+    create: { id: 1 },
+    update: {},
+  });
 }
 
 export async function handleDecodedEvent(tx: Tx, event: DecodedEvent): Promise<boolean> {

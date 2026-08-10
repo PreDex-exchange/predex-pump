@@ -61,7 +61,8 @@ export const CORE_TRACKED_ADDRESSES = TRACKED_CONTRACTS.filter(
 ).map(({ address }) => address);
 
 export const CTF_EVENT_ABI = (ctfAbiJson as Abi).filter(
-  (item) => item.type === 'event' && item.name !== 'ApprovalForAll',
+  (item): item is AbiEvent =>
+    item.type === 'event' && item.name !== 'ApprovalForAll',
 );
 
 function eventFromAbi(abi: Abi, name: string): AbiEvent {
