@@ -350,40 +350,57 @@ export async function getMarketBook(
   prisma: PrismaClient,
   marketId: string,
 ): Promise<MarketBookResponse | null> {
-  const [market, orders, signedOrders] = await Promise.all([
-    prisma.market.findUnique({
-      where: { id: marketId },
-      select: { id: true, yesTokenId: true, noTokenId: true },
-    }),
-    prisma.order.findMany({
-      where: { marketId, open: true },
-      select: ORDER_SELECT,
-    }),
-    findFillableSignedOrders(
-      prisma,
-      { marketId },
-      Math.floor(Date.now() / 1_000),
-    ),
-  ]);
+  const market = await prisma.market.findUnique({
+    where: { id: marketId },
+    select: {
+      id: true,
+      yesTokenId: true,
+      noTokenId: true,
+      bookMigration: { select: { status: true, cancelledAt: true } },
+    },
+  });
   if (market === null) return null;
+  const liveVenue =
+    market.bookMigration?.status === 'MIGRATED' ? 'HYBRID' : 'MINICLOB';
+  const cancellingGap =
+    market.bookMigration?.status === 'CANCELLED' ||
+    market.bookMigration?.status === 'PUBLISHING' ||
+    typeof market.bookMigration?.cancelledAt === 'number';
+  const [liveMiniClobOrders, liveSignedOrders] =
+    liveVenue === 'HYBRID'
+      ? [
+          [],
+          await findFillableSignedOrders(
+            prisma,
+            { marketId },
+            Math.floor(Date.now() / 1_000),
+          ),
+        ]
+      : [
+          cancellingGap
+            ? []
+            : await prisma.order.findMany({
+                where: { marketId, open: true },
+                select: ORDER_SELECT,
+              }),
+          [],
+        ];
   return {
     marketId,
-    // P4 introduces the indexed migration state that can flip this value.
-    // Until then every graduated market's landing zone remains MiniCLOB.
-    liveVenue: 'MINICLOB',
+    liveVenue,
     yes: buildOrderBook(
       marketId,
       'YES',
       market.yesTokenId ?? '',
-      orders,
-      signedOrders,
+      liveMiniClobOrders,
+      liveSignedOrders,
     ),
     no: buildOrderBook(
       marketId,
       'NO',
       market.noTokenId ?? '',
-      orders,
-      signedOrders,
+      liveMiniClobOrders,
+      liveSignedOrders,
     ),
   };
 }
@@ -394,20 +411,41 @@ export async function getOrderBook(
 ): Promise<OrderBookResponse | null> {
   const market = await prisma.market.findFirst({
     where: { OR: [{ yesTokenId: tokenId }, { noTokenId: tokenId }] },
-    select: { id: true, yesTokenId: true, noTokenId: true },
+    select: {
+      id: true,
+      yesTokenId: true,
+      noTokenId: true,
+      bookMigration: { select: { status: true, cancelledAt: true } },
+    },
   });
   if (market === null) return null;
   const outcome = market.yesTokenId === tokenId ? 'YES' : 'NO';
-  const orders = await prisma.order.findMany({
-    where: { tokenId, open: true },
-    select: ORDER_SELECT,
-  });
-  const signedOrders = await findFillableSignedOrders(
-    prisma,
-    { tokenId },
-    Math.floor(Date.now() / 1_000),
+  const hybrid = market.bookMigration?.status === 'MIGRATED';
+  const cancellingGap =
+    market.bookMigration?.status === 'CANCELLED' ||
+    market.bookMigration?.status === 'PUBLISHING' ||
+    typeof market.bookMigration?.cancelledAt === 'number';
+  const orders =
+    hybrid || cancellingGap
+      ? []
+      : await prisma.order.findMany({
+          where: { tokenId, open: true },
+          select: ORDER_SELECT,
+        });
+  const signedOrders = hybrid
+    ? await findFillableSignedOrders(
+        prisma,
+        { tokenId },
+        Math.floor(Date.now() / 1_000),
+      )
+    : [];
+  return buildOrderBook(
+    market.id,
+    outcome,
+    tokenId,
+    hybrid ? [] : orders,
+    hybrid ? signedOrders : [],
   );
-  return buildOrderBook(market.id, outcome, tokenId, orders, signedOrders);
 }
 
 export async function getPriceHistory(

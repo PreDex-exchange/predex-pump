@@ -42,13 +42,13 @@ export interface SettlementPreflight {
   check(match: ReservedMatch): Promise<SettlementPreflightResult>;
 }
 
-interface FreshOrderState {
+export interface FreshSignedOrderPreflightState {
   nonce: bigint;
   complement: bigint;
   conditionId: Hex;
   payoutDenominator: bigint;
-  cancelled: boolean;
-  filledRaw: bigint;
+  cancelled?: boolean;
+  filledRaw?: bigint;
   balanceRaw: bigint;
   approval: bigint | boolean;
 }
@@ -143,7 +143,7 @@ function orderCalls(order: SignedOrder): ContractFunctionParameters[] {
 function parseFreshOrderState(
   values: readonly unknown[],
   offset: number,
-): FreshOrderState {
+): FreshSignedOrderPreflightState {
   const nonce = values[offset];
   const registry = values[offset + 1];
   const payoutDenominator = values[offset + 2];
@@ -182,6 +182,94 @@ function blocked(
   return { ok: false, code, message, blockNumber };
 }
 
+/** Common fresh-chain validation shared by settlement and migration publish. */
+export function preflightSignedOrder(input: {
+  order: SignedOrder;
+  state: FreshSignedOrderPreflightState;
+  fillSizeRaw: bigint;
+  blockTimestamp: bigint;
+  blockNumber: number;
+  expectedComplement?: bigint;
+}): SettlementPreflightResult {
+  const { order, state, blockNumber } = input;
+  if (state.payoutDenominator !== 0n) {
+    return blocked(
+      'MARKET_RESOLVED',
+      `Market ${order.marketId} resolved before settlement`,
+      blockNumber,
+    );
+  }
+  if (state.nonce !== BigInt(order.nonceRaw)) {
+    return blocked(
+      'WRONG_NONCE',
+      `Maker nonce changed before settlement for order ${order.orderHash}`,
+      blockNumber,
+    );
+  }
+  if (
+    order.expiration !== 0 &&
+    BigInt(order.expiration) <= input.blockTimestamp
+  ) {
+    return blocked(
+      'EXPIRED',
+      `Order ${order.orderHash} expired before settlement`,
+      blockNumber,
+    );
+  }
+  if (
+    state.complement === 0n ||
+    state.conditionId.toLowerCase() === zeroHash ||
+    state.conditionId.toLowerCase() !== order.conditionId.toLowerCase() ||
+    (input.expectedComplement !== undefined &&
+      state.complement !== input.expectedComplement)
+  ) {
+    return blocked(
+      'TOKEN_NOT_REGISTERED',
+      `Order ${order.orderHash} token registration is unavailable`,
+      blockNumber,
+    );
+  }
+  if (state.cancelled === true) {
+    return blocked(
+      'ORDER_CANCELLED',
+      `Order ${order.orderHash} was cancelled on-chain`,
+      blockNumber,
+    );
+  }
+  if (
+    state.filledRaw !== undefined &&
+    state.filledRaw !== BigInt(order.filledRaw)
+  ) {
+    return blocked(
+      'STALE_FILL_STATE',
+      `Indexed fill state is stale for order ${order.orderHash}`,
+      blockNumber,
+    );
+  }
+
+  const signed = signedOrderFromRow(order);
+  const required = ctfExchangeMakerAmountForFill(signed, input.fillSizeRaw);
+  if (state.balanceRaw < required) {
+    return blocked(
+      'INSUFFICIENT_BALANCE',
+      `Maker balance changed before settlement for order ${order.orderHash}`,
+      blockNumber,
+    );
+  }
+  const approved =
+    signed.side === Side.BUY
+      ? typeof state.approval === 'bigint' && state.approval >= required
+      : state.approval === true;
+  if (!approved) {
+    return blocked(
+      'MISSING_APPROVAL',
+      `Maker approval changed before settlement for order ${order.orderHash}`,
+      blockNumber,
+    );
+  }
+  return { ok: true, blockNumber };
+}
+
 export class ViemSettlementPreflight implements SettlementPreflight {
   constructor(private readonly client: PublicClient = createArcPublicClient()) {}
 
@@ -203,76 +291,14 @@ export class ViemSettlementPreflight implements SettlementPreflight {
       const order = orders[index];
       if (order === undefined) continue;
       const state = parseFreshOrderState(values, index * CALLS_PER_ORDER);
-      if (state.payoutDenominator !== 0n) {
-        return blocked(
-          'MARKET_RESOLVED',
-          `Market ${order.marketId} resolved before settlement`,
-          blockNumber,
-        );
-      }
-      if (state.nonce !== BigInt(order.nonceRaw)) {
-        return blocked(
-          'WRONG_NONCE',
-          `Maker nonce changed before settlement for order ${order.orderHash}`,
-          blockNumber,
-        );
-      }
-      if (order.expiration !== 0 && BigInt(order.expiration) <= block.timestamp) {
-        return blocked(
-          'EXPIRED',
-          `Order ${order.orderHash} expired before settlement`,
-          blockNumber,
-        );
-      }
-      if (
-        state.complement === 0n ||
-        state.conditionId.toLowerCase() === zeroHash ||
-        state.conditionId.toLowerCase() !== order.conditionId.toLowerCase()
-      ) {
-        return blocked(
-          'TOKEN_NOT_REGISTERED',
-          `Order ${order.orderHash} token registration is unavailable`,
-          blockNumber,
-        );
-      }
-      if (state.cancelled) {
-        return blocked(
-          'ORDER_CANCELLED',
-          `Order ${order.orderHash} was cancelled on-chain`,
-          blockNumber,
-        );
-      }
-      if (state.filledRaw !== BigInt(order.filledRaw)) {
-        return blocked(
-          'STALE_FILL_STATE',
-          `Indexed fill state is stale for order ${order.orderHash}`,
-          blockNumber,
-        );
-      }
-
-      const signed = signedOrderFromRow(order);
-      const required = ctfExchangeMakerAmountForFill(
-        signed,
-        BigInt(match.fillSizeRaw),
-      );
-      if (state.balanceRaw < required) {
-        return blocked(
-          'INSUFFICIENT_BALANCE',
-          `Maker balance changed before settlement for order ${order.orderHash}`,
-          blockNumber,
-        );
-      }
-      const approved =
-        signed.side === Side.BUY
-          ? typeof state.approval === 'bigint' && state.approval >= required
-          : state.approval === true;
-      if (!approved) {
-        return blocked(
-          'MISSING_APPROVAL',
-          `Maker approval changed before settlement for order ${order.orderHash}`,
-          blockNumber,
-        );
-      }
+      const result = preflightSignedOrder({
+        order,
+        state,
+        fillSizeRaw: BigInt(match.fillSizeRaw),
+        blockTimestamp: block.timestamp,
+        blockNumber,
+      });
+      if (!result.ok) return result;
     }
     return { ok: true, blockNumber };
   }

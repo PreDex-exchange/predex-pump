@@ -110,7 +110,13 @@ export async function reserveNextCrossingMatch(
   now: number,
 ): Promise<ReservedMatch | null> {
   const [orders, inFlight] = await Promise.all([
-    findFillableSignedOrders(prisma, {}, now),
+    // Signed CTFExchange orders may be staged or ingested before handoff, but
+    // they cannot execute while MiniCLOB is still the market's live venue.
+    findFillableSignedOrders(
+      prisma,
+      { market: { bookMigration: { is: { status: 'MIGRATED' } } } },
+      now,
+    ),
     prisma.settlementMatch.findMany({
       where: { status: { in: [...IN_FLIGHT_MATCH_STATUSES] } },
       select: { takerOrderHash: true, makerOrderHash: true },

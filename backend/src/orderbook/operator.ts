@@ -14,7 +14,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { inspectRpcError, retryDelayMs } from '../indexer/retry.js';
-import { ARC_CHAIN } from './chain-reader.js';
+import { ARC_CHAIN, createArcPublicClient } from './chain-reader.js';
 import {
   reserveNextCrossingMatch,
   type ReservedMatch,
@@ -27,6 +27,15 @@ import type {
 
 export interface SettlementSubmitter {
   submit(transaction: TxRequest): Promise<Hex>;
+}
+
+export interface ConfirmedTransaction {
+  status: 'success' | 'reverted';
+  blockNumber: number;
+}
+
+export interface OperatorTransactionSubmitter extends SettlementSubmitter {
+  confirm(txHash: Hex): Promise<ConfirmedTransaction>;
 }
 
 export interface OperatorLogger {
@@ -48,11 +57,18 @@ export type OperatorIterationResult =
       failureCode: string;
     };
 
+export interface OperatorLoopWorker {
+  processOnce(): Promise<{
+    outcome: string;
+    retryAfterMs?: number;
+  }>;
+}
+
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1_000);
 }
 
-function safeFailure(error: unknown): {
+export function operatorFailure(error: unknown, attempt = 1): {
   code: string;
   message: string;
   retryAfterMs: number;
@@ -64,7 +80,7 @@ function safeFailure(error: unknown): {
       message: rpc.summary
         .replace(/0x[0-9a-f]{40,}/giu, '[hex-redacted]')
         .slice(0, 240),
-      retryAfterMs: retryDelayMs(1, rpc),
+      retryAfterMs: retryDelayMs(attempt, rpc),
     };
   }
   const name =
@@ -132,7 +148,7 @@ export class SettlementOperator {
       // This is the single fresh, block-pinned chain check immediately before submit.
       preflight = await this.preflight.check(match);
     } catch (error) {
-      const failure = safeFailure(error);
+      const failure = operatorFailure(error);
       const code = `PREFLIGHT_${failure.code}`;
       await this.prisma.settlementMatch.update({
         where: { id: match.id },
@@ -214,7 +230,7 @@ export class SettlementOperator {
       this.logger.info(`[operator] match=${match.id} submitted tx=${txHash}`);
       return { outcome: 'SUBMITTED', matchId: match.id };
     } catch (error) {
-      const failure = safeFailure(error);
+      const failure = operatorFailure(error);
       const failedAt = this.now();
       const submissionStatus = failure.code.startsWith('RPC_')
         ? 'SUBMISSION_UNKNOWN'
@@ -265,21 +281,34 @@ export function operatorAccountFromEnv(
 export function createViemSettlementSubmitter(
   account: LocalAccount,
   rpcUrl: string,
-): SettlementSubmitter {
-  const client = createWalletClient({
+): OperatorTransactionSubmitter {
+  const walletClient = createWalletClient({
     account,
     chain: ARC_CHAIN,
     transport: http(rpcUrl, { retryCount: 0 }),
   });
+  const publicClient = createArcPublicClient([rpcUrl]);
   return {
     submit: (transaction) =>
-      client.sendTransaction({
+      walletClient.sendTransaction({
         account,
         chain: ARC_CHAIN,
         to: transaction.to,
         data: transaction.data,
         value: transaction.value,
       }),
+    confirm: async (txHash) => {
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        confirmations: 1,
+        timeout: 60_000,
+      });
+      const blockNumber = Number(receipt.blockNumber);
+      if (!Number.isSafeInteger(blockNumber)) {
+        throw new Error('Confirmed transaction block exceeds the database integer range');
+      }
+      return { status: receipt.status, blockNumber };
+    },
   };
 }
 
@@ -297,7 +326,7 @@ function abortableWait(milliseconds: number, signal: AbortSignal): Promise<void>
 }
 
 export async function runOperatorLoop(
-  operator: SettlementOperator,
+  operator: OperatorLoopWorker,
   options: {
     signal: AbortSignal;
     pollMs: number;
@@ -310,8 +339,10 @@ export async function runOperatorLoop(
     if (options.signal.aborted) break;
     const delay =
       result.outcome === 'FAILED'
-        ? Math.max(options.pollMs, result.retryAfterMs)
-        : options.pollMs;
-    await wait(delay, options.signal);
+        ? Math.max(options.pollMs, result.retryAfterMs ?? options.pollMs)
+        : result.outcome === 'PROGRESSED'
+          ? 0
+          : options.pollMs;
+    if (delay > 0) await wait(delay, options.signal);
   }
 }

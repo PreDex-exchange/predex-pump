@@ -6,6 +6,7 @@ import {
   Side,
   collateralErc20Abi,
   ctfExchangeAbi,
+  miniClobAbi,
   type CtfExchangeOrder,
 } from '@predex-pump/shared/tx';
 import {
@@ -48,6 +49,49 @@ export interface OrderChainReader {
   ): Promise<FreshOrderChainState>;
 }
 
+export interface MiniClobSeedOrderState {
+  orderId: bigint;
+  maker: Hex;
+  conditionId: Hex;
+  tokenId: bigint;
+  side: number;
+  priceRaw: bigint;
+  sizeRaw: bigint;
+  filledRaw: bigint;
+  open: boolean;
+}
+
+export interface BookMigrationChainState {
+  blockNumber: number;
+  blockTimestamp: bigint;
+  makerNonce: bigint;
+  ctfApprovedForAll: boolean;
+  payoutDenominator: bigint;
+  yesBalanceRaw: bigint;
+  noBalanceRaw: bigint;
+  yesRegistration: {
+    complementTokenId: bigint;
+    conditionId: Hex;
+  };
+  noRegistration: {
+    complementTokenId: bigint;
+    conditionId: Hex;
+  };
+  yesOrder: MiniClobSeedOrderState;
+  noOrder: MiniClobSeedOrderState;
+}
+
+export interface BookMigrationChainReader {
+  readBookMigrationState(input: {
+    maker: Hex;
+    conditionId: Hex;
+    yesTokenId: bigint;
+    noTokenId: bigint;
+    yesSeedOrderId: bigint;
+    noSeedOrderId: bigint;
+  }): Promise<BookMigrationChainState>;
+}
+
 export function createArcPublicClient(
   rpcUrls: readonly string[] = ARC.rpcUrls,
 ): PublicClient {
@@ -85,7 +129,62 @@ function registryTuple(value: unknown): readonly [bigint, Hex] {
   throw new Error('CTFExchange registry returned an unexpected value');
 }
 
-export class ViemOrderChainReader implements OrderChainReader {
+function integerValue(value: unknown, field: string): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isSafeInteger(value)) {
+    return BigInt(value);
+  }
+  throw new Error(`MiniCLOB returned an unexpected ${field}`);
+}
+
+function miniClobOrderTuple(
+  orderId: bigint,
+  value: unknown,
+): MiniClobSeedOrderState {
+  let fields: readonly unknown[];
+  if (Array.isArray(value)) {
+    fields = value;
+  } else if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+    fields = [
+      record.maker,
+      record.conditionId,
+      record.tokenId,
+      record.side,
+      record.priceRawPerToken,
+      record.sizeRaw,
+      record.filledRaw,
+      record.open,
+    ];
+  } else {
+    throw new Error('MiniCLOB returned an unexpected seed order');
+  }
+  const maker = fields[0];
+  const conditionId = fields[1];
+  const open = fields[7];
+  if (
+    typeof maker !== 'string' ||
+    typeof conditionId !== 'string' ||
+    typeof open !== 'boolean'
+  ) {
+    throw new Error('MiniCLOB returned an unexpected seed order');
+  }
+  return {
+    orderId,
+    maker: maker as Hex,
+    conditionId: conditionId as Hex,
+    tokenId: integerValue(fields[2], 'tokenId'),
+    side: Number(integerValue(fields[3], 'side')),
+    priceRaw: integerValue(fields[4], 'price'),
+    sizeRaw: integerValue(fields[5], 'size'),
+    filledRaw: integerValue(fields[6], 'filled amount'),
+    open,
+  };
+}
+
+export class ViemOrderChainReader
+  implements OrderChainReader, BookMigrationChainReader
+{
   constructor(private readonly client: PublicClient = createArcPublicClient()) {}
 
   async readOrderState(
@@ -185,6 +284,113 @@ export class ViemOrderChainReader implements OrderChainReader {
         order.side === Side.SELL && typeof approval === 'boolean'
           ? approval
           : null,
+    };
+  }
+
+  async readBookMigrationState(input: {
+    maker: Hex;
+    conditionId: Hex;
+    yesTokenId: bigint;
+    noTokenId: bigint;
+    yesSeedOrderId: bigint;
+    noSeedOrderId: bigint;
+  }): Promise<BookMigrationChainState> {
+    const block = await this.client.getBlock({ blockTag: 'latest' });
+    if (block.number === null) throw new Error('Latest Arc block omitted its number');
+    const results = await this.client.multicall({
+      allowFailure: false,
+      blockNumber: block.number,
+      contracts: [
+        {
+          address: ADDRESSES.miniClob,
+          abi: miniClobAbi as Abi,
+          functionName: 'getOrder',
+          args: [input.yesSeedOrderId],
+        },
+        {
+          address: ADDRESSES.miniClob,
+          abi: miniClobAbi as Abi,
+          functionName: 'getOrder',
+          args: [input.noSeedOrderId],
+        },
+        {
+          address: ADDRESSES.ctfExchange,
+          abi: ctfExchangeAbi as Abi,
+          functionName: 'makerNonce',
+          args: [input.maker],
+        },
+        {
+          address: ADDRESSES.ctf,
+          abi: conditionalTokensAbi,
+          functionName: 'isApprovedForAll',
+          args: [input.maker, ADDRESSES.ctfExchange],
+        },
+        {
+          address: ADDRESSES.ctf,
+          abi: conditionalTokensAbi,
+          functionName: 'balanceOf',
+          args: [input.maker, input.yesTokenId],
+        },
+        {
+          address: ADDRESSES.ctf,
+          abi: conditionalTokensAbi,
+          functionName: 'balanceOf',
+          args: [input.maker, input.noTokenId],
+        },
+        {
+          address: ADDRESSES.ctfExchange,
+          abi: ctfExchangeAbi as Abi,
+          functionName: 'registry',
+          args: [input.yesTokenId],
+        },
+        {
+          address: ADDRESSES.ctfExchange,
+          abi: ctfExchangeAbi as Abi,
+          functionName: 'registry',
+          args: [input.noTokenId],
+        },
+        {
+          address: ADDRESSES.ctf,
+          abi: conditionalTokensAbi,
+          functionName: 'payoutDenominator',
+          args: [input.conditionId],
+        },
+      ],
+    });
+    const makerNonce = results[2];
+    const approved = results[3];
+    const yesBalanceRaw = results[4];
+    const noBalanceRaw = results[5];
+    const payoutDenominator = results[8];
+    if (
+      typeof makerNonce !== 'bigint' ||
+      typeof approved !== 'boolean' ||
+      typeof yesBalanceRaw !== 'bigint' ||
+      typeof noBalanceRaw !== 'bigint' ||
+      typeof payoutDenominator !== 'bigint'
+    ) {
+      throw new Error('Arc returned unexpected migration validation state');
+    }
+    const [yesComplementTokenId, yesConditionId] = registryTuple(results[6]);
+    const [noComplementTokenId, noConditionId] = registryTuple(results[7]);
+    return {
+      blockNumber: safeBlockNumber(block.number),
+      blockTimestamp: block.timestamp,
+      makerNonce,
+      ctfApprovedForAll: approved,
+      payoutDenominator,
+      yesBalanceRaw,
+      noBalanceRaw,
+      yesRegistration: {
+        complementTokenId: yesComplementTokenId,
+        conditionId: yesConditionId,
+      },
+      noRegistration: {
+        complementTokenId: noComplementTokenId,
+        conditionId: noConditionId,
+      },
+      yesOrder: miniClobOrderTuple(input.yesSeedOrderId, results[0]),
+      noOrder: miniClobOrderTuple(input.noSeedOrderId, results[1]),
     };
   }
 }

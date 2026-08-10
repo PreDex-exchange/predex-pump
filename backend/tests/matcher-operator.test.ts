@@ -47,6 +47,17 @@ describe('matcher and settlement operator', () => {
   beforeEach(async () => {
     await resetDatabase();
     await seedContractData();
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'MIGRATED',
+        yesSeedOrderId: '2',
+        noSeedOrderId: '3',
+        createdAt: BOOK_NOW,
+        updatedAt: BOOK_NOW,
+        migratedAt: BOOK_NOW,
+      },
+    });
     reader.state = validChainState();
   });
 
@@ -104,6 +115,24 @@ describe('matcher and settlement operator', () => {
     await createOrder({ side: Side.BUY, priceRaw: 600_000n, salt: 303n });
     await createOrder({ side: Side.SELL, priceRaw: 650_000n, salt: 304n });
     expect(findCrossingCandidates(await testPrisma.signedOrder.findMany())).toEqual([]);
+  });
+
+  it('does not settle signed orders before the market venue flips to HYBRID', async () => {
+    await testPrisma.bookMigration.delete({ where: { marketId: '1' } });
+    await createOrder({ side: Side.BUY, priceRaw: 700_000n, salt: 315n });
+    await createOrder({ side: Side.SELL, priceRaw: 650_000n, salt: 316n });
+    const submit = vi.fn<SettlementSubmitter['submit']>();
+    const operator = new SettlementOperator(
+      testPrisma,
+      new FakePreflight(),
+      { submit },
+      { info: vi.fn(), warn: vi.fn() },
+      () => BOOK_NOW,
+    );
+
+    await expect(operator.processOnce()).resolves.toEqual({ outcome: 'IDLE' });
+    expect(submit).not.toHaveBeenCalled();
+    expect(await testPrisma.settlementMatch.count()).toBe(0);
   });
 
   it('fresh preflight blocks submission when the market resolved after ingest', async () => {

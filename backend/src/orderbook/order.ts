@@ -1,10 +1,14 @@
-import type { SignedOrder as DbSignedOrder } from '@prisma/client';
+import type {
+  Prisma,
+  SignedOrder as DbSignedOrder,
+} from '@prisma/client';
 import type {
   OffchainOrder,
   OrderUnfillableReason,
   SignedCtfExchangeOrder,
 } from '@predex-pump/shared';
 import {
+  ctfExchangeOrderTerms,
   ctfExchangeOrderFromWire,
   type CtfExchangeOrder,
 } from '@predex-pump/shared/tx';
@@ -12,6 +16,46 @@ import {
 export interface Fillability {
   fillable: boolean;
   reason: OrderUnfillableReason | null;
+}
+
+export function signedOrderCreateData(input: {
+  orderHash: string;
+  order: CtfExchangeOrder;
+  marketId: string;
+  conditionId: string;
+  outcome: 'YES' | 'NO';
+  status?: string;
+  origin?: string;
+  now: number;
+}): Prisma.SignedOrderUncheckedCreateInput {
+  const terms = ctfExchangeOrderTerms(input.order);
+  return {
+    orderHash: input.orderHash.toLowerCase(),
+    saltRaw: input.order.salt.toString(),
+    maker: input.order.maker.toLowerCase(),
+    signer: input.order.signer.toLowerCase(),
+    taker: input.order.taker.toLowerCase(),
+    tokenId: input.order.tokenId.toString(),
+    makerAmountRaw: input.order.makerAmount.toString(),
+    takerAmountRaw: input.order.takerAmount.toString(),
+    expiration: Number(input.order.expiration),
+    nonceRaw: input.order.nonce.toString(),
+    feeRateBpsRaw: input.order.feeRateBps.toString(),
+    exchangeSide: input.order.side,
+    signatureType: input.order.signatureType,
+    signature: input.order.signature,
+    marketId: input.marketId,
+    conditionId: input.conditionId.toLowerCase(),
+    outcome: input.outcome,
+    side: input.order.side === 0 ? 'BID' : 'ASK',
+    priceRaw: terms.priceRaw.toString(),
+    sizeRaw: terms.sizeRaw.toString(),
+    remainingRaw: terms.sizeRaw.toString(),
+    status: input.status ?? 'OPEN',
+    origin: input.origin ?? 'USER',
+    createdAt: input.now,
+    updatedAt: input.now,
+  };
 }
 
 export function signedOrderFromWire(

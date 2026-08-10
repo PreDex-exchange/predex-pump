@@ -27,6 +27,17 @@ describe('hybrid off-chain book', () => {
   beforeEach(async () => {
     await resetDatabase();
     await seedContractData();
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'MIGRATED',
+        yesSeedOrderId: '2',
+        noSeedOrderId: '3',
+        createdAt: BOOK_NOW,
+        updatedAt: BOOK_NOW,
+        migratedAt: BOOK_NOW,
+      },
+    });
     reader.state = validChainState();
   });
 
@@ -83,11 +94,9 @@ describe('hybrid off-chain book', () => {
       bestAskRaw: '640000',
       bids: [
         { priceRaw: '700000', sizeRaw: '500000', orderCount: 1 },
-        { priceRaw: '600000', sizeRaw: '1250000', orderCount: 2 },
       ],
       asks: [
         { priceRaw: '640000', sizeRaw: '500000', orderCount: 2 },
-        { priceRaw: '650000', sizeRaw: '1000000', orderCount: 1 },
       ],
     });
     expect(book?.yes.offchainOrders).toHaveLength(3);

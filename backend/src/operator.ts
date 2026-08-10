@@ -2,7 +2,11 @@ import 'dotenv/config';
 
 import { loadRuntimeConfig } from './config.js';
 import { prisma } from './db.js';
-import { createArcPublicClient } from './orderbook/chain-reader.js';
+import {
+  ViemOrderChainReader,
+  createArcPublicClient,
+} from './orderbook/chain-reader.js';
+import { BookMigrationOperator } from './orderbook/migration.js';
 import {
   createViemSettlementSubmitter,
   operatorAccountFromEnv,
@@ -24,11 +28,33 @@ async function main(): Promise<void> {
   const config = loadRuntimeConfig();
   const account = operatorAccountFromEnv();
   const client = createArcPublicClient(config.rpcUrls);
-  const operator = new SettlementOperator(
+  const submitter = createViemSettlementSubmitter(account, config.rpcUrl);
+  const settlementOperator = new SettlementOperator(
     prisma,
     new ViemSettlementPreflight(client),
-    createViemSettlementSubmitter(account, config.rpcUrl),
+    submitter,
   );
+  const logger = {
+    info: (message: string): void => console.info(message),
+    warn: (message: string): void => console.warn(message),
+  };
+  const migrationOperator = new BookMigrationOperator(
+    prisma,
+    new ViemOrderChainReader(client),
+    submitter,
+    account,
+    logger,
+  );
+  // P4 runs inside the existing P2 operator loop. Migration gets first chance
+  // so a post-cancel restart restores the book before new settlements proceed.
+  const operator = {
+    processOnce: async () => {
+      const migration = await migrationOperator.processOnce();
+      return migration.outcome === 'IDLE'
+        ? settlementOperator.processOnce()
+        : migration;
+    },
+  };
   const controller = new AbortController();
   const stop = (): void => controller.abort();
   process.once('SIGINT', stop);

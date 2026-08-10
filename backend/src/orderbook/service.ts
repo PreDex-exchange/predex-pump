@@ -28,6 +28,7 @@ import type { ServerEventBus } from '../events/bus.js';
 import { fillabilityForOrders, findSignedOrdersWithFillability } from './fillability.js';
 import { OrderIngestError } from './input.js';
 import {
+  signedOrderCreateData,
   signedOrderFromRow,
   signedOrderFromWire,
   toOffchainOrderDto,
@@ -71,7 +72,7 @@ function isNewer(
   );
 }
 
-async function persistValidationSnapshot(
+export async function persistOrderValidationSnapshot(
   tx: Tx,
   order: ReturnType<typeof signedOrderFromWire>,
   state: FreshOrderChainState,
@@ -310,36 +311,18 @@ export class OffchainOrderService {
 
     const now = this.now();
     const outcome = market.yesTokenId === order.tokenId.toString() ? 'YES' : 'NO';
-    const side = order.side === Side.BUY ? 'BID' : 'ASK';
     const stored = await this.prisma.$transaction(async (tx) => {
-      await persistValidationSnapshot(tx, order, chainState, now);
+      await persistOrderValidationSnapshot(tx, order, chainState, now);
       return tx.signedOrder.upsert({
         where: { orderHash: computedHash },
-        create: {
+        create: signedOrderCreateData({
           orderHash: computedHash,
-          saltRaw: order.salt.toString(),
-          maker: order.maker.toLowerCase(),
-          signer: order.signer.toLowerCase(),
-          taker: order.taker.toLowerCase(),
-          tokenId: order.tokenId.toString(),
-          makerAmountRaw: order.makerAmount.toString(),
-          takerAmountRaw: order.takerAmount.toString(),
-          expiration: Number(order.expiration),
-          nonceRaw: order.nonce.toString(),
-          feeRateBpsRaw: order.feeRateBps.toString(),
-          exchangeSide: order.side,
-          signatureType: order.signatureType,
-          signature: order.signature,
+          order,
           marketId: market.id,
           conditionId: market.conditionId,
           outcome,
-          side,
-          priceRaw: terms.priceRaw.toString(),
-          sizeRaw: terms.sizeRaw.toString(),
-          remainingRaw: terms.sizeRaw.toString(),
-          createdAt: now,
-          updatedAt: now,
-        },
+          now,
+        }),
         update: {},
       });
     });

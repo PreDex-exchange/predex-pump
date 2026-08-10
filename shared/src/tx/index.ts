@@ -1,4 +1,4 @@
-export { collateralErc20Abi, ctfExchangeAbi } from './abis';
+export { collateralErc20Abi, ctfExchangeAbi, miniClobAbi } from './abis';
 export * from './builders';
 export * from './ctf-exchange-builders';
 export * from './gateway';

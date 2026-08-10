@@ -67,14 +67,15 @@ model Market {
   closedOutAt   Int?
   indexedAt     DateTime @updatedAt
 
-  trades       Trade[]
-  pricePoints  PricePoint[]
-  orders       Order[]
-  signedOrders SignedOrder[]
-  fills        Fill[]
-  positions    Position[]
-  resolution   Resolution?
-  closeout     Closeout?
+  trades        Trade[]
+  pricePoints   PricePoint[]
+  orders        Order[]
+  signedOrders  SignedOrder[]
+  fills         Fill[]
+  positions     Position[]
+  resolution    Resolution?
+  closeout      Closeout?
+  bookMigration BookMigration?
 
   @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([phase, createdAt(sort: Desc), id(sort: Desc)])
@@ -207,6 +208,7 @@ model SignedOrder {
   filledRaw          String  @default("0")
   remainingRaw       String
   status             String  @default("OPEN")
+  origin             String  @default("USER") // USER | BOOK_MIGRATION
   withdrawnAt        Int?
   lastFailureCode    String?
   lastFailureMessage String?
@@ -224,6 +226,59 @@ model SignedOrder {
   @@index([tokenId, status, withdrawnAt])
   @@index([maker, status, withdrawnAt])
   @@index([expiration])
+  @@index([origin, marketId])
+}
+
+// Durable, one-way handoff of a graduated market's two MiniCLOB seed orders.
+// A row is never deleted after MIGRATED, so marketId is the once-only guard.
+model BookMigration {
+  marketId String @id
+  status   String @default("DISCOVERED")
+
+  yesSeedOrderId          String
+  noSeedOrderId           String
+  snapshotBlockNumber     Int?
+  snapshotNonceRaw        String?
+  yesPriceRaw             String?
+  noPriceRaw              String?
+  yesSnapshotRemainingRaw String?
+  noSnapshotRemainingRaw  String?
+  yesRecoveredRaw         String?
+  noRecoveredRaw          String?
+  yesReplacementOrderHash String?
+  noReplacementOrderHash  String?
+
+  approvalStatus      String  @default("UNCHECKED")
+  approvalTxHash      String?
+  approvalBlockNumber Int?
+  yesCancelStatus     String  @default("UNCHECKED")
+  noCancelStatus      String  @default("UNCHECKED")
+  yesCancelTxHash     String?
+  noCancelTxHash      String?
+  activeCancelOutcome String?
+  cancelBlockNumber   Int?
+  recoveryBlockNumber Int?
+  yesBalanceRaw       String?
+  noBalanceRaw        String?
+
+  attemptCount       Int     @default(0)
+  nextAttemptAt      Int     @default(0)
+  claimToken         String?
+  claimExpiresAt     Int?
+  lastFailureCode    String?
+  lastFailureMessage String?
+  lastFailureAt      Int?
+  createdAt          Int
+  updatedAt          Int
+  cancelledAt        Int?
+  migratedAt         Int?
+
+  market Market @relation(fields: [marketId], references: [id])
+
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([claimExpiresAt])
+  @@index([yesReplacementOrderHash])
+  @@index([noReplacementOrderHash])
 }
 
 model ExchangeTokenRegistration {

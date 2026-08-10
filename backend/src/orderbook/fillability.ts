@@ -37,7 +37,15 @@ export async function fillabilityForOrders(
   const marketIds = [...new Set(orders.map((order) => order.marketId))];
   const sellOrders = orders.filter((order) => order.exchangeSide === Side.SELL);
 
-  const [positions, ctfApprovals, collateralApprovals, collateralBalances, resolutions] =
+  const [
+    positions,
+    ctfApprovals,
+    collateralApprovals,
+    collateralBalances,
+    resolutions,
+    migrations,
+    indexerState,
+  ] =
     await Promise.all([
       sellOrders.length === 0
         ? Promise.resolve([])
@@ -65,6 +73,19 @@ export async function fillabilityForOrders(
         where: { marketId: { in: marketIds } },
         select: { marketId: true },
       }),
+      prisma.bookMigration.findMany({
+        where: { marketId: { in: marketIds }, status: 'MIGRATED' },
+        select: {
+          marketId: true,
+          recoveryBlockNumber: true,
+          yesBalanceRaw: true,
+          noBalanceRaw: true,
+        },
+      }),
+      prisma.indexerState.findUnique({
+        where: { id: 1 },
+        select: { lastBlock: true },
+      }),
     ]);
 
   const positionByKey = new Map(
@@ -86,6 +107,9 @@ export async function fillabilityForOrders(
     collateralBalances.map((balance) => [balance.owner, BigInt(balance.balanceRaw)]),
   );
   const resolvedMarkets = new Set(resolutions.map((resolution) => resolution.marketId));
+  const migrationByMarket = new Map(
+    migrations.map((migration) => [migration.marketId, migration]),
+  );
 
   return new Map(
     orders.map((order): [string, Fillability] => {
@@ -106,7 +130,27 @@ export async function fillabilityForOrders(
       }
 
       if (order.exchangeSide === Side.SELL) {
-        const balance = positionByKey.get(positionKey(order));
+        const migration =
+          order.origin === 'BOOK_MIGRATION'
+            ? migrationByMarket.get(order.marketId)
+            : undefined;
+        // The cancel receipt proves these tokens are already back at the maker.
+        // Until the indexer reaches that block, use the pinned migration snapshot
+        // so publishing does not create an artificial extra no-book interval.
+        const recoverySnapshot =
+          migration?.recoveryBlockNumber !== null &&
+          migration?.recoveryBlockNumber !== undefined &&
+          (indexerState?.lastBlock ?? -1) < migration.recoveryBlockNumber
+            ? migration
+            : undefined;
+        const snapshottedBalance =
+          order.outcome === 'YES'
+            ? recoverySnapshot?.yesBalanceRaw
+            : recoverySnapshot?.noBalanceRaw;
+        const balance =
+          snapshottedBalance === null || snapshottedBalance === undefined
+            ? positionByKey.get(positionKey(order))
+            : BigInt(snapshottedBalance);
         if (balance === undefined) {
           return [
             order.orderHash,

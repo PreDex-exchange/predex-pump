@@ -50,6 +50,17 @@ describe('exchange approval and lifecycle indexing', () => {
   beforeEach(async () => {
     await resetDatabase();
     await seedContractData();
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'MIGRATED',
+        yesSeedOrderId: '2',
+        noSeedOrderId: '3',
+        createdAt: BOOK_NOW,
+        updatedAt: BOOK_NOW,
+        migratedAt: BOOK_NOW,
+      },
+    });
     reader.state = validChainState();
   });
 
