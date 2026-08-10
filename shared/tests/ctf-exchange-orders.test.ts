@@ -17,8 +17,12 @@ import {
   CTF_EXCHANGE_ORDER_TYPE_STRING,
   CTF_EXCHANGE_ORDER_TYPES,
   ctfExchangeOrderAmounts,
+  ctfExchangeCollateralAmountForFill,
+  ctfExchangeOrderFromWire,
   ctfExchangeMakerAmountForFill,
   ctfExchangeOrderTerms,
+  ctfExchangeOrderToWire,
+  ctfExchangeTakerAmountForFill,
   generateOrderSalt,
   getCtfExchangeOrderTypedData,
   hashCtfExchangeOrder,
@@ -210,6 +214,10 @@ describe('CTFExchange order construction', () => {
     });
     expect(ctfExchangeMakerAmountForFill(buy, 500_000n)).toBe(300_000n);
     expect(ctfExchangeMakerAmountForFill(sell, 500_000n)).toBe(500_000n);
+    expect(ctfExchangeTakerAmountForFill(buy, 500_000n)).toBe(500_000n);
+    expect(ctfExchangeTakerAmountForFill(sell, 500_000n)).toBe(300_000n);
+    expect(ctfExchangeCollateralAmountForFill(buy, 500_000n)).toBe(300_000n);
+    expect(ctfExchangeCollateralAmountForFill(sell, 500_000n)).toBe(300_000n);
   });
 
   it('rejects a BUY notional that only rounding up could represent', () => {
@@ -254,6 +262,9 @@ describe('CTFExchange order construction', () => {
     expect(
       hashCtfExchangeOrder({ ...order, signature: '0xdeadbeef' }),
     ).toBe(ONCHAIN_SMOKE_ORDER_HASH);
+    expect(ctfExchangeOrderFromWire(ctfExchangeOrderToWire(order))).toEqual(
+      order,
+    );
   });
 });
 

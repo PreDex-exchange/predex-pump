@@ -1,0 +1,544 @@
+.card {
+  overflow: hidden;
+}
+
+.header,
+.ticketHeader,
+.sectionHeader,
+.approvalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.header {
+  margin-bottom: var(--space-6);
+}
+
+.header h2,
+.ticketHeader h3,
+.sectionHeader h3 {
+  margin-bottom: 2px;
+  font-family: var(--font-fredoka), sans-serif;
+  font-size: 1.08rem;
+  font-weight: 600;
+}
+
+.header p,
+.sectionHeader p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: var(--text-micro);
+}
+
+.venueLabel {
+  display: inline-flex;
+  padding: 3px 8px;
+  margin-top: var(--space-2);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--brand-soft);
+  color: var(--ink);
+  font-size: var(--text-micro);
+  font-weight: 900;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--space-6);
+}
+
+.book {
+  min-width: 0;
+}
+
+.columns,
+.level {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 58px;
+  gap: var(--space-3);
+  text-align: right;
+}
+
+.columns {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--space-2);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: var(--text-micro);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.columns span:first-child,
+.level span:first-child {
+  text-align: left;
+}
+
+.bookSection {
+  position: relative;
+  padding-top: 30px;
+}
+
+.sectionLabel {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-micro);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.level {
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--hairline);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.spread {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-block: 1px dashed var(--hairline);
+  color: var(--muted);
+  font-size: var(--text-micro);
+}
+
+.spread strong {
+  color: var(--ink);
+}
+
+.emptyBook {
+  padding: var(--space-4);
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.ticket,
+.approvals,
+.myOrder {
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-input);
+  background: var(--surface);
+  box-shadow: var(--shadow-chunky);
+}
+
+.ticket {
+  padding: var(--space-4);
+  background: var(--bg);
+}
+
+.ticketHeader {
+  margin-bottom: var(--space-3);
+}
+
+.outcomePill {
+  padding: 4px 9px;
+  border: 1px solid;
+  border-radius: var(--radius-pill);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.yes {
+  border-color: var(--yes);
+  background: var(--yes-soft);
+  color: var(--yes-ink);
+}
+
+.no {
+  border-color: var(--no);
+  background: var(--no-soft);
+  color: var(--no-ink);
+}
+
+.sideTabs {
+  width: 100%;
+  margin-bottom: var(--space-4);
+}
+
+.sideTabs button {
+  flex: 1;
+}
+
+.field,
+.modalField {
+  display: block;
+  margin-bottom: var(--space-3);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.field > span:first-child,
+.modalField > span:first-child {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 9px 11px;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-input);
+  background: var(--surface);
+}
+
+.input:has(input[aria-invalid='true']) {
+  border-color: var(--error);
+}
+
+.input input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+}
+
+.input b {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--text-micro);
+}
+
+.ticketRows,
+.confirmRows {
+  margin: var(--space-3) 0;
+}
+
+.ticketRows > div,
+.confirmRows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.ticketRows dt,
+.confirmRows dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.ticketRows dd,
+.confirmRows dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  text-align: right;
+}
+
+.approvals {
+  padding: var(--space-3);
+  margin: var(--space-4) 0;
+  border-color: var(--hairline);
+  box-shadow: none;
+}
+
+.approvalHeader h4 {
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+.approvalHeader button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--no-ink);
+  cursor: pointer;
+  font-size: var(--text-micro);
+  font-weight: 900;
+}
+
+.approvalRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.approvalRow:first-of-type {
+  margin-top: var(--space-2);
+}
+
+.approvalRow > div {
+  display: grid;
+}
+
+.approvalRow strong,
+.approvalRow b {
+  font-size: 0.72rem;
+}
+
+.approvalRow span,
+.promptNote,
+.bindingNote {
+  color: var(--muted);
+  font-size: var(--text-micro);
+}
+
+.approvalRow button {
+  grid-column: 1 / -1;
+}
+
+.ready,
+.approvalReady {
+  color: var(--yes-ink);
+}
+
+.missing {
+  color: var(--brand-ink);
+}
+
+.promptNote,
+.bindingNote {
+  margin: var(--space-2) 0 0;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.resting,
+.myOrders {
+  padding-top: var(--space-6);
+  margin-top: var(--space-6);
+  border-top: 2px solid var(--hairline);
+}
+
+.sectionHeader > span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.orderTable {
+  margin-top: var(--space-3);
+  overflow-x: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-input);
+}
+
+.orderRow {
+  display: grid;
+  min-width: 930px;
+  grid-template-columns: 108px 60px 1fr 1fr 180px 105px 84px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--hairline);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.orderRow:first-child {
+  border-top: 0;
+}
+
+.orderRow > span:nth-child(3),
+.orderRow > span:nth-child(4) {
+  text-align: right;
+}
+
+.orderRow code {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.orderHead {
+  background: var(--bg);
+  color: var(--muted);
+  font-size: var(--text-micro);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.orderEmpty {
+  min-width: 930px;
+  padding: var(--space-4);
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-align: center;
+}
+
+.rowAction {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--outline);
+  border-radius: var(--space-2);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.rowAction:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.withdrawWarning,
+.commitmentWarning,
+.fillApproval,
+.inlineError,
+.completion,
+.stateText,
+.signInState {
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-input);
+  background: var(--bg);
+  font-size: 0.76rem;
+}
+
+.withdrawWarning,
+.commitmentWarning {
+  margin: var(--space-3) 0;
+  border-color: var(--warning);
+  background: var(--reward-soft);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.stateText {
+  margin: var(--space-3) 0 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.inlineError {
+  margin: var(--space-3) 0 0;
+  border-color: var(--error);
+  background: var(--error-soft);
+  color: var(--ink);
+}
+
+.inlineError p,
+.signInState p,
+.fillApproval p {
+  margin-bottom: var(--space-2);
+}
+
+.signInState {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.signInState p {
+  margin: 0;
+}
+
+.myOrderList {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.myOrder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border-color: var(--hairline);
+  box-shadow: var(--shadow-chunky);
+}
+
+.myOrderSummary {
+  display: grid;
+  gap: 2px;
+  font-size: 0.76rem;
+}
+
+.myOrderSummary span {
+  color: var(--muted);
+}
+
+.myOrderSummary b {
+  color: var(--brand-ink);
+}
+
+.myOrderActions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+
+.modalField {
+  margin-top: var(--space-4);
+}
+
+.fillApproval {
+  margin: var(--space-3) 0;
+  border-color: var(--warning);
+  background: var(--reward-soft);
+}
+
+.approvalReady {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--yes);
+  border-radius: var(--radius-input);
+  background: var(--yes-soft);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.completion {
+  margin: var(--space-3) 0 0;
+  border-color: var(--yes);
+  background: var(--yes-soft);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .header,
+  .sectionHeader,
+  .signInState,
+  .myOrder {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .myOrderActions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .columns,
+  .level {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .columns span:last-child,
+  .level span:last-child {
+    display: none;
+  }
+}

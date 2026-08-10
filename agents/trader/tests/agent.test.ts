@@ -120,6 +120,7 @@ function book(
     }));
   return {
     marketId: marketValue.id,
+    liveVenue: 'MINICLOB',
     yes: {
       marketId: marketValue.id,
       outcome: 'YES',

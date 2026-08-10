@@ -3,6 +3,7 @@ import type {
   AccountResponse,
   ActivityResponse,
   ConfigResponse,
+  ExchangeApprovalStateResponse,
   HealthResponse,
   ListMarketsResponse,
   Market,
@@ -367,6 +368,9 @@ export async function getMarketBook(
   if (market === null) return null;
   return {
     marketId,
+    // P4 introduces the indexed migration state that can flip this value.
+    // Until then every graduated market's landing zone remains MiniCLOB.
+    liveVenue: 'MINICLOB',
     yes: buildOrderBook(
       marketId,
       'YES',
@@ -507,6 +511,23 @@ export async function getAccount(
             realizedRaw: account.realizedPnlRaw,
             unrealizedRaw: account.unrealizedPnlRaw,
           },
+  };
+}
+
+export async function getExchangeApprovalState(
+  prisma: PrismaClient,
+  owner: string,
+): Promise<ExchangeApprovalStateResponse> {
+  const [ctfApproval, collateralApproval] = await Promise.all([
+    prisma.ctfExchangeApproval.findUnique({ where: { owner } }),
+    prisma.collateralExchangeApproval.findUnique({ where: { owner } }),
+  ]);
+  return {
+    owner: owner as `0x${string}`,
+    ctfApprovedForAll: ctfApproval?.approved ?? false,
+    collateralAllowanceRaw: collateralApproval?.allowanceRaw ?? '0',
+    ctfUpdatedAt: ctfApproval?.updatedAt ?? null,
+    collateralUpdatedAt: collateralApproval?.updatedAt ?? null,
   };
 }
 

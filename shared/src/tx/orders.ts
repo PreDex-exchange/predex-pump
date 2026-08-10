@@ -13,6 +13,7 @@ import {
 } from 'viem';
 
 import { ADDRESSES, ARC } from '../addresses';
+import type { SignedCtfExchangeOrder } from '../domain';
 
 export const Side = {
   BUY: 0,
@@ -180,6 +181,31 @@ export function ctfExchangeMakerAmountForFill(
     : (fillSizeRaw * order.makerAmount) / order.takerAmount;
 }
 
+/** Taker-side asset needed by CTFExchange for a position-token fill amount. */
+export function ctfExchangeTakerAmountForFill(
+  order: CtfExchangeOrder,
+  fillSizeRaw: bigint,
+) {
+  assertUint256('fillSizeRaw', fillSizeRaw);
+  const { sizeRaw } = ctfExchangeOrderTerms(order);
+  if (fillSizeRaw > sizeRaw) {
+    throw new Error('Fill size exceeds the signed order size.');
+  }
+  return order.side === Side.SELL
+    ? (fillSizeRaw * order.takerAmount) / order.makerAmount
+    : fillSizeRaw;
+}
+
+/** Exact collateral represented by a position-token fill amount. */
+export function ctfExchangeCollateralAmountForFill(
+  order: CtfExchangeOrder,
+  fillSizeRaw: bigint,
+) {
+  return order.side === Side.BUY
+    ? ctfExchangeMakerAmountForFill(order, fillSizeRaw)
+    : ctfExchangeTakerAmountForFill(order, fillSizeRaw);
+}
+
 /**
  * Encode a six-decimal price and position-token size into the ratio consumed by
  * CTFExchange. The contract settles SELL as
@@ -297,6 +323,52 @@ export function getCtfExchangeOrderTypedData(order: CtfExchangeOrder) {
 /** Return the full EIP-712 digest exposed by CTFExchange.getOrderHash. */
 export function hashCtfExchangeOrder(order: CtfExchangeOrder) {
   return hashTypedData(getCtfExchangeOrderTypedData(order));
+}
+
+/** Convert the bigint order struct to the JSON-safe REST representation. */
+export function ctfExchangeOrderToWire(
+  order: CtfExchangeOrder,
+): SignedCtfExchangeOrder {
+  const expiration = Number(order.expiration);
+  if (!Number.isSafeInteger(expiration)) {
+    throw new Error('Order expiration must fit in a safe JSON integer.');
+  }
+  return {
+    saltRaw: order.salt.toString(),
+    maker: order.maker,
+    signer: order.signer,
+    taker: order.taker,
+    tokenId: order.tokenId.toString(),
+    makerAmountRaw: order.makerAmount.toString(),
+    takerAmountRaw: order.takerAmount.toString(),
+    expiration,
+    nonceRaw: order.nonce.toString(),
+    feeRateBpsRaw: order.feeRateBps.toString(),
+    side: order.side,
+    signatureType: order.signatureType,
+    signature: order.signature,
+  };
+}
+
+/** Restore the exact CTFExchange struct from the JSON-safe REST representation. */
+export function ctfExchangeOrderFromWire(
+  order: SignedCtfExchangeOrder,
+): CtfExchangeOrder {
+  return {
+    salt: BigInt(order.saltRaw),
+    maker: order.maker,
+    signer: order.signer,
+    taker: order.taker,
+    tokenId: BigInt(order.tokenId),
+    makerAmount: BigInt(order.makerAmountRaw),
+    takerAmount: BigInt(order.takerAmountRaw),
+    expiration: BigInt(order.expiration),
+    nonce: BigInt(order.nonceRaw),
+    feeRateBps: BigInt(order.feeRateBpsRaw),
+    side: order.side,
+    signatureType: order.signatureType,
+    signature: order.signature,
+  };
 }
 
 function boundWalletAddress(signer: CtfExchangeOrderSigner) {

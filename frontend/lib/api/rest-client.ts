@@ -5,10 +5,14 @@ import type {
   ActivityResponse,
   DedupCheckRequest,
   DedupCheckResponse,
+  ExchangeApprovalStateResponse,
   HealthResponse,
   GatewayBalanceResponse,
   ListMarketsQuery,
   ListMarketsResponse,
+  IngestOrderRequest,
+  IngestOrderResponse,
+  MakerOrdersResponse,
   MarketBookResponse,
   MarketDetailResponse,
   OrderBookResponse,
@@ -21,10 +25,15 @@ import type {
   SiweVerifyRequest,
   UpdateAccountProfileRequest,
   WatchlistMutationResponse,
+  WithdrawOrderResponse,
 } from '@predex-pump/shared/rest';
 import { routes } from '@predex-pump/shared/rest';
 
 import type { BackendApiClient } from './types';
+import {
+  humanizeOrderRejection,
+  isOrderIngestRejectionCode,
+} from './order-errors';
 
 const DEFAULT_API_URL = 'http://localhost:3001';
 
@@ -34,6 +43,11 @@ interface RequestOptions {
   notFoundAsNull?: boolean;
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
+}
+
+interface ErrorDetails {
+  message: string;
+  code?: string;
 }
 
 function publicUrl(value: string | undefined, fallback: string) {
@@ -50,16 +64,30 @@ function withQuery(path: string, query: Record<string, QueryValue>) {
   return serialized ? `${path}?${serialized}` : path;
 }
 
-function errorMessage(body: unknown, status: number) {
+function errorDetails(body: unknown, status: number): ErrorDetails {
   if (
     typeof body === 'object' &&
     body !== null &&
     'error' in body &&
     typeof body.error === 'string'
   ) {
-    return body.error;
+    return { message: body.error };
   }
-  return `Backend request failed with HTTP ${status}.`;
+  if (
+    typeof body === 'object' &&
+    body !== null &&
+    'error' in body &&
+    typeof body.error === 'object' &&
+    body.error !== null &&
+    'code' in body.error &&
+    isOrderIngestRejectionCode(body.error.code)
+  ) {
+    return {
+      code: body.error.code,
+      message: humanizeOrderRejection(body.error.code),
+    };
+  }
+  return { message: `Backend request failed with HTTP ${status}.` };
 }
 
 export const backendApiUrl = publicUrl(
@@ -69,11 +97,13 @@ export const backendApiUrl = publicUrl(
 
 export class BackendApiError extends Error {
   readonly status: number;
+  readonly code?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = 'BackendApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -112,7 +142,12 @@ async function request<T>(
     } catch {
       body = null;
     }
-    throw new BackendApiError(response.status, errorMessage(body, response.status));
+    const details = errorDetails(body, response.status);
+    throw new BackendApiError(
+      response.status,
+      details.message,
+      details.code,
+    );
   }
 
   return (await response.json()) as T;
@@ -190,6 +225,28 @@ export const backendRestClient: BackendApiClient = {
 
   getAccount(address: string): Promise<AccountResponse> {
     return request(routes.account(encodeURIComponent(address)));
+  },
+
+  getExchangeApprovals(
+    address: string,
+  ): Promise<ExchangeApprovalStateResponse> {
+    return request(
+      routes.exchangeApprovals(encodeURIComponent(address)),
+    );
+  },
+
+  getMyOrders(): Promise<MakerOrdersResponse> {
+    return request(routes.orders());
+  },
+
+  postOrder(input: IngestOrderRequest): Promise<IngestOrderResponse> {
+    return request(routes.orders(), { method: 'POST', body: input });
+  },
+
+  withdrawOrder(orderHash: string): Promise<WithdrawOrderResponse> {
+    return request(routes.order(encodeURIComponent(orderHash)), {
+      method: 'DELETE',
+    });
   },
 
   getOrderBook(marketId: string): Promise<MarketBookResponse> {

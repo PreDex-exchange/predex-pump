@@ -3,6 +3,7 @@ import type {
   ActivityResponse,
   ConfigResponse,
   DedupCheckResponse,
+  ExchangeApprovalStateResponse,
   HealthResponse,
   ListMarketsResponse,
   MarketBookResponse,
@@ -221,6 +222,7 @@ describe('REST shared contract', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json<MarketBookResponse>();
     expect(body.marketId).toBe('1');
+    expect(body.liveVenue).toBe('MINICLOB');
     expect(body.yes).toMatchObject({
       marketId: '1',
       outcome: 'YES',
@@ -428,6 +430,53 @@ describe('REST shared contract', () => {
       positions: [],
       recentTrades: [],
       pnl: { realizedRaw: '0', unrealizedRaw: '0' },
+    });
+  });
+
+  it('GET /accounts/:addr/exchange-approvals returns indexed state without guessing', async () => {
+    await testPrisma.ctfExchangeApproval.create({
+      data: {
+        owner: TRADER,
+        approved: true,
+        blockNumber: 101,
+        logIndex: 2,
+        updatedAt: 1_700_000_020,
+      },
+    });
+    await testPrisma.collateralExchangeApproval.create({
+      data: {
+        owner: TRADER,
+        allowanceRaw: '7654321',
+        blockNumber: 102,
+        logIndex: 3,
+        updatedAt: 1_700_000_030,
+      },
+    });
+
+    const indexed = await app.inject({
+      method: 'GET',
+      url: `/accounts/${TRADER}/exchange-approvals`,
+    });
+    expect(indexed.statusCode).toBe(200);
+    expect(indexed.headers['cache-control']).toBe('no-store');
+    expect(indexed.json<ExchangeApprovalStateResponse>()).toEqual({
+      owner: TRADER,
+      ctfApprovedForAll: true,
+      collateralAllowanceRaw: '7654321',
+      ctfUpdatedAt: 1_700_000_020,
+      collateralUpdatedAt: 1_700_000_030,
+    });
+
+    const neverApproved = await app.inject({
+      method: 'GET',
+      url: '/accounts/0xffffffffffffffffffffffffffffffffffffffff/exchange-approvals',
+    });
+    expect(neverApproved.json<ExchangeApprovalStateResponse>()).toEqual({
+      owner: '0xffffffffffffffffffffffffffffffffffffffff',
+      ctfApprovedForAll: false,
+      collateralAllowanceRaw: '0',
+      ctfUpdatedAt: null,
+      collateralUpdatedAt: null,
     });
   });
 

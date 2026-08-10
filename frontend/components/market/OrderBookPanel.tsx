@@ -34,7 +34,9 @@ import {
   parseUsdcInput,
   shortAddress,
 } from '@/lib/format';
+import { orderBookForVenue } from '@/lib/exchange/hybrid';
 
+import { HybridOrderBookPanel } from './HybridOrderBookPanel';
 import styles from './OrderBookPanel.module.css';
 
 type BookAction =
@@ -126,15 +128,25 @@ function actionTitle(action: BookAction | null) {
   return `Cancel order #${action.order.orderId}`;
 }
 
-export function OrderBookPanel({
-  books,
-  market,
-  positions = [],
-}: {
+interface OrderBookPanelProps {
   books: MarketBookResponse;
   market: Market;
   positions?: Position[];
-}) {
+}
+
+export function OrderBookPanel(props: OrderBookPanelProps) {
+  return props.books.liveVenue === 'HYBRID' ? (
+    <HybridOrderBookPanel {...props} />
+  ) : (
+    <MiniClobOrderBookPanel {...props} />
+  );
+}
+
+function MiniClobOrderBookPanel({
+  books,
+  market,
+  positions = [],
+}: OrderBookPanelProps) {
   const [outcome, setOutcome] = useState<Outcome>('YES');
   const [orderSide, setOrderSide] = useState<'BID' | 'ASK'>('BID');
   const [price, setPrice] = useState(() =>
@@ -147,7 +159,11 @@ export function OrderBookPanel({
   const { address, chainId, isConnected } = useAccount();
   const tx = useTxFlow();
   const settlement = useSettlementStatus(market.id, address);
-  const book = outcome === 'YES' ? books.yes : books.no;
+  const sourceBook = outcome === 'YES' ? books.yes : books.no;
+  const book = useMemo(
+    () => orderBookForVenue(sourceBook, 'MINICLOB'),
+    [sourceBook],
+  );
   const priceRaw = inputRaw(price);
   const sizeRaw = inputRaw(size);
   const fillSizeRaw = inputRaw(fillSize);
@@ -366,6 +382,9 @@ export function OrderBookPanel({
           <div>
             <h2>MiniCLOB order book</h2>
             <p>Live indexed orders · prices in USDC per token</p>
+            <span className={styles.venueLabel}>
+              Live venue · On-chain MiniCLOB
+            </span>
           </div>
           <Tabs
             ariaLabel="Order book outcome"

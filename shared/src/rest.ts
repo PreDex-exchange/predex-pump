@@ -13,6 +13,7 @@ import type {
   DedupCandidate,
   Market,
   MarketPhase,
+  LiveBookVenue,
   OffchainOrder,
   OrderBook,
   Pnl,
@@ -52,6 +53,8 @@ export interface MarketDetailResponse {
 // GET /markets/:id/book  → both outcomes of the graduated book (empty until graduation)
 export interface MarketBookResponse {
   marketId: string;
+  /** Exactly one venue is actionable; P4 will move this from MiniCLOB to Hybrid. */
+  liveVenue: LiveBookVenue;
   yes: OrderBook;
   no: OrderBook;
 }
@@ -101,6 +104,15 @@ export interface MakerOrdersResponse {
   orders: OffchainOrder[];
   offchainWithdrawalIsOnchainCancellation: false;
   warning: string;
+}
+
+// GET /accounts/:addr/exchange-approvals — indexed CTFExchange approval state.
+export interface ExchangeApprovalStateResponse {
+  owner: Address;
+  ctfApprovedForAll: boolean;
+  collateralAllowanceRaw: Raw;
+  ctfUpdatedAt: number | null;
+  collateralUpdatedAt: number | null;
 }
 
 export interface TransactionRequestDto {
@@ -281,6 +293,8 @@ export const routes = {
   orders: () => `/orders`,
   order: (orderHash: string) => `/orders/${orderHash}`,
   account: (addr: string) => `/accounts/${addr}`,
+  exchangeApprovals: (addr: string) =>
+    `/accounts/${addr}/exchange-approvals`,
   activity: () => `/activity`,
   config: () => `/config`,
   health: () => `/health`,

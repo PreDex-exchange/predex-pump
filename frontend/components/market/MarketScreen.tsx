@@ -47,7 +47,12 @@ export function MarketScreen({ marketId }: { marketId: string }) {
   const authenticated = session?.authenticated === true;
   const { data: detail, isLoading, error } = useMarket(marketId);
   const { data: priceHistory } = usePriceHistory(marketId);
-  const { data: book, isLoading: bookLoading } = useOrderBook(marketId);
+  const {
+    data: book,
+    isLoading: bookLoading,
+    error: bookError,
+    refetch: refetchBook,
+  } = useOrderBook(marketId);
   const { data: account } = useIndexedAccount(address);
   const {
     data: accountProfile,
@@ -162,6 +167,34 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     }
   }
 
+  const orderBookSurface = bookLoading ? (
+    <Card>
+      <h2 className={styles.bookLoadingTitle}>Order book</h2>
+      <p className={styles.bookLoading}>
+        Loading the labelled live venue and its indexed orders…
+      </p>
+    </Card>
+  ) : bookError ? (
+    <Card role="alert">
+      <h2 className={styles.bookLoadingTitle}>Order book unavailable</h2>
+      <p className={styles.bookLoading}>
+        The live venue could not be verified, so no ladder or order action is shown.
+      </p>
+      <Button onClick={refetchBook} size="small" variant="neutral">
+        Try the book again
+      </Button>
+    </Card>
+  ) : book ? (
+    <OrderBookPanel books={book} market={market} positions={positions} />
+  ) : (
+    <Card>
+      <h2 className={styles.bookLoadingTitle}>No live order book</h2>
+      <p className={styles.bookLoading}>
+        This market does not have a venue snapshot yet.
+      </p>
+    </Card>
+  );
+
   return (
     <main className={styles.page}>
       <Link className={styles.crumb} href="/">
@@ -230,18 +263,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <div className={styles.grid}>
           <div className={styles.stack}>
             <PriceOverview market={market} points={priceHistory?.points ?? []} />
-            {bookLoading || !book ? (
-              <Card>
-                <h2 className={styles.bookLoadingTitle}>Order book</h2>
-                <p className={styles.bookLoading}>Loading indexed MiniCLOB orders…</p>
-              </Card>
-            ) : (
-              <OrderBookPanel
-                books={book}
-                market={market}
-                positions={positions}
-              />
-            )}
+            {orderBookSurface}
             <RecentTrades trades={recentTrades} />
           </div>
           <SettlementPanel market={market} />
@@ -262,13 +284,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <div className={styles.grid}>
           <div className={styles.stack}>
             <ResolvedOutcomePanel market={market} resolution={resolution} />
-            {market.bookAddress && book && (
-              <OrderBookPanel
-                books={book}
-                market={market}
-                positions={positions}
-              />
-            )}
+            {market.bookAddress && orderBookSurface}
             <RecentTrades trades={recentTrades} />
           </div>
           <SettlementPanel market={market} />

@@ -6,12 +6,16 @@ import type {
   ConfigResponse,
   DedupCheckRequest,
   DedupCheckResponse,
+  ExchangeApprovalStateResponse,
   HealthResponse,
   GatewayBalanceResponse,
   ListMarketsQuery,
   ListMarketsResponse,
   MarketBookResponse,
   MarketDetailResponse,
+  IngestOrderRequest,
+  IngestOrderResponse,
+  MakerOrdersResponse,
   OrderBookResponse,
   PriceHistoryQuery,
   PriceHistoryResponse,
@@ -22,6 +26,7 @@ import type {
   SiweVerifyRequest,
   UpdateAccountProfileRequest,
   WatchlistMutationResponse,
+  WithdrawOrderResponse,
 } from '@predex-pump/shared/rest';
 
 export interface ApiClient {
@@ -40,6 +45,12 @@ export interface ApiClient {
 
 export interface BackendApiClient extends ApiClient {
   getTokenOrderBook(tokenId: string): Promise<OrderBookResponse>;
+  getExchangeApprovals(
+    address: string,
+  ): Promise<ExchangeApprovalStateResponse>;
+  getMyOrders(): Promise<MakerOrdersResponse>;
+  postOrder(input: IngestOrderRequest): Promise<IngestOrderResponse>;
+  withdrawOrder(orderHash: string): Promise<WithdrawOrderResponse>;
   getHealth(): Promise<HealthResponse>;
   getGatewayBalance(): Promise<GatewayBalanceResponse>;
   getSiweNonce(): Promise<SiweNonceResponse>;

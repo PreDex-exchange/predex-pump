@@ -30,6 +30,9 @@ export type ResolutionOutcome = 'YES' | 'NO' | 'INVALID';
 /** Where a trade executed. */
 export type Venue = 'LMSR' | 'BOOK';
 
+/** The single order-book venue currently accepting trades for a market. */
+export type LiveBookVenue = 'MINICLOB' | 'HYBRID';
+
 /** Snapshot of the immutable-per-market economic params (indexed at creation). */
 export interface MarketParams {
   seedFloorRaw: Raw;

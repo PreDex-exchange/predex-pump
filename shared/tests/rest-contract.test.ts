@@ -40,6 +40,9 @@ describe('account REST contract', () => {
     expect(routes.accountWatchlist('42')).toBe('/account/watchlist/42');
     expect(routes.accountBehavior()).toBe('/account/behavior');
     expect(routes.gatewayBalance()).toBe('/account/gateway/balance');
+    expect(routes.exchangeApprovals(`0x${'a'.repeat(40)}`)).toBe(
+      `/accounts/0x${'a'.repeat(40)}/exchange-approvals`,
+    );
 
     const session = null as SessionResponse | null;
     const profile = null as AccountProfileResponse | null;

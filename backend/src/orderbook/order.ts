@@ -4,7 +4,10 @@ import type {
   OrderUnfillableReason,
   SignedCtfExchangeOrder,
 } from '@predex-pump/shared';
-import type { CtfExchangeOrder } from '@predex-pump/shared/tx';
+import {
+  ctfExchangeOrderFromWire,
+  type CtfExchangeOrder,
+} from '@predex-pump/shared/tx';
 
 export interface Fillability {
   fillable: boolean;
@@ -14,21 +17,7 @@ export interface Fillability {
 export function signedOrderFromWire(
   order: SignedCtfExchangeOrder,
 ): CtfExchangeOrder {
-  return {
-    salt: BigInt(order.saltRaw),
-    maker: order.maker,
-    signer: order.signer,
-    taker: order.taker,
-    tokenId: BigInt(order.tokenId),
-    makerAmount: BigInt(order.makerAmountRaw),
-    takerAmount: BigInt(order.takerAmountRaw),
-    expiration: BigInt(order.expiration),
-    nonce: BigInt(order.nonceRaw),
-    feeRateBps: BigInt(order.feeRateBpsRaw),
-    side: order.side,
-    signatureType: order.signatureType,
-    signature: order.signature,
-  };
+  return ctfExchangeOrderFromWire(order);
 }
 
 export function signedOrderFromRow(order: DbSignedOrder): CtfExchangeOrder {

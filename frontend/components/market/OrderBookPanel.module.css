@@ -31,6 +31,18 @@
   font-size: 0.72rem;
 }
 
+.venueLabel {
+  display: inline-flex;
+  padding: 3px 8px;
+  margin-top: var(--space-2);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--reward-soft);
+  color: var(--ink);
+  font-size: var(--text-micro);
+  font-weight: 900;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 286px;

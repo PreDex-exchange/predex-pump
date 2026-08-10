@@ -4,6 +4,7 @@ import {
   type AccountResponse,
   type ActivityResponse,
   type ConfigResponse,
+  type ExchangeApprovalStateResponse,
   type DedupCheckResponse,
   type HealthResponse,
   type ListMarketsResponse,
@@ -38,6 +39,7 @@ import {
 import {
   createCachedConfigReader,
   getAccount,
+  getExchangeApprovalState,
   getHealth,
   getMarketBook,
   getMarketDetail,
@@ -247,6 +249,17 @@ export function registerRestRoutes(
     routes.account(':addr'),
     async (request): Promise<AccountResponse> =>
       getAccount(prisma, parseAddress('account address', request.params.addr)),
+  );
+
+  app.get<{ Params: AccountParams }>(
+    routes.exchangeApprovals(':addr'),
+    async (request, reply): Promise<ExchangeApprovalStateResponse> => {
+      reply.header('cache-control', 'no-store');
+      return getExchangeApprovalState(
+        prisma,
+        parseAddress('account address', request.params.addr),
+      );
+    },
   );
 
   app.get<{ Querystring: ActivityQuerystring }>(

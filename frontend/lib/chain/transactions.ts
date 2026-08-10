@@ -10,6 +10,7 @@ import {
 } from 'viem';
 import {
   getAccount,
+  getWalletClient,
   sendTransaction,
   signMessage,
   waitForTransactionReceipt,
@@ -24,6 +25,10 @@ import {
   buildCommitteeResolveTx,
   buildCreateMarketTx,
   buildCtfApprovalForAllTx,
+  buildCtfExchangeApprovalForAllTx,
+  buildCtfExchangeCollateralApprovalTx,
+  buildCtfExchangeFillOrderTx,
+  buildCtfExchangeOrder,
   buildErc20ApprovalTx,
   buildGraduateIfQualifiedTx,
   buildMarketMetadata,
@@ -37,14 +42,24 @@ import {
   buildSweepProtocolAfterCloseoutTx,
   CIRCLE_GATEWAY_DEPOSIT_GAS_LIMIT,
   cumulativeMiniClobPaymentRaw,
+  ctfExchangeAbi,
+  ctfExchangeOrderToWire,
   deadlineFromTimestamp,
   MINI_CLOB_PRICE_SCALE,
   miniClobFillPaymentRaw,
   resolutionPayouts,
   subtractSlippage,
+  hashCtfExchangeOrder,
+  signCtfExchangeOrder,
+  type CtfExchangeOrder,
+  type CtfExchangeOrderSigner,
   type ResolutionChoice,
   type TxRequest,
 } from '@predex-pump/shared/tx';
+import type {
+  IngestOrderRequest,
+  TransactionRequestDto,
+} from '@predex-pump/shared/rest';
 
 import { ADDRESSES, ARC } from '@/lib/shared/addresses';
 
@@ -162,6 +177,36 @@ interface CancelOrderInput {
   account: Address;
   orderId: bigint;
   report: TxReporter;
+}
+
+interface SignCtfExchangeOrderInput {
+  account: Address;
+  tokenId: bigint;
+  side: 0 | 1;
+  priceRaw: bigint;
+  sizeRaw: bigint;
+  expiration: bigint;
+  report: TxReporter;
+}
+
+interface CtfExchangeApprovalInput {
+  account: Address;
+  report: TxReporter;
+}
+
+interface CtfExchangeCollateralApprovalInput
+  extends CtfExchangeApprovalInput {
+  amountRaw: bigint;
+}
+
+interface CtfExchangeFillInput extends CtfExchangeApprovalInput {
+  order: CtfExchangeOrder;
+  fillAmount: bigint;
+}
+
+interface PreparedCtfExchangeCancelInput
+  extends CtfExchangeApprovalInput {
+  transaction: TransactionRequestDto;
 }
 
 interface MiniClobOrder {
@@ -394,6 +439,147 @@ async function approveCtfOperator(
       pending: `${label} CTF operator approval is pending on Arc…`,
       confirmed: `${label} CTF operator approval confirmed. Refreshing transaction-critical state…`,
       approval: true,
+    },
+    report,
+  );
+}
+
+/** Submit the exact collateral approval explicitly selected in the Hybrid UI. */
+export async function approveCtfExchangeCollateralOnArc({
+  account,
+  amountRaw,
+  report,
+}: CtfExchangeCollateralApprovalInput) {
+  if (amountRaw <= 0n) {
+    throw new Error('The exchange collateral approval must be greater than zero.');
+  }
+  assertConnectedAccount(account);
+  return sendAndConfirm(
+    account,
+    buildCtfExchangeCollateralApprovalTx({ amountRaw }),
+    {
+      awaiting: `Approve exactly ${amountRaw} raw Arc USDC for this Hybrid exchange commitment.`,
+      pending: 'The exact Hybrid exchange USDC approval is pending on Arc…',
+      confirmed: 'The exact Hybrid exchange USDC approval is confirmed.',
+      approval: true,
+    },
+    report,
+  );
+}
+
+/** Submit the CTF operator approval explicitly selected in the Hybrid UI. */
+export async function approveCtfExchangeTokensOnArc({
+  account,
+  report,
+}: CtfExchangeApprovalInput) {
+  assertConnectedAccount(account);
+  return sendAndConfirm(
+    account,
+    buildCtfExchangeApprovalForAllTx(),
+    {
+      awaiting: 'Allow the Hybrid exchange to transfer position tokens you offer for sale.',
+      pending: 'The Hybrid exchange position-token approval is pending on Arc…',
+      confirmed: 'The Hybrid exchange position-token approval is confirmed.',
+      approval: true,
+    },
+    report,
+  );
+}
+
+/** Build with P1, sign through its browser WalletClient path, and return REST wire data. */
+export async function signCtfExchangeOrderOnArc({
+  account,
+  tokenId,
+  side,
+  priceRaw,
+  sizeRaw,
+  expiration,
+  report,
+}: SignCtfExchangeOrderInput): Promise<IngestOrderRequest> {
+  assertConnectedAccount(account);
+  report({
+    phase: 'checking',
+    message: 'Reading the current CTFExchange maker nonce before signing…',
+  });
+  const [nonce, walletClient] = await Promise.all([
+    arcPublicClient.readContract({
+      address: ADDRESSES.ctfExchange,
+      abi: ctfExchangeAbi,
+      functionName: 'makerNonce',
+      args: [account],
+    }) as Promise<bigint>,
+    getWalletClient(wagmiConfig, { chainId: ARC.chainId }),
+  ]);
+  assertConnectedAccount(account);
+  const unsigned = buildCtfExchangeOrder({
+    maker: account,
+    tokenId,
+    side,
+    priceRaw,
+    sizeRaw,
+    expiration,
+    nonce,
+  });
+  report({
+    phase: 'awaiting-signature',
+    message: 'Review and sign the binding EIP-712 Hybrid exchange order.',
+  });
+  // Both packages resolve the same pinned viem runtime, but their separate
+  // TypeScript installations make WalletClient's deep generic types nominally
+  // incompatible. The P1 signer still receives the real browser WalletClient.
+  const signed = await signCtfExchangeOrder(
+    walletClient as unknown as CtfExchangeOrderSigner,
+    unsigned,
+  );
+  report({
+    phase: 'checking',
+    message: 'Signature verified locally. Posting the signed order to the operator…',
+  });
+  return {
+    orderHash: hashCtfExchangeOrder(signed),
+    order: ctfExchangeOrderToWire(signed),
+  };
+}
+
+/** Fill a signed maker order through the existing P1 calldata builder. */
+export async function fillCtfExchangeOrderOnArc({
+  account,
+  order,
+  fillAmount,
+  report,
+}: CtfExchangeFillInput) {
+  if (fillAmount <= 0n) throw new Error('Fill size must be greater than zero.');
+  assertConnectedAccount(account);
+  return sendAndConfirm(
+    account,
+    buildCtfExchangeFillOrderTx({ order, fillAmount }),
+    {
+      awaiting: 'Confirm the reviewed CTFExchange fill in your wallet.',
+      pending: 'The Hybrid exchange fill is pending on Arc…',
+      confirmed: 'The Hybrid exchange fill is confirmed on Arc.',
+    },
+    report,
+  );
+}
+
+/** Submit the authoritative cancelOrder calldata returned by DELETE /orders/:hash. */
+export async function submitPreparedCtfExchangeCancelOnArc({
+  account,
+  transaction,
+  report,
+}: PreparedCtfExchangeCancelInput) {
+  assertConnectedAccount(account);
+  return sendAndConfirm(
+    account,
+    {
+      to: transaction.to,
+      data: transaction.data,
+      value: BigInt(transaction.valueRaw),
+    },
+    {
+      awaiting: 'Confirm the authoritative CTFExchange cancellation in your wallet.',
+      pending: 'The on-chain signed-order cancellation is pending on Arc…',
+      confirmed: 'The signed order is authoritatively cancelled on-chain.',
     },
     report,
   );

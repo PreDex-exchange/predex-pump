@@ -6,12 +6,14 @@ import type {
   ActivityQuery,
   ActivityResponse,
   DedupCheckResponse,
+  ExchangeApprovalStateResponse,
   HealthResponse,
   GatewayBalanceResponse,
   ListMarketsQuery,
   ListMarketsResponse,
   MarketBookResponse,
   MarketDetailResponse,
+  MakerOrdersResponse,
   PriceHistoryQuery,
   PriceHistoryResponse,
 } from '@predex-pump/shared/rest';
@@ -157,6 +159,34 @@ export function useAccount(address?: string) {
   }, [address, normalizedAddress, queryClient]);
 
   return useApiResource<AccountResponse | null>(['account', address], load);
+}
+
+export function useExchangeApprovals(address?: string) {
+  const normalizedAddress = address?.toLowerCase();
+  const load = useCallback(
+    () =>
+      normalizedAddress
+        ? apiClient.getExchangeApprovals(normalizedAddress)
+        : Promise.resolve(null),
+    [normalizedAddress],
+  );
+  return useApiResource<ExchangeApprovalStateResponse | null>(
+    ['exchange-approvals', normalizedAddress],
+    load,
+    {
+      enabled: Boolean(normalizedAddress),
+      refetchInterval: 15_000,
+    },
+  );
+}
+
+export function useMyOrders(address?: string, enabled = true) {
+  const normalizedAddress = address?.toLowerCase();
+  const load = useCallback(() => apiClient.getMyOrders(), []);
+  return useApiResource<MakerOrdersResponse>(['my-orders', normalizedAddress], load, {
+    enabled: enabled && Boolean(normalizedAddress),
+    refetchInterval: 15_000,
+  });
 }
 
 export function useAccountProfile(enabled = true) {
