@@ -7,6 +7,9 @@ import collateralErc20AbiJson from '../../abis/CollateralErc20.json' with {
 import conditionalTokensAbiJson from '../../abis/ConditionalTokens.json' with {
   type: 'json',
 };
+import ctfExchangeAbiJson from '../../abis/CTFExchange.json' with {
+  type: 'json',
+};
 import incubatorLmsrAbiJson from '../../abis/IncubatorLMSR.json' with {
   type: 'json',
 };
@@ -59,6 +62,7 @@ export const committeeOracleAbi = committeeOracleAbiJson as Abi;
 export const collateralErc20Abi =
   collateralErc20AbiJson as unknown as CollateralErc20Abi;
 export const conditionalTokensAbi = conditionalTokensAbiJson as Abi;
+export const ctfExchangeAbi = ctfExchangeAbiJson as Abi;
 export const incubatorLmsrAbi = incubatorLmsrAbiJson as Abi;
 export const incubatorRegistryAbi = incubatorRegistryAbiJson as Abi;
 export const miniClobAbi = miniClobAbiJson as Abi;

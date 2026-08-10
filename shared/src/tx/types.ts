@@ -1,5 +1,7 @@
 import type { Address, Hex } from 'viem';
 
+import type { CtfExchangeOrder } from './orders';
+
 export type MarketOutcome = 'YES' | 'NO';
 export type ResolutionChoice = MarketOutcome | 'INVALID';
 export type MiniClobSide = 'BID' | 'ASK';
@@ -73,4 +75,33 @@ export interface CommitteeResolveTxInput {
 export interface RedeemTxInput {
   conditionId: Hex;
   indexSet: bigint;
+}
+
+export interface CtfExchangeCollateralApprovalTxInput {
+  amountRaw: bigint;
+}
+
+export interface CtfExchangeFillOrderTxInput {
+  order: CtfExchangeOrder;
+  fillAmount: bigint;
+}
+
+export interface CtfExchangeFillOrdersTxInput {
+  orders: readonly CtfExchangeOrder[];
+  fillAmounts: readonly bigint[];
+}
+
+export interface CtfExchangeMatchOrdersTxInput {
+  takerOrder: CtfExchangeOrder;
+  makerOrders: readonly CtfExchangeOrder[];
+  takerFillAmount: bigint;
+  makerFillAmounts: readonly bigint[];
+}
+
+export interface CtfExchangeCancelOrderTxInput {
+  order: CtfExchangeOrder;
+}
+
+export interface CtfExchangeCancelOrdersTxInput {
+  orders: readonly CtfExchangeOrder[];
 }

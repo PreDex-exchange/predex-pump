@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "smoke:ctf-exchange-order": "node scripts/ctf-exchange-order-smoke.mjs",
     "smoke:resolution-digest": "node scripts/resolution-digest-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

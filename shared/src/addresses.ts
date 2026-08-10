@@ -28,6 +28,7 @@ export const ADDRESSES = {
   lmsr: '0x33a45f0d31cE4E9bD877c4BBf632df7c5DCeD566',
   registry: '0x15EE004A3CfD9508EA0b47323762C1780A610Ed3',
   miniClob: '0xA4f4e20bB706B38C7BbFeB923b63c2d427C9f7a3',
+  ctfExchange: '0x1d9637E0398f31d18c6792b7639ca47FC9B9c403',
 } as const;
 
 // First block to index from (the registry/stack deployment block). From the broadcast
