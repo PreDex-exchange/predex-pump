@@ -7,14 +7,22 @@ import {
   type DedupCheckRequest,
   type DedupCheckResponse,
   type HealthResponse,
+  type IngestOrderRequest,
+  type IngestOrderResponse,
   type ListMarketsQuery,
   type ListMarketsResponse,
+  type MakerOrdersResponse,
   type MarketBookResponse,
   type MarketDetailResponse,
   type OrderBookResponse,
+  type OrderIngestRejectionCode,
   type PriceHistoryQuery,
   type PriceHistoryResponse,
+  type SessionResponse,
+  type SiweNonceResponse,
+  type SiweVerifyRequest,
   type TruthSignalResponse,
+  type WithdrawOrderResponse,
 } from '@predex-pump/shared/rest';
 
 const DEFAULT_API_URL = 'http://localhost:3001';
@@ -23,8 +31,9 @@ type QueryValue = string | number | undefined;
 
 interface RequestOptions {
   notFoundAsNull?: boolean;
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'DELETE';
   body?: unknown;
+  sessionCookie?: string;
 }
 
 export interface PredexRestClientOptions {
@@ -39,6 +48,16 @@ export interface PredexRestClient {
   getAccount(address: string): Promise<AccountResponse>;
   getOrderBook(marketId: string): Promise<MarketBookResponse>;
   getTokenOrderBook(tokenId: string): Promise<OrderBookResponse>;
+  postOrder(input: IngestOrderRequest): Promise<IngestOrderResponse>;
+  getMyOrders(sessionCookie: string): Promise<MakerOrdersResponse>;
+  getMakerOrders(sessionCookie: string): Promise<MakerOrdersResponse>;
+  withdrawOrder(
+    orderHash: string,
+    sessionCookie: string,
+  ): Promise<WithdrawOrderResponse>;
+  getSiweNonce(): Promise<SiweNonceResponse>;
+  verifySiwe(input: SiweVerifyRequest): Promise<SiweVerificationResult>;
+  getSession(sessionCookie: string): Promise<SessionResponse>;
   getActivity(query?: ActivityQuery): Promise<ActivityResponse>;
   getConfig(): Promise<ConfigResponse>;
   getPriceHistory(
@@ -49,13 +68,34 @@ export interface PredexRestClient {
   getTruthSignal(marketId: string): Promise<TruthSignalResponse>;
 }
 
+export interface SiweVerificationResult {
+  session: SessionResponse;
+  /** Cookie request header value, without Set-Cookie attributes. */
+  sessionCookie: string;
+}
+
 export class PredexRestError extends Error {
   readonly status: number;
+  readonly code: string | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = 'PredexRestError';
     this.status = status;
+    this.code = code;
+  }
+}
+
+export class OrderIngestRejectedError extends PredexRestError {
+  declare readonly code: OrderIngestRejectionCode;
+
+  constructor(
+    status: number,
+    code: OrderIngestRejectionCode,
+    message: string,
+  ) {
+    super(status, message, code);
+    this.name = 'OrderIngestRejectedError';
   }
 }
 
@@ -72,16 +112,69 @@ function withQuery(path: string, query: Record<string, QueryValue>) {
   return serialized ? `${path}?${serialized}` : path;
 }
 
-function errorMessage(body: unknown, status: number) {
+const ORDER_INGEST_REJECTION_CODES = new Set<OrderIngestRejectionCode>([
+  'MALFORMED_ORDER',
+  'ORDER_HASH_MISMATCH',
+  'BAD_SIGNATURE',
+  'SIGNER_UNAUTHORIZED',
+  'UNSUPPORTED_SIGNATURE_TYPE',
+  'WRONG_NONCE',
+  'EXPIRED',
+  'INVALID_SIZE',
+  'INVALID_PRICE',
+  'INVALID_FEE',
+  'INVALID_TAKER',
+  'MARKET_NOT_FOUND',
+  'TOKEN_NOT_REGISTERED',
+  'TOKEN_PAIR_MISMATCH',
+  'MARKET_RESOLVED',
+  'INSUFFICIENT_BALANCE',
+  'MISSING_APPROVAL',
+  'CHAIN_READ_FAILED',
+]);
+
+function isOrderIngestRejectionCode(
+  value: unknown,
+): value is OrderIngestRejectionCode {
+  return (
+    typeof value === 'string' &&
+    ORDER_INGEST_REJECTION_CODES.has(value as OrderIngestRejectionCode)
+  );
+}
+
+function errorDetails(body: unknown, status: number) {
   if (
     typeof body === 'object' &&
     body !== null &&
-    'error' in body &&
-    typeof body.error === 'string'
+    'error' in body
   ) {
-    return body.error;
+    if (typeof body.error === 'string') {
+      return { message: body.error, code: undefined };
+    }
+    if (
+      typeof body.error === 'object' &&
+      body.error !== null &&
+      'message' in body.error &&
+      typeof body.error.message === 'string' &&
+      'code' in body.error &&
+      isOrderIngestRejectionCode(body.error.code)
+    ) {
+      return { message: body.error.message, code: body.error.code };
+    }
   }
-  return `Backend request failed with HTTP ${status}.`;
+  return {
+    message: `Backend request failed with HTTP ${status}.`,
+    code: undefined,
+  };
+}
+
+function sessionCookieFrom(response: Response): string {
+  const setCookie = response.headers.get('set-cookie');
+  const cookie = setCookie?.split(';', 1)[0]?.trim();
+  if (!cookie || !cookie.includes('=')) {
+    throw new Error('SIWE verification succeeded without a session cookie.');
+  }
+  return cookie;
 }
 
 class FetchPredexRestClient implements PredexRestClient {
@@ -96,15 +189,18 @@ class FetchPredexRestClient implements PredexRestClient {
     }
   }
 
-  private async request<T>(
+  private async requestWithResponse<T>(
     path: string,
     options: RequestOptions = {},
-  ): Promise<T> {
+  ): Promise<{ body: T; response: Response }> {
     const headers: Record<string, string> = {
       accept: 'application/json',
     };
     if (options.body !== undefined) {
       headers['content-type'] = 'application/json';
+    }
+    if (options.sessionCookie !== undefined) {
+      headers.cookie = options.sessionCookie;
     }
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       ...(options.method === undefined ? {} : { method: options.method }),
@@ -114,7 +210,7 @@ class FetchPredexRestClient implements PredexRestClient {
         : { body: JSON.stringify(options.body) }),
     });
     if (response.status === 404 && options.notFoundAsNull) {
-      return null as T;
+      return { body: null as T, response };
     }
     if (!response.ok) {
       let body: unknown;
@@ -123,12 +219,24 @@ class FetchPredexRestClient implements PredexRestClient {
       } catch {
         body = null;
       }
-      throw new PredexRestError(
-        response.status,
-        errorMessage(body, response.status),
-      );
+      const details = errorDetails(body, response.status);
+      if (details.code !== undefined) {
+        throw new OrderIngestRejectedError(
+          response.status,
+          details.code,
+          details.message,
+        );
+      }
+      throw new PredexRestError(response.status, details.message);
     }
-    return (await response.json()) as T;
+    return { body: (await response.json()) as T, response };
+  }
+
+  private async request<T>(
+    path: string,
+    options: RequestOptions = {},
+  ): Promise<T> {
+    return (await this.requestWithResponse<T>(path, options)).body;
   }
 
   listMarkets(query: ListMarketsQuery = {}) {
@@ -186,6 +294,51 @@ class FetchPredexRestClient implements PredexRestClient {
     return this.request<OrderBookResponse>(
       routes.orderbook(encodeURIComponent(tokenId)),
     );
+  }
+
+  postOrder(input: IngestOrderRequest) {
+    return this.request<IngestOrderResponse>(routes.orders(), {
+      method: 'POST',
+      body: input,
+    });
+  }
+
+  getMakerOrders(sessionCookie: string) {
+    return this.request<MakerOrdersResponse>(routes.orders(), {
+      sessionCookie,
+    });
+  }
+
+  getMyOrders(sessionCookie: string) {
+    return this.getMakerOrders(sessionCookie);
+  }
+
+  withdrawOrder(orderHash: string, sessionCookie: string) {
+    return this.request<WithdrawOrderResponse>(
+      routes.order(encodeURIComponent(orderHash)),
+      { method: 'DELETE', sessionCookie },
+    );
+  }
+
+  getSiweNonce() {
+    return this.request<SiweNonceResponse>(routes.siweNonce(), {
+      method: 'POST',
+    });
+  }
+
+  async verifySiwe(input: SiweVerifyRequest): Promise<SiweVerificationResult> {
+    const result = await this.requestWithResponse<SessionResponse>(
+      routes.siweVerify(),
+      { method: 'POST', body: input },
+    );
+    return {
+      session: result.body,
+      sessionCookie: sessionCookieFrom(result.response),
+    };
+  }
+
+  getSession(sessionCookie: string) {
+    return this.request<SessionResponse>(routes.session(), { sessionCookie });
   }
 
   getActivity(query: ActivityQuery = {}) {

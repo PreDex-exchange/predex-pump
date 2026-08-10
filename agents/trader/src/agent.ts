@@ -1,13 +1,25 @@
-import { cumulativeMiniClobPaymentRaw } from '@predex-pump/shared/tx';
+import {
+  cumulativeMiniClobPaymentRaw,
+  ctfExchangeCollateralAmountForFill,
+  ctfExchangeOrderAmounts,
+  ctfExchangeOrderFromWire,
+  Side,
+} from '@predex-pump/shared/tx';
 import type {
   AccountResponse,
   Address,
+  LiveBookVenue,
   ListMarketsQuery,
   ListMarketsResponse,
+  MakerOrdersResponse,
   Market,
   MarketBookResponse,
+  OffchainOrder,
   Order,
+  OrderBook,
+  OrderIngestRejectionCode,
   TruthSignalResponse,
+  WithdrawOrderResponse,
 } from '@predex-pump/shared';
 
 import type { TraderLogger } from './logger.js';
@@ -61,12 +73,55 @@ export interface CancelOrderAction {
   orderId: string;
 }
 
+export interface HybridPlaceOrderAction extends PlaceOrderAction {
+  complementTokenId: string;
+}
+
+export interface HybridFillOrderAction
+  extends Omit<FillOrderAction, 'orderId'> {
+  complementTokenId: string;
+  order: OffchainOrder;
+}
+
+export interface HybridWithdrawOrderAction {
+  order: OffchainOrder;
+}
+
+export interface HybridCancelOrderAction {
+  order: OffchainOrder;
+}
+
+export interface HybridPlaceOrderRejection {
+  code: OrderIngestRejectionCode;
+  classification: 'permanent' | 'retryable';
+  reason: string;
+}
+
+export interface HybridPlaceOrderResult {
+  orderHash: `0x${string}`;
+  rejections: HybridPlaceOrderRejection[];
+}
+
 export interface TraderExecutor {
   placeOrder(
     action: PlaceOrderAction,
   ): Promise<{ txHash: `0x${string}`; orderId: string }>;
   fillOrder(action: FillOrderAction): Promise<{ txHash: `0x${string}` }>;
   cancelOrder(action: CancelOrderAction): Promise<{ txHash: `0x${string}` }>;
+}
+
+export interface HybridTraderExecutor {
+  getMakerOrders(): Promise<MakerOrdersResponse>;
+  placeOrder(action: HybridPlaceOrderAction): Promise<HybridPlaceOrderResult>;
+  fillOrder(
+    action: HybridFillOrderAction,
+  ): Promise<{ txHash: `0x${string}` }>;
+  withdrawOrder(
+    action: HybridWithdrawOrderAction,
+  ): Promise<WithdrawOrderResponse>;
+  cancelOrder(
+    action: HybridCancelOrderAction,
+  ): Promise<{ txHash: `0x${string}` }>;
 }
 
 /** A tx hash exists, but the RPC could not prove whether the intended action settled. */
@@ -85,6 +140,7 @@ export interface TraderAgentOptions {
   dataClient: TraderDataClient;
   readSignal: TruthSignalReader;
   executor?: TraderExecutor;
+  hybridExecutor?: HybridTraderExecutor;
   logger: TraderLogger;
   traderAddress: Address;
   quoteSizeRaw: bigint;
@@ -117,6 +173,24 @@ interface Snapshot {
   book: MarketBookResponse;
 }
 
+interface DecisionOrder {
+  venue: LiveBookVenue;
+  orderId: string;
+  marketId: string;
+  conditionId: string;
+  tokenId: string;
+  outcome: 'YES' | 'NO';
+  maker: Address;
+  side: 'BID' | 'ASK';
+  priceRaw: string;
+  sizeRaw: string;
+  filledRaw: string;
+  remainingRaw: string;
+  createdAt: number;
+  updatedAt: number;
+  source: Order | OffchainOrder;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -129,15 +203,75 @@ function absolute(value: bigint): bigint {
   return value < 0n ? -value : value;
 }
 
+function miniClobDecisionOrder(order: Order): DecisionOrder {
+  return {
+    venue: 'MINICLOB',
+    orderId: order.orderId,
+    marketId: order.marketId,
+    conditionId: order.conditionId,
+    tokenId: order.tokenId,
+    outcome: order.outcome,
+    maker: order.maker,
+    side: order.side,
+    priceRaw: order.priceRaw,
+    sizeRaw: order.sizeRaw,
+    filledRaw: order.filledRaw,
+    remainingRaw: order.remainingRaw,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    source: order,
+  };
+}
+
+function hybridDecisionOrder(order: OffchainOrder): DecisionOrder {
+  return {
+    venue: 'HYBRID',
+    orderId: order.orderHash,
+    marketId: order.marketId,
+    conditionId: order.conditionId,
+    tokenId: order.tokenId,
+    outcome: order.outcome,
+    maker: order.maker,
+    side: order.side,
+    priceRaw: order.priceRaw,
+    sizeRaw: order.sizeRaw,
+    filledRaw: order.filledRaw,
+    remainingRaw: order.remainingRaw,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    source: order,
+  };
+}
+
+function isActiveHybridOrder(order: OffchainOrder): boolean {
+  return (
+    (order.status === 'OPEN' || order.status === 'PARTIALLY_FILLED') &&
+    BigInt(order.remainingRaw) > 0n
+  );
+}
+
+function venueOrders(
+  book: OrderBook,
+  venue: LiveBookVenue,
+): DecisionOrder[] {
+  if (venue === 'MINICLOB') {
+    return book.orders
+      .filter((order) => order.open)
+      .map(miniClobDecisionOrder);
+  }
+  return book.offchainOrders
+    .filter((order) => order.fillable && isActiveHybridOrder(order))
+    .map(hybridDecisionOrder);
+}
+
 function bestExternalOrder(
-  orders: readonly Order[],
+  orders: readonly DecisionOrder[],
   side: 'BID' | 'ASK',
   traderAddress: string,
-): Order | undefined {
+): DecisionOrder | undefined {
   return orders
     .filter(
       (order) =>
-        order.open &&
         order.side === side &&
         !sameAddress(order.maker, traderAddress),
     )
@@ -151,6 +285,43 @@ function bestExternalOrder(
       if (side === 'BID') return leftPrice > rightPrice ? -1 : 1;
       return leftPrice < rightPrice ? -1 : 1;
     })[0];
+}
+
+function hybridSource(order: DecisionOrder): OffchainOrder {
+  if (order.venue !== 'HYBRID' || 'orderId' in order.source) {
+    throw new Error('Expected a Hybrid off-chain order.');
+  }
+  return order.source;
+}
+
+function fillNotionalRaw(order: DecisionOrder, fillSizeRaw: bigint): bigint {
+  if (order.venue === 'MINICLOB') {
+    return cumulativeMiniClobPaymentRaw(BigInt(order.priceRaw), fillSizeRaw);
+  }
+  return ctfExchangeCollateralAmountForFill(
+    ctfExchangeOrderFromWire(hybridSource(order).signedOrder),
+    fillSizeRaw,
+  );
+}
+
+function placementNotionalRaw(
+  venue: LiveBookVenue,
+  side: 'BID' | 'ASK',
+  priceRaw: bigint,
+  sizeRaw: bigint,
+): bigint {
+  if (venue === 'MINICLOB') {
+    return cumulativeMiniClobPaymentRaw(priceRaw, sizeRaw);
+  }
+  const exchangeSide = side === 'BID' ? Side.BUY : Side.SELL;
+  const amounts = ctfExchangeOrderAmounts({
+    side: exchangeSide,
+    priceRaw,
+    sizeRaw,
+  });
+  return exchangeSide === Side.BUY
+    ? amounts.makerAmount
+    : amounts.takerAmount;
 }
 
 export class TraderAgent {
@@ -209,6 +380,7 @@ export class TraderAgent {
     action: 'PLACE' | 'FILL' | 'CANCEL' | 'HOLD',
     reason: string,
     fields: {
+      venue?: LiveBookVenue;
       side?: 'BID' | 'ASK';
       orderId?: string;
       fairValueYesRaw?: string;
@@ -230,7 +402,7 @@ export class TraderAgent {
 
   private async executeCancel(
     marketId: string,
-    order: Order,
+    order: DecisionOrder,
     risk: CycleRisk,
     inventory: InventoryState,
   ): Promise<boolean> {
@@ -243,9 +415,13 @@ export class TraderAgent {
         side: order.side,
         outcome: order.outcome,
         orderId: order.orderId,
-        message: 'stale quote → would cancel → no broadcast',
+        venue: order.venue,
+        message:
+          order.venue === 'MINICLOB'
+            ? 'stale quote → would cancel → no broadcast'
+            : 'stale quote → would withdraw free from the operator book, then submit authoritative per-order cancelOrder with gas → no broadcast',
       });
-    } else {
+    } else if (order.venue === 'MINICLOB') {
       try {
         const result = await this.options.executor?.cancelOrder({
           orderId: order.orderId,
@@ -260,6 +436,7 @@ export class TraderAgent {
           side: order.side,
           outcome: order.outcome,
           orderId: order.orderId,
+          venue: order.venue,
           txHash: result.txHash,
           message: 'stale quote → cancelled on Arc',
         });
@@ -270,8 +447,94 @@ export class TraderAgent {
           marketId,
           action: 'CANCEL',
           orderId: order.orderId,
+          venue: order.venue,
           message: `cancel → rpc/on-chain error(${errorMessage(error)}) → continuing`,
         });
+        return false;
+      }
+    } else {
+      const hybrid = this.options.hybridExecutor;
+      if (hybrid === undefined) {
+        this.options.logger.write({
+          level: 'error',
+          event: 'action-error',
+          marketId,
+          action: 'CANCEL',
+          orderId: order.orderId,
+          venue: order.venue,
+          message: 'Hybrid retire → executor unavailable → continuing',
+        });
+        risk.orderSnapshotComplete = false;
+        return false;
+      }
+      const source = hybridSource(order);
+      let withdrawn = false;
+      try {
+        const response = await hybrid.withdrawOrder({ order: source });
+        withdrawn = true;
+        this.options.logger.write({
+          level: 'info',
+          event: 'withdrawal',
+          marketId,
+          action: 'CANCEL',
+          side: order.side,
+          outcome: order.outcome,
+          orderId: order.orderId,
+          venue: order.venue,
+          message:
+            'stale quote → withdrawn instantly and free from this operator book; the signature is still valid on-chain until expiry or per-order cancelOrder',
+        });
+        if (
+          response.offchainWithdrawalIsOnchainCancellation !== false ||
+          response.signedOrderMayRemainValidOnchain !== true
+        ) {
+          throw new Error('operator misstated withdrawal cancellation semantics');
+        }
+      } catch (error) {
+        this.options.logger.write({
+          level: 'error',
+          event: 'action-error',
+          marketId,
+          action: 'CANCEL',
+          orderId: order.orderId,
+          venue: order.venue,
+          message:
+            `off-chain withdraw → error(${errorMessage(error)}) → ` +
+            'attempting authoritative per-order cancelOrder anyway',
+        });
+      }
+
+      try {
+        const result = await hybrid.cancelOrder({ order: source });
+        this.confirmedClosedOrderIds.add(order.orderId);
+        this.options.logger.write({
+          level: 'info',
+          event: 'broadcast',
+          marketId,
+          action: 'CANCEL',
+          side: order.side,
+          outcome: order.outcome,
+          orderId: order.orderId,
+          venue: order.venue,
+          txHash: result.txHash,
+          message:
+            'stale quote → authoritative per-order CTFExchange.cancelOrder confirmed on Arc (costs gas; cancelAll was not used)',
+        });
+      } catch (error) {
+        this.options.logger.write({
+          level: 'error',
+          event: 'action-error',
+          marketId,
+          action: 'CANCEL',
+          orderId: order.orderId,
+          venue: order.venue,
+          message:
+            `on-chain cancelOrder → error(${errorMessage(error)}) → ` +
+            (withdrawn
+              ? 'operator liquidity is withdrawn but the signature may remain valid until expiry → replacement refused this cycle'
+              : 'signature may remain in the operator book and valid on-chain → continuing'),
+        });
+        risk.orderSnapshotComplete = false;
         return false;
       }
     }
@@ -287,7 +550,7 @@ export class TraderAgent {
 
   private async executeFill(
     snapshot: Snapshot,
-    order: Order,
+    order: DecisionOrder,
     fillSizeRaw: bigint,
     fairValueYesRaw: bigint,
     risk: CycleRisk,
@@ -342,15 +605,13 @@ export class TraderAgent {
       return false;
     }
 
-    const notionalRaw = cumulativeMiniClobPaymentRaw(
-      BigInt(order.priceRaw),
-      fillSizeRaw,
-    );
+    const notionalRaw = fillNotionalRaw(order, fillSizeRaw);
     const capRefusal = this.capRefusal(notionalRaw, risk);
     if (capRefusal !== null) {
       this.refuse(snapshot.market.id, 'FILL', capRefusal, {
         side: order.side,
         orderId: order.orderId,
+        venue: order.venue,
         fairValueYesRaw: fairValueYesRaw.toString(),
         priceRaw: order.priceRaw,
         sizeRaw: fillSizeRaw.toString(),
@@ -368,6 +629,7 @@ export class TraderAgent {
         outcome: 'YES',
         side: order.side,
         orderId: order.orderId,
+        venue: order.venue,
         fairValueYesRaw: fairValueYesRaw.toString(),
         priceRaw: order.priceRaw,
         sizeRaw: fillSizeRaw.toString(),
@@ -377,17 +639,32 @@ export class TraderAgent {
       });
     } else {
       try {
-        const result = await this.options.executor?.fillOrder({
-          marketId: snapshot.market.id,
-          conditionId: snapshot.market.conditionId as `0x${string}`,
-          tokenId: snapshot.market.yesTokenId,
-          outcome: 'YES',
-          restingSide: order.side,
-          orderId: order.orderId,
-          expectedPriceRaw: BigInt(order.priceRaw),
-          fillSizeRaw,
-        });
-        if (result === undefined) throw new Error('trader executor was unavailable');
+        const result =
+          order.venue === 'MINICLOB'
+            ? await this.options.executor?.fillOrder({
+                marketId: snapshot.market.id,
+                conditionId: snapshot.market.conditionId as `0x${string}`,
+                tokenId: snapshot.market.yesTokenId,
+                outcome: 'YES',
+                restingSide: order.side,
+                orderId: order.orderId,
+                expectedPriceRaw: BigInt(order.priceRaw),
+                fillSizeRaw,
+              })
+            : await this.options.hybridExecutor?.fillOrder({
+                marketId: snapshot.market.id,
+                conditionId: snapshot.market.conditionId as `0x${string}`,
+                tokenId: snapshot.market.yesTokenId,
+                complementTokenId: snapshot.market.noTokenId,
+                outcome: 'YES',
+                restingSide: order.side,
+                order: hybridSource(order),
+                expectedPriceRaw: BigInt(order.priceRaw),
+                fillSizeRaw,
+              });
+        if (result === undefined) {
+          throw new Error(`${order.venue} trader executor was unavailable`);
+        }
         this.options.logger.write({
           level: 'info',
           event: 'broadcast',
@@ -396,13 +673,17 @@ export class TraderAgent {
           outcome: 'YES',
           side: order.side,
           orderId: order.orderId,
+          venue: order.venue,
           fairValueYesRaw: fairValueYesRaw.toString(),
           priceRaw: order.priceRaw,
           sizeRaw: fillSizeRaw.toString(),
           notionalRaw: notionalRaw.toString(),
           sessionSpendRaw: (risk.spendRaw + notionalRaw).toString(),
           txHash: result.txHash,
-          message: 'mispriced resting order → filled on Arc',
+          message:
+            order.venue === 'MINICLOB'
+              ? 'mispriced resting order → filled on Arc'
+              : 'mispriced resting signed order → CTFExchange fillOrder confirmed on Arc',
         });
       } catch (error) {
         if (
@@ -415,6 +696,7 @@ export class TraderAgent {
             marketId: snapshot.market.id,
             action: 'FILL',
             orderId: order.orderId,
+            venue: order.venue,
             txHash: error.txHash,
             message:
               `fill → receipt unavailable(${errorMessage(error)}) → ` +
@@ -427,6 +709,7 @@ export class TraderAgent {
             marketId: snapshot.market.id,
             action: 'FILL',
             orderId: order.orderId,
+            venue: order.venue,
             message: `fill → rpc/on-chain error(${errorMessage(error)}) → continuing`,
           });
           return false;
@@ -464,8 +747,9 @@ export class TraderAgent {
       this.refuse(
         snapshot.market.id,
         'PLACE',
-        'max-orders-in-flight cap cannot be verified because at least one book read failed',
+        'max-orders-in-flight cap cannot be verified because at least one order snapshot read failed',
         {
+          venue: snapshot.book.liveVenue,
           side,
           fairValueYesRaw: fairValueYesRaw.toString(),
           priceRaw: priceRaw.toString(),
@@ -480,6 +764,7 @@ export class TraderAgent {
         'PLACE',
         `max-orders-in-flight cap: current/planned ${risk.inFlight}, requested 1, limit ${this.options.maxOrdersInFlight}`,
         {
+          venue: snapshot.book.liveVenue,
           side,
           fairValueYesRaw: fairValueYesRaw.toString(),
           priceRaw: priceRaw.toString(),
@@ -496,6 +781,7 @@ export class TraderAgent {
           'PLACE',
           `max-inventory-per-side cap: projected YES ${after}, limit ${this.options.maxInventoryPerSideRaw}`,
           {
+            venue: snapshot.book.liveVenue,
             side,
             fairValueYesRaw: fairValueYesRaw.toString(),
             priceRaw: priceRaw.toString(),
@@ -510,6 +796,7 @@ export class TraderAgent {
         'PLACE',
         `available YES inventory ${inventory.availableYesRaw} is below exact quote size ${this.options.quoteSizeRaw}`,
         {
+          venue: snapshot.book.liveVenue,
           side,
           fairValueYesRaw: fairValueYesRaw.toString(),
           priceRaw: priceRaw.toString(),
@@ -519,13 +806,16 @@ export class TraderAgent {
       return false;
     }
 
-    const notionalRaw = cumulativeMiniClobPaymentRaw(
+    const notionalRaw = placementNotionalRaw(
+      snapshot.book.liveVenue,
+      side,
       priceRaw,
       this.options.quoteSizeRaw,
     );
     const capRefusal = this.capRefusal(notionalRaw, risk);
     if (capRefusal !== null) {
       this.refuse(snapshot.market.id, 'PLACE', capRefusal, {
+        venue: snapshot.book.liveVenue,
         side,
         fairValueYesRaw: fairValueYesRaw.toString(),
         priceRaw: priceRaw.toString(),
@@ -552,33 +842,86 @@ export class TraderAgent {
       });
     } else {
       try {
-        const result = await this.options.executor?.placeOrder({
-          marketId: snapshot.market.id,
-          conditionId: snapshot.market.conditionId as `0x${string}`,
-          tokenId: snapshot.market.yesTokenId,
-          outcome: 'YES',
-          side,
-          priceRaw,
-          sizeRaw: this.options.quoteSizeRaw,
-        });
-        if (result === undefined) throw new Error('trader executor was unavailable');
-        this.pendingPlacedOrderIds.add(result.orderId);
-        this.options.logger.write({
-          level: 'info',
-          event: 'broadcast',
-          marketId: snapshot.market.id,
-          action: 'PLACE',
-          outcome: 'YES',
-          side,
-          orderId: result.orderId,
-          fairValueYesRaw: fairValueYesRaw.toString(),
-          priceRaw: priceRaw.toString(),
-          sizeRaw: this.options.quoteSizeRaw.toString(),
-          notionalRaw: notionalRaw.toString(),
-          sessionSpendRaw: (risk.spendRaw + notionalRaw).toString(),
-          txHash: result.txHash,
-          message: 'fair value → quote placed on Arc',
-        });
+        if (snapshot.book.liveVenue === 'MINICLOB') {
+          const result = await this.options.executor?.placeOrder({
+            marketId: snapshot.market.id,
+            conditionId: snapshot.market.conditionId as `0x${string}`,
+            tokenId: snapshot.market.yesTokenId,
+            outcome: 'YES',
+            side,
+            priceRaw,
+            sizeRaw: this.options.quoteSizeRaw,
+          });
+          if (result === undefined) {
+            throw new Error('MINICLOB trader executor was unavailable');
+          }
+          this.pendingPlacedOrderIds.add(result.orderId);
+          this.options.logger.write({
+            level: 'info',
+            event: 'broadcast',
+            marketId: snapshot.market.id,
+            action: 'PLACE',
+            outcome: 'YES',
+            side,
+            venue: snapshot.book.liveVenue,
+            orderId: result.orderId,
+            fairValueYesRaw: fairValueYesRaw.toString(),
+            priceRaw: priceRaw.toString(),
+            sizeRaw: this.options.quoteSizeRaw.toString(),
+            notionalRaw: notionalRaw.toString(),
+            sessionSpendRaw: (risk.spendRaw + notionalRaw).toString(),
+            txHash: result.txHash,
+            message: 'fair value → quote placed on Arc',
+          });
+        } else {
+          const result = await this.options.hybridExecutor?.placeOrder({
+            marketId: snapshot.market.id,
+            conditionId: snapshot.market.conditionId as `0x${string}`,
+            tokenId: snapshot.market.yesTokenId,
+            complementTokenId: snapshot.market.noTokenId,
+            outcome: 'YES',
+            side,
+            priceRaw,
+            sizeRaw: this.options.quoteSizeRaw,
+          });
+          if (result === undefined) {
+            throw new Error('HYBRID trader executor was unavailable');
+          }
+          for (const rejection of result.rejections) {
+            this.options.logger.write({
+              level: 'warn',
+              event: 'order-rejected',
+              marketId: snapshot.market.id,
+              action: 'PLACE',
+              outcome: 'YES',
+              side,
+              venue: snapshot.book.liveVenue,
+              rejectionCode: rejection.code,
+              reason: rejection.reason,
+              message:
+                `Hybrid ingest rejected ${rejection.code} (${rejection.classification}): ` +
+                `${rejection.reason} → rebuilt once from fresh state`,
+            });
+          }
+          this.pendingPlacedOrderIds.add(result.orderHash);
+          this.options.logger.write({
+            level: 'info',
+            event: 'order-posted',
+            marketId: snapshot.market.id,
+            action: 'PLACE',
+            outcome: 'YES',
+            side,
+            venue: snapshot.book.liveVenue,
+            orderId: result.orderHash,
+            fairValueYesRaw: fairValueYesRaw.toString(),
+            priceRaw: priceRaw.toString(),
+            sizeRaw: this.options.quoteSizeRaw.toString(),
+            notionalRaw: notionalRaw.toString(),
+            sessionSpendRaw: (risk.spendRaw + notionalRaw).toString(),
+            message:
+              'fair value → P1 EIP-712 order signed with fresh makerNonce → accepted by Hybrid operator (no placement transaction)',
+          });
+        }
       } catch (error) {
         if (
           error instanceof BroadcastUncertainError &&
@@ -591,6 +934,7 @@ export class TraderAgent {
             marketId: snapshot.market.id,
             action: 'PLACE',
             side,
+            venue: snapshot.book.liveVenue,
             txHash: error.txHash,
             message:
               `place → receipt unavailable(${errorMessage(error)}) → ` +
@@ -603,7 +947,9 @@ export class TraderAgent {
             marketId: snapshot.market.id,
             action: 'PLACE',
             side,
-            message: `place → rpc/on-chain error(${errorMessage(error)}) → continuing`,
+            venue: snapshot.book.liveVenue,
+            message:
+              `${snapshot.book.liveVenue} place → error(${errorMessage(error)}) → continuing`,
           });
           return false;
         }
@@ -662,26 +1008,78 @@ export class TraderAgent {
     const snapshots = snapshotResults.filter(
       (snapshot): snapshot is Snapshot => snapshot !== null,
     );
-    const restOpenOwnOrders = snapshots.flatMap(({ book }) =>
-      [...book.yes.orders, ...book.no.orders].filter(
-        (order) =>
-          order.open && sameAddress(order.maker, this.options.traderAddress),
+    const ownOrdersFromBooks = snapshots.flatMap(({ book }) =>
+      [
+        ...venueOrders(book.yes, book.liveVenue),
+        ...venueOrders(book.no, book.liveVenue),
+      ].filter((order) =>
+        sameAddress(order.maker, this.options.traderAddress),
       ),
     );
-    const restOpenIds = new Set(restOpenOwnOrders.map(({ orderId }) => orderId));
+    let orderSnapshotComplete = snapshots.length === markets.length;
+    let openOwnOrders = ownOrdersFromBooks;
+    const hasHybridMarket = snapshots.some(
+      ({ book }) => book.liveVenue === 'HYBRID',
+    );
+    if (hasHybridMarket && !this.options.dryRun) {
+      if (this.options.hybridExecutor === undefined) {
+        orderSnapshotComplete = false;
+        this.options.logger.write({
+          level: 'error',
+          event: 'backend-error',
+          venue: 'HYBRID',
+          message:
+            'authenticated Hybrid maker-order snapshot → executor unavailable → placement cap fails closed',
+        });
+      } else {
+        try {
+          const response = await this.options.hybridExecutor.getMakerOrders();
+          const authenticatedHybridOrders = response.orders
+            .filter(
+              (order) =>
+                isActiveHybridOrder(order) &&
+                sameAddress(order.maker, this.options.traderAddress),
+            )
+            .map(hybridDecisionOrder);
+          openOwnOrders = [
+            ...ownOrdersFromBooks.filter(({ venue }) => venue === 'MINICLOB'),
+            ...authenticatedHybridOrders,
+          ];
+        } catch (error) {
+          orderSnapshotComplete = false;
+          this.options.logger.write({
+            level: 'error',
+            event: 'backend-error',
+            venue: 'HYBRID',
+            message:
+              `authenticated Hybrid maker-order read → error(${errorMessage(error)}) → ` +
+              'placement cap fails closed → continuing',
+          });
+        }
+      }
+    }
+    const uniqueOpenOwnOrders = [
+      ...new Map(
+        openOwnOrders.map((order) => [
+          `${order.venue}:${order.orderId}`,
+          order,
+        ]),
+      ).values(),
+    ];
+    const openIds = new Set(uniqueOpenOwnOrders.map(({ orderId }) => orderId));
     for (const orderId of this.pendingPlacedOrderIds) {
-      if (restOpenIds.has(orderId)) this.pendingPlacedOrderIds.delete(orderId);
+      if (openIds.has(orderId)) this.pendingPlacedOrderIds.delete(orderId);
     }
     for (const orderId of this.confirmedClosedOrderIds) {
-      if (!restOpenIds.has(orderId)) this.confirmedClosedOrderIds.delete(orderId);
+      if (!openIds.has(orderId)) this.confirmedClosedOrderIds.delete(orderId);
     }
-    const effectiveRestOpen = restOpenOwnOrders.filter(
+    const effectiveOpen = uniqueOpenOwnOrders.filter(
       ({ orderId }) => !this.confirmedClosedOrderIds.has(orderId),
     );
     const risk: CycleRisk = {
       spendRaw: this.sessionSpendRaw,
-      inFlight: effectiveRestOpen.length + this.pendingPlacedOrderIds.size,
-      orderSnapshotComplete: snapshots.length === markets.length,
+      inFlight: effectiveOpen.length + this.pendingPlacedOrderIds.size,
+      orderSnapshotComplete,
     };
     let actualSignalSpendThisCycle = 0n;
 
@@ -701,9 +1099,9 @@ export class TraderAgent {
           (position) => position.marketId === market.id && position.outcome === 'YES',
         )?.qtyRaw ?? '0',
       );
-      const ownYesOrders = book.yes.orders.filter(
+      const yesOrders = venueOrders(book.yes, book.liveVenue);
+      const ownYesOrders = yesOrders.filter(
         (order) =>
-          order.open &&
           sameAddress(order.maker, this.options.traderAddress) &&
           !this.confirmedClosedOrderIds.has(order.orderId),
       );
@@ -754,10 +1152,12 @@ export class TraderAgent {
         level: 'info',
         event: 'market-read',
         marketId: market.id,
+        venue: book.liveVenue,
         fairValueYesRaw: fair.toString(),
         message:
-          `read phase=${market.phase} bestBid=${book.yes.bids[0]?.priceRaw ?? 'none'} ` +
-          `bestAsk=${book.yes.asks[0]?.priceRaw ?? 'none'} ` +
+          `read phase=${market.phase} liveVenue=${book.liveVenue} ` +
+          `bestBid=${bestExternalOrder(yesOrders, 'BID', '')?.priceRaw ?? 'none'} ` +
+          `bestAsk=${bestExternalOrder(yesOrders, 'ASK', '')?.priceRaw ?? 'none'} ` +
           `availableYes=${inventory.availableYesRaw} projectedYes=${inventory.projectedYesRaw} ` +
           `inFlight=${risk.inFlight} sessionSpendRaw=${risk.spendRaw} → inferred quote=${bidPrice}/${askPrice}`,
       });
@@ -788,7 +1188,7 @@ export class TraderAgent {
       }
 
       const externalAsk = bestExternalOrder(
-        book.yes.orders,
+        yesOrders,
         'ASK',
         this.options.traderAddress,
       );
@@ -804,6 +1204,7 @@ export class TraderAgent {
           outcome: 'YES',
           side: 'ASK',
           orderId: externalAsk.orderId,
+          venue: externalAsk.venue,
           fairValueYesRaw: fair.toString(),
           priceRaw: externalAsk.priceRaw,
           message: 'best external ASK is below fair value by more than the take threshold',
@@ -819,7 +1220,7 @@ export class TraderAgent {
       }
 
       const externalBid = bestExternalOrder(
-        book.yes.orders,
+        yesOrders,
         'BID',
         this.options.traderAddress,
       );
@@ -835,6 +1236,7 @@ export class TraderAgent {
           outcome: 'YES',
           side: 'BID',
           orderId: externalBid.orderId,
+          venue: externalBid.venue,
           fairValueYesRaw: fair.toString(),
           priceRaw: externalBid.priceRaw,
           message: 'best external BID is above fair value by more than the take threshold',
@@ -870,6 +1272,7 @@ export class TraderAgent {
             action: 'HOLD',
             outcome: 'YES',
             side,
+            venue: book.liveVenue,
             fairValueYesRaw: fair.toString(),
             priceRaw: price.toString(),
             message: 'existing quote is fresh and within the reprice threshold → hold',

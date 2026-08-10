@@ -3,9 +3,16 @@ import type {
   Address,
   Market,
   MarketBookResponse,
+  OffchainOrder,
   Order,
   TruthSignalResponse,
 } from '@predex-pump/shared';
+import {
+  buildCtfExchangeOrder,
+  ctfExchangeOrderToWire,
+  hashCtfExchangeOrder,
+  Side,
+} from '@predex-pump/shared/tx';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -15,6 +22,7 @@ import {
   type TraderAgentOptions,
   type TraderDataClient,
   type TraderExecutor,
+  type HybridTraderExecutor,
 } from '../src/agent.js';
 import type {
   TraderLogEntry,
@@ -24,6 +32,7 @@ import type {
 const TRADER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as Address;
 const MAKER = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Address;
 const BOOK = '0xa4f4e20bb706b38c7bbfeb923b63c2d427c9f7a3' as Address;
+const SECRET_SIGNATURE = `0x${'9a'.repeat(65)}` as const;
 
 class MemoryLogger implements TraderLogger {
   readonly entries: TraderLogEntry[] = [];
@@ -146,6 +155,84 @@ function book(
   };
 }
 
+function offchainOrder(
+  overrides: Partial<OffchainOrder> = {},
+): OffchainOrder {
+  const maker = overrides.maker ?? MAKER;
+  const exchangeSide = overrides.side === 'BID' ? Side.BUY : Side.SELL;
+  const signedOrder = buildCtfExchangeOrder({
+    salt: 7n,
+    maker,
+    tokenId: BigInt(market().yesTokenId),
+    side: exchangeSide,
+    priceRaw: BigInt(overrides.priceRaw ?? '500000'),
+    sizeRaw: BigInt(overrides.sizeRaw ?? '500000'),
+    expiration: 2_000_000_000n,
+    nonce: 4n,
+  });
+  const orderHash = hashCtfExchangeOrder(signedOrder);
+  return {
+    orderHash,
+    marketId: '1',
+    conditionId: market().conditionId as `0x${string}`,
+    tokenId: market().yesTokenId,
+    outcome: 'YES',
+    maker,
+    side: overrides.side ?? 'ASK',
+    priceRaw: overrides.priceRaw ?? '500000',
+    sizeRaw: overrides.sizeRaw ?? '500000',
+    filledRaw: '0',
+    remainingRaw: overrides.remainingRaw ?? '500000',
+    status: 'OPEN',
+    fillable: true,
+    unfillableReason: null,
+    signedOrder: {
+      ...ctfExchangeOrderToWire(signedOrder),
+      signature: SECRET_SIGNATURE,
+    },
+    createdAt: 900,
+    updatedAt: overrides.updatedAt ?? 900,
+    ...overrides,
+  };
+}
+
+function hybridBook(
+  marketValue = market(),
+  orders: OffchainOrder[] = [],
+): MarketBookResponse {
+  const response = book(marketValue);
+  const yesOrders = orders.filter(({ outcome }) => outcome === 'YES');
+  const noOrders = orders.filter(({ outcome }) => outcome === 'NO');
+  return {
+    ...response,
+    liveVenue: 'HYBRID',
+    yes: {
+      ...response.yes,
+      orders: [],
+      offchainOrders: yesOrders,
+      bids: yesOrders
+        .filter(({ side }) => side === 'BID')
+        .map((value) => ({
+          priceRaw: value.priceRaw,
+          sizeRaw: value.remainingRaw,
+          orderCount: 1,
+        })),
+      asks: yesOrders
+        .filter(({ side }) => side === 'ASK')
+        .map((value) => ({
+          priceRaw: value.priceRaw,
+          sizeRaw: value.remainingRaw,
+          orderCount: 1,
+        })),
+    },
+    no: {
+      ...response.no,
+      orders: [],
+      offchainOrders: noOrders,
+    },
+  };
+}
+
 function account(
   positions: AccountResponse['positions'] = [
     {
@@ -256,11 +343,50 @@ function executor(): TraderExecutor & {
   };
 }
 
+function hybridExecutor(): HybridTraderExecutor & {
+  getMakerOrders: ReturnType<typeof vi.fn<HybridTraderExecutor['getMakerOrders']>>;
+  placeOrder: ReturnType<typeof vi.fn<HybridTraderExecutor['placeOrder']>>;
+  fillOrder: ReturnType<typeof vi.fn<HybridTraderExecutor['fillOrder']>>;
+  withdrawOrder: ReturnType<typeof vi.fn<HybridTraderExecutor['withdrawOrder']>>;
+  cancelOrder: ReturnType<typeof vi.fn<HybridTraderExecutor['cancelOrder']>>;
+} {
+  return {
+    getMakerOrders: vi.fn(async () => ({
+      orders: [],
+      offchainWithdrawalIsOnchainCancellation: false,
+      warning: 'Withdrawal is off-chain only.',
+    })),
+    placeOrder: vi.fn(async () => ({
+      orderHash: `0x${'4'.repeat(64)}`,
+      rejections: [],
+    })),
+    fillOrder: vi.fn(async () => ({ txHash: `0x${'5'.repeat(64)}` })),
+    withdrawOrder: vi.fn(async ({ order: value }) => ({
+      order: { ...value, status: 'WITHDRAWN', fillable: false },
+      offchainWithdrawalIsOnchainCancellation: false,
+      signedOrderMayRemainValidOnchain: true,
+      warning: 'Signature remains valid until expiry or cancelOrder.',
+      authoritativeCancelOrderTx: {
+        to: `0x${'6'.repeat(40)}`,
+        data: '0x1234',
+        valueRaw: '0',
+      },
+    })),
+    cancelOrder: vi.fn(async () => ({ txHash: `0x${'7'.repeat(64)}` })),
+  };
+}
+
 function createAgent(
   overrides: Partial<TraderAgentOptions> = {},
-): { agent: TraderAgent; logger: MemoryLogger; executor: ReturnType<typeof executor> } {
+): {
+  agent: TraderAgent;
+  logger: MemoryLogger;
+  executor: ReturnType<typeof executor>;
+  hybridExecutor: ReturnType<typeof hybridExecutor>;
+} {
   const logger = new MemoryLogger();
   const actionExecutor = executor();
+  const hybridActionExecutor = hybridExecutor();
   const agent = new TraderAgent({
     dataClient: dataClient(),
     readSignal: vi.fn(async ({ marketId }) => ({
@@ -268,6 +394,7 @@ function createAgent(
       paymentSpendRaw: 0n,
     })),
     executor: actionExecutor,
+    hybridExecutor: hybridActionExecutor,
     logger,
     traderAddress: TRADER,
     quoteSizeRaw: 100_000n,
@@ -284,7 +411,12 @@ function createAgent(
     nowSeconds: () => 1_000,
     ...overrides,
   });
-  return { agent, logger, executor: actionExecutor };
+  return {
+    agent,
+    logger,
+    executor: actionExecutor,
+    hybridExecutor: hybridActionExecutor,
+  };
 }
 
 describe('TraderAgent', () => {
@@ -413,7 +545,7 @@ describe('TraderAgent', () => {
     const marketValue = market();
     const cheapAsk = order({ priceRaw: '500000', remainingRaw: '500000' });
     const actionExecutor = executor();
-    const { agent } = createAgent({
+    const { agent, logger } = createAgent({
       dataClient: dataClient({
         markets: [marketValue],
         books: new Map([['1', book(marketValue, [cheapAsk])]]),
@@ -431,6 +563,174 @@ describe('TraderAgent', () => {
         restingSide: 'ASK',
         expectedPriceRaw: 500_000n,
         fillSizeRaw: 100_000n,
+      }),
+    );
+  });
+
+  it('trades populated Hybrid depth even though the MiniCLOB orders array is empty', async () => {
+    const marketValue = market();
+    const cheapAsk = offchainOrder({ priceRaw: '500000' });
+    const arcExecutor = executor();
+    const hybridActionExecutor = hybridExecutor();
+    const { agent, logger } = createAgent({
+      dataClient: dataClient({
+        markets: [marketValue],
+        books: new Map([['1', hybridBook(marketValue, [cheapAsk])]]),
+      }),
+      executor: arcExecutor,
+      hybridExecutor: hybridActionExecutor,
+      dryRun: false,
+    });
+
+    await agent.runCycle();
+
+    expect(hybridActionExecutor.fillOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        marketId: '1',
+        order: cheapAsk,
+        expectedPriceRaw: 500_000n,
+        fillSizeRaw: 100_000n,
+      }),
+    );
+    expect(arcExecutor.fillOrder).not.toHaveBeenCalled();
+    expect(arcExecutor.placeOrder).not.toHaveBeenCalled();
+    const serializedLogs = JSON.stringify(logger.entries);
+    expect(serializedLogs).not.toContain(SECRET_SIGNATURE);
+    expect(serializedLogs).not.toContain('makerAmountRaw');
+    expect(serializedLogs).not.toContain('PREDEX_PRIVATE_KEY');
+  });
+
+  it('keeps a MINICLOB market exclusively on the existing Arc executor', async () => {
+    const marketValue = market();
+    const cheapAsk = order({ priceRaw: '500000' });
+    const arcExecutor = executor();
+    const hybridActionExecutor = hybridExecutor();
+    const { agent } = createAgent({
+      dataClient: dataClient({
+        markets: [marketValue],
+        books: new Map([['1', book(marketValue, [cheapAsk])]]),
+      }),
+      executor: arcExecutor,
+      hybridExecutor: hybridActionExecutor,
+      dryRun: false,
+    });
+
+    await agent.runCycle();
+
+    expect(arcExecutor.fillOrder).toHaveBeenCalledOnce();
+    expect(hybridActionExecutor.fillOrder).not.toHaveBeenCalled();
+    expect(hybridActionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(hybridActionExecutor.getMakerOrders).not.toHaveBeenCalled();
+  });
+
+  it('counts authenticated Hybrid maker orders in the shared in-flight cap', async () => {
+    const marketValue = market();
+    const resting = offchainOrder({ maker: TRADER, side: 'BID', priceRaw: '580000' });
+    const hybridActionExecutor = hybridExecutor();
+    hybridActionExecutor.getMakerOrders.mockResolvedValue({
+      orders: [resting],
+      offchainWithdrawalIsOnchainCancellation: false,
+      warning: 'Withdrawal is off-chain only.',
+    });
+    const { agent, logger } = createAgent({
+      dataClient: dataClient({
+        markets: [marketValue],
+        books: new Map([['1', hybridBook(marketValue)]]),
+      }),
+      hybridExecutor: hybridActionExecutor,
+      dryRun: false,
+      maxOrdersInFlight: 1,
+    });
+
+    await agent.runCycle();
+
+    expect(hybridActionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(
+      logger.entries.filter(
+        ({ event, reason }) =>
+          event === 'refused' &&
+          reason?.includes('max-orders-in-flight cap') === true,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('fails the placement cap closed when the authenticated Hybrid order read fails', async () => {
+    const marketValue = market();
+    const hybridActionExecutor = hybridExecutor();
+    hybridActionExecutor.getMakerOrders.mockRejectedValue(
+      new Error('session service unavailable'),
+    );
+    const { agent, logger } = createAgent({
+      dataClient: dataClient({
+        markets: [marketValue],
+        books: new Map([['1', hybridBook(marketValue)]]),
+      }),
+      hybridExecutor: hybridActionExecutor,
+      dryRun: false,
+    });
+
+    await agent.runCycle();
+
+    expect(hybridActionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'backend-error',
+        message: expect.stringContaining('placement cap fails closed'),
+      }),
+    );
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'refused',
+        reason: expect.stringContaining('order snapshot read failed'),
+      }),
+    );
+  });
+
+  it('retires a stale Hybrid quote by free withdraw followed by per-order on-chain cancel', async () => {
+    const marketValue = market();
+    const stale = offchainOrder({
+      maker: TRADER,
+      side: 'BID',
+      priceRaw: '500000',
+      updatedAt: 800,
+    });
+    const hybridActionExecutor = hybridExecutor();
+    hybridActionExecutor.getMakerOrders.mockResolvedValue({
+      orders: [stale],
+      offchainWithdrawalIsOnchainCancellation: false,
+      warning: 'Withdrawal is off-chain only.',
+    });
+    const arcExecutor = executor();
+    const { agent, logger } = createAgent({
+      dataClient: dataClient({
+        markets: [marketValue],
+        books: new Map([['1', hybridBook(marketValue, [stale])]]),
+      }),
+      executor: arcExecutor,
+      hybridExecutor: hybridActionExecutor,
+      dryRun: false,
+    });
+
+    await agent.runCycle();
+
+    expect(hybridActionExecutor.withdrawOrder).toHaveBeenCalledWith({
+      order: stale,
+    });
+    expect(hybridActionExecutor.cancelOrder).toHaveBeenCalledWith({
+      order: stale,
+    });
+    expect(arcExecutor.cancelOrder).not.toHaveBeenCalled();
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'withdrawal',
+        message: expect.stringMatching(/instantly and free.*still valid on-chain/u),
+      }),
+    );
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'broadcast',
+        action: 'CANCEL',
+        message: expect.stringMatching(/authoritative.*costs gas/u),
       }),
     );
   });

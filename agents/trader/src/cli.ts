@@ -14,6 +14,7 @@ import type {
 } from './agent.js';
 import { createArcTraderExecutor } from './arc-executor.js';
 import { loadTraderConfig } from './config.js';
+import { createArcHybridTraderExecutor } from './hybrid-executor.js';
 import { ConsoleTraderLogger } from './logger.js';
 
 function printHelp(): void {
@@ -38,8 +39,10 @@ async function main(): Promise<void> {
 
   const config = loadTraderConfig(process.env, arguments_);
   const logger = new ConsoleTraderLogger();
+  const restClient = createRestClient({ baseUrl: config.apiUrl });
   let traderAddress = config.traderAddress ?? zeroAddress;
   let executor;
+  let hybridExecutor;
   if (!config.dryRun) {
     // This is the only trader-agent path that reads PREDEX_PRIVATE_KEY.
     const account = privateKeyAccountFromEnv('PREDEX_PRIVATE_KEY');
@@ -53,9 +56,14 @@ async function main(): Promise<void> {
     }
     traderAddress = account.address;
     executor = createArcTraderExecutor(account, config.rpcUrl);
+    hybridExecutor = createArcHybridTraderExecutor(
+      account,
+      config.rpcUrl,
+      restClient,
+      BigInt(config.staleQuoteSeconds),
+    );
   }
 
-  const restClient = createRestClient({ baseUrl: config.apiUrl });
   logger.write({
     level: 'info',
     event: 'startup',
@@ -140,6 +148,7 @@ async function main(): Promise<void> {
     dataClient: restClient,
     readSignal,
     ...(executor === undefined ? {} : { executor }),
+    ...(hybridExecutor === undefined ? {} : { hybridExecutor }),
     logger,
     traderAddress,
     quoteSizeRaw: config.quoteSizeRaw,

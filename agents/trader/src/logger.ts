@@ -1,3 +1,8 @@
+import type {
+  LiveBookVenue,
+  OrderIngestRejectionCode,
+} from '@predex-pump/shared';
+
 export type TraderLogLevel = 'info' | 'warn' | 'error';
 
 export interface TraderLogEntry {
@@ -9,6 +14,9 @@ export interface TraderLogEntry {
     | 'refused'
     | 'dry-run'
     | 'broadcast'
+    | 'order-posted'
+    | 'order-rejected'
+    | 'withdrawal'
     | 'action-error'
     | 'backend-error'
     | 'signal-error'
@@ -18,10 +26,12 @@ export interface TraderLogEntry {
   message: string;
   marketId?: string;
   action?: 'PLACE' | 'FILL' | 'CANCEL' | 'HOLD';
+  venue?: LiveBookVenue;
   side?: 'BID' | 'ASK';
   outcome?: 'YES' | 'NO';
   orderId?: string;
   reason?: string;
+  rejectionCode?: OrderIngestRejectionCode;
   fairValueYesRaw?: string;
   priceRaw?: string;
   sizeRaw?: string;
@@ -50,6 +60,7 @@ export function formatTraderLogEntry(
   const labels: readonly [keyof TraderLogEntry, string][] = [
     ['marketId', 'market'],
     ['action', 'action'],
+    ['venue', 'venue'],
     ['outcome', 'outcome'],
     ['side', 'side'],
     ['orderId', 'order'],
@@ -59,6 +70,7 @@ export function formatTraderLogEntry(
     ['notionalRaw', 'notionalRaw'],
     ['sessionSpendRaw', 'sessionSpendRaw'],
     ['reason', 'reason'],
+    ['rejectionCode', 'rejection'],
     ['txHash', 'tx'],
   ];
   for (const [key, label] of labels) {
