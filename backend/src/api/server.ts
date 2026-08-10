@@ -9,11 +9,17 @@ import type { DedupChecker } from '../dedup/types.js';
 import type { ServerEventBus } from '../events/bus.js';
 import type { TruthPaymentGate } from '../truth-payment/types.js';
 import {
+  ViemOrderChainReader,
+  type OrderChainReader,
+} from '../orderbook/chain-reader.js';
+import { OffchainOrderService } from '../orderbook/service.js';
+import {
   CircleGatewayBalanceReader,
   type GatewayBalanceReader,
 } from '../gateway/balance.js';
 import { registerAccountRoutes } from './account-routes.js';
 import { registerRestRoutes } from './routes.js';
+import { registerOrderRoutes } from './order-routes.js';
 import { registerWebsocketRoute } from './websocket.js';
 
 export interface BuildServerOptions {
@@ -26,10 +32,17 @@ export interface BuildServerOptions {
   accountLayerConfig?: AccountLayerConfig;
   siweVerifier?: SiweVerifier;
   gatewayBalanceReader?: GatewayBalanceReader;
+  orderChainReader?: OrderChainReader;
+  orderNow?: () => number;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
   const accountLayerConfig = options.accountLayerConfig ?? loadAccountLayerConfig();
+  const accountService = new AccountService(
+    options.prisma,
+    accountLayerConfig,
+    options.siweVerifier,
+  );
   const app = Fastify({
     logger: options.logger ?? true,
   });
@@ -45,9 +58,19 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     options.indexerStallMs,
     options.truthPaymentGate,
   );
+  registerOrderRoutes(
+    app,
+    new OffchainOrderService(
+      options.prisma,
+      options.orderChainReader ?? new ViemOrderChainReader(),
+      options.eventBus,
+      options.orderNow,
+    ),
+    accountService,
+  );
   registerAccountRoutes(
     app,
-    new AccountService(options.prisma, accountLayerConfig, options.siweVerifier),
+    accountService,
     options.gatewayBalanceReader ?? new CircleGatewayBalanceReader(),
   );
   await app.ready();

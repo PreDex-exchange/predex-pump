@@ -67,13 +67,14 @@ model Market {
   closedOutAt   Int?
   indexedAt     DateTime @updatedAt
 
-  trades      Trade[]
-  pricePoints PricePoint[]
-  orders      Order[]
-  fills       Fill[]
-  positions   Position[]
-  resolution  Resolution?
-  closeout    Closeout?
+  trades       Trade[]
+  pricePoints  PricePoint[]
+  orders       Order[]
+  signedOrders SignedOrder[]
+  fills        Fill[]
+  positions    Position[]
+  resolution   Resolution?
+  closeout     Closeout?
 
   @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([phase, createdAt(sort: Desc), id(sort: Desc)])
@@ -179,6 +180,117 @@ model Fill {
   @@index([taker, ts])
 }
 
+// Full EIP-712 CTFExchange order plus operator-derived book fields. The digest
+// is the natural identity; amounts remain exact decimal strings.
+model SignedOrder {
+  orderHash      String @id
+  saltRaw        String
+  maker          String
+  signer         String
+  taker          String
+  tokenId        String
+  makerAmountRaw String
+  takerAmountRaw String
+  expiration     Int
+  nonceRaw       String
+  feeRateBpsRaw  String
+  exchangeSide   Int
+  signatureType  Int
+  signature      String
+
+  marketId           String
+  conditionId        String
+  outcome            String
+  side               String
+  priceRaw           String
+  sizeRaw            String
+  filledRaw          String  @default("0")
+  remainingRaw       String
+  status             String  @default("OPEN")
+  withdrawnAt        Int?
+  lastFailureCode    String?
+  lastFailureMessage String?
+  lastFailureAt      Int?
+  lastOnchainTxHash  String?
+  lastOnchainBlock   Int?
+  createdAt          Int
+  updatedAt          Int
+
+  market         Market            @relation(fields: [marketId], references: [id])
+  matchesAsTaker SettlementMatch[] @relation("SettlementTakerOrder")
+  matchesAsMaker SettlementMatch[] @relation("SettlementMakerOrder")
+
+  @@index([marketId, status, withdrawnAt])
+  @@index([tokenId, status, withdrawnAt])
+  @@index([maker, status, withdrawnAt])
+  @@index([expiration])
+}
+
+model ExchangeTokenRegistration {
+  tokenId           String @id
+  complementTokenId String
+  conditionId       String
+  blockNumber       Int
+  logIndex          Int
+  registeredAt      Int
+
+  @@index([conditionId])
+}
+
+// Only ApprovalForAll events naming CTFExchange are materialized here.
+model CtfExchangeApproval {
+  owner       String  @id
+  approved    Boolean
+  blockNumber Int
+  logIndex    Int
+  updatedAt   Int
+}
+
+// Only ERC-20 Approval events naming CTFExchange are materialized here.
+model CollateralExchangeApproval {
+  owner        String @id
+  allowanceRaw String
+  blockNumber  Int
+  logIndex     Int
+  updatedAt    Int
+}
+
+// BUY-order maker balances are snapshotted at ingest and advanced by
+// topic-filtered collateral Transfer events for tracked makers.
+model CollateralBalance {
+  owner       String @id
+  balanceRaw  String
+  blockNumber Int
+  logIndex    Int
+  updatedAt   Int
+}
+
+model SettlementMatch {
+  id                   String  @id
+  matchKey             String  @unique
+  takerOrderHash       String
+  makerOrderHash       String
+  tokenId              String
+  fillSizeRaw          String
+  takerFilledBeforeRaw String
+  makerFilledBeforeRaw String
+  status               String
+  attemptCount         Int     @default(0)
+  txHash               String?
+  failureCode          String?
+  failureMessage       String?
+  createdAt            Int
+  updatedAt            Int
+
+  takerOrder SignedOrder @relation("SettlementTakerOrder", fields: [takerOrderHash], references: [orderHash])
+  makerOrder SignedOrder @relation("SettlementMakerOrder", fields: [makerOrderHash], references: [orderHash])
+
+  @@index([status, createdAt])
+  @@index([txHash])
+  @@index([takerOrderHash])
+  @@index([makerOrderHash])
+}
+
 model Position {
   account            String
   marketId           String
@@ -241,23 +353,23 @@ model Account {
 // Additive, off-chain account data. The indexer-owned Account model above
 // remains the source for every chain-derived field.
 model UserAccount {
-  address              String                 @id
-  displayName          String?
-  rememberRecentlyViewed Boolean              @default(true)
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @updatedAt
-  sessions             AuthSession[]
-  watchlist            AccountWatchlist[]
-  behavior             AccountBehaviorEvent[]
+  address                String                 @id
+  displayName            String?
+  rememberRecentlyViewed Boolean                @default(true)
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  sessions               AuthSession[]
+  watchlist              AccountWatchlist[]
+  behavior               AccountBehaviorEvent[]
 }
 
 model SiweNonce {
-  nonce       String    @id
-  domain      String
-  uri         String
-  issuedAt    DateTime  @default(now())
-  expiresAt   DateTime
-  consumedAt  DateTime?
+  nonce      String    @id
+  domain     String
+  uri        String
+  issuedAt   DateTime  @default(now())
+  expiresAt  DateTime
+  consumedAt DateTime?
 
   @@index([expiresAt])
 }

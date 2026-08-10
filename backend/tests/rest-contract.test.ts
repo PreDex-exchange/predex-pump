@@ -252,7 +252,10 @@ describe('REST shared contract', () => {
       tokenId: '102',
       bids: [],
       asks: [],
+      bestBidRaw: null,
+      bestAskRaw: null,
       orders: [],
+      offchainOrders: [],
     });
   });
 

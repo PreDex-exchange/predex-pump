@@ -104,27 +104,32 @@ function book(
 ): MarketBookResponse {
   const yesOrders = orders.filter(({ outcome }) => outcome === 'YES');
   const noOrders = orders.filter(({ outcome }) => outcome === 'NO');
+  const yesBids = yesOrders
+    .filter(({ side }) => side === 'BID')
+    .map((value) => ({
+      priceRaw: value.priceRaw,
+      sizeRaw: value.remainingRaw,
+      orderCount: 1,
+    }));
+  const yesAsks = yesOrders
+    .filter(({ side }) => side === 'ASK')
+    .map((value) => ({
+      priceRaw: value.priceRaw,
+      sizeRaw: value.remainingRaw,
+      orderCount: 1,
+    }));
   return {
     marketId: marketValue.id,
     yes: {
       marketId: marketValue.id,
       outcome: 'YES',
       tokenId: marketValue.yesTokenId,
-      bids: yesOrders
-        .filter(({ side }) => side === 'BID')
-        .map((value) => ({
-          priceRaw: value.priceRaw,
-          sizeRaw: value.remainingRaw,
-          orderCount: 1,
-        })),
-      asks: yesOrders
-        .filter(({ side }) => side === 'ASK')
-        .map((value) => ({
-          priceRaw: value.priceRaw,
-          sizeRaw: value.remainingRaw,
-          orderCount: 1,
-        })),
+      bids: yesBids,
+      asks: yesAsks,
+      bestBidRaw: yesBids[0]?.priceRaw ?? null,
+      bestAskRaw: yesAsks[0]?.priceRaw ?? null,
       orders: yesOrders,
+      offchainOrders: [],
     },
     no: {
       marketId: marketValue.id,
@@ -132,7 +137,10 @@ function book(
       tokenId: marketValue.noTokenId,
       bids: [],
       asks: [],
+      bestBidRaw: null,
+      bestAskRaw: null,
       orders: noOrders,
+      offchainOrders: [],
     },
   };
 }

@@ -13,6 +13,7 @@ import type {
   DedupCandidate,
   Market,
   MarketPhase,
+  OffchainOrder,
   OrderBook,
   Pnl,
   Position,
@@ -57,6 +58,72 @@ export interface MarketBookResponse {
 
 // GET /orderbook/:tokenId  → single-token ladder (plan-specified path)
 export type OrderBookResponse = OrderBook;
+
+export type OrderIngestRejectionCode =
+  | 'MALFORMED_ORDER'
+  | 'ORDER_HASH_MISMATCH'
+  | 'BAD_SIGNATURE'
+  | 'SIGNER_UNAUTHORIZED'
+  | 'UNSUPPORTED_SIGNATURE_TYPE'
+  | 'WRONG_NONCE'
+  | 'EXPIRED'
+  | 'INVALID_SIZE'
+  | 'INVALID_PRICE'
+  | 'INVALID_FEE'
+  | 'INVALID_TAKER'
+  | 'MARKET_NOT_FOUND'
+  | 'TOKEN_NOT_REGISTERED'
+  | 'TOKEN_PAIR_MISMATCH'
+  | 'MARKET_RESOLVED'
+  | 'INSUFFICIENT_BALANCE'
+  | 'MISSING_APPROVAL'
+  | 'CHAIN_READ_FAILED';
+
+// POST /orders — the signed order is stored off-chain; there is no placement tx.
+export interface IngestOrderRequest {
+  orderHash: `0x${string}`;
+  order: import('./domain').SignedCtfExchangeOrder;
+}
+
+export interface IngestOrderResponse {
+  order: OffchainOrder;
+}
+
+export interface OrderIngestRejection {
+  error: {
+    code: OrderIngestRejectionCode;
+    message: string;
+  };
+}
+
+// GET /orders — authenticated maker's own active signed orders.
+export interface MakerOrdersResponse {
+  orders: OffchainOrder[];
+  offchainWithdrawalIsOnchainCancellation: false;
+  warning: string;
+}
+
+export interface TransactionRequestDto {
+  to: Address;
+  data: `0x${string}`;
+  valueRaw: Raw;
+}
+
+/**
+ * DELETE /orders/:orderHash only withdraws liquidity from this operator's book.
+ * It does not invalidate the signature on-chain. The returned cancelOrder call
+ * is authoritative; the maker can submit cancelAll instead.
+ */
+export interface WithdrawOrderResponse {
+  order: OffchainOrder;
+  offchainWithdrawalIsOnchainCancellation: false;
+  signedOrderMayRemainValidOnchain: true;
+  warning: string;
+  authoritativeCancelOrderTx: TransactionRequestDto;
+}
+
+export const OFFCHAIN_WITHDRAWAL_WARNING =
+  'Off-chain withdrawal only removes this order from the Predex operator book. The signed order may remain fillable on-chain until it expires or the maker submits cancelOrder/cancelAll; on-chain cancellation is authoritative.';
 
 // GET /markets/:id/prices?fromTs=&limit=  → price curve, derived from the TradeState stream
 export interface PriceHistoryQuery {
@@ -211,6 +278,8 @@ export const routes = {
   marketPrices: (id: string) => `/markets/${id}/prices`,
   truth: (marketId: string) => `/truth/${marketId}`,
   orderbook: (tokenId: string) => `/orderbook/${tokenId}`,
+  orders: () => `/orders`,
+  order: (orderHash: string) => `/orders/${orderHash}`,
   account: (addr: string) => `/accounts/${addr}`,
   activity: () => `/activity`,
   config: () => `/config`,

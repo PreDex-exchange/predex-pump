@@ -131,13 +131,74 @@ export interface BookLevel {
   orderCount: number;
 }
 
+/** JSON-safe representation of the exact CTFExchange struct that was signed. */
+export interface SignedCtfExchangeOrder {
+  saltRaw: Raw;
+  maker: Address;
+  signer: Address;
+  taker: Address;
+  tokenId: Raw;
+  makerAmountRaw: Raw;
+  takerAmountRaw: Raw;
+  expiration: number;
+  nonceRaw: Raw;
+  feeRateBpsRaw: Raw;
+  side: 0 | 1; // CTFExchange Side.BUY | Side.SELL
+  signatureType: 0 | 1 | 2 | 3;
+  signature: `0x${string}`;
+}
+
+export type OffchainOrderStatus =
+  | 'OPEN'
+  | 'PARTIALLY_FILLED'
+  | 'FILLED'
+  | 'WITHDRAWN'
+  | 'CANCELLED'
+  | 'NONCE_INVALIDATED'
+  | 'EXPIRED'
+  | 'MARKET_RESOLVED';
+
+export type OrderUnfillableReason =
+  | 'NOT_OPEN'
+  | 'WITHDRAWN'
+  | 'EXPIRED'
+  | 'MARKET_RESOLVED'
+  | 'INSUFFICIENT_BALANCE'
+  | 'MISSING_APPROVAL'
+  | 'INDEXED_STATE_UNAVAILABLE';
+
+/** A signed order held by the operator, distinct from an escrowed MiniCLOB Order. */
+export interface OffchainOrder {
+  orderHash: Hash;
+  marketId: string;
+  conditionId: Hash;
+  tokenId: Raw;
+  outcome: Outcome;
+  maker: Address;
+  side: OrderSide;
+  priceRaw: Raw;
+  sizeRaw: Raw;
+  filledRaw: Raw;
+  remainingRaw: Raw;
+  status: OffchainOrderStatus;
+  fillable: boolean;
+  unfillableReason: OrderUnfillableReason | null;
+  signedOrder: SignedCtfExchangeOrder;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface OrderBook {
   marketId: string;
   outcome: Outcome;
   tokenId: string;
   bids: BookLevel[]; // sorted best (highest price) first
   asks: BookLevel[]; // sorted best (lowest price) first
+  bestBidRaw: Raw | null;
+  bestAskRaw: Raw | null;
   orders: Order[]; // raw open orders backing the ladder (thin book — small)
+  /** Fillable signed CTFExchange orders included in the same aggregated levels. */
+  offchainOrders: OffchainOrder[];
 }
 
 export interface Position {

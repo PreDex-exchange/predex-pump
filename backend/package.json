@@ -21,6 +21,7 @@
     "dev": "tsx watch src/start.ts",
     "indexer": "tsx src/indexer.ts",
     "indexer:once": "tsx src/indexer.ts --once",
+    "operator": "tsx src/operator.ts",
     "summary": "tsx src/summary.ts",
     "dedup:backfill": "tsx src/dedup/backfill.ts",
     "bench:seed": "tsx bench/seed.ts",

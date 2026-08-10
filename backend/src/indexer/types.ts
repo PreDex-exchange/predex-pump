@@ -1,7 +1,14 @@
 import type { OrderSide, Outcome } from '@predex-pump/shared';
 import type { Address, Hex } from 'viem';
 
-export type ContractSource = 'REGISTRY' | 'LMSR' | 'MINI_CLOB' | 'CTF' | 'ORACLE';
+export type ContractSource =
+  | 'REGISTRY'
+  | 'LMSR'
+  | 'MINI_CLOB'
+  | 'CTF'
+  | 'CTF_EXCHANGE'
+  | 'COLLATERAL'
+  | 'ORACLE';
 export type EventArgs = Record<string, unknown>;
 
 export interface DecodedEvent {

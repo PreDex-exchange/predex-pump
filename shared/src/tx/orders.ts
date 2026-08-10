@@ -140,6 +140,46 @@ function divideRoundUp(numerator: bigint, denominator: bigint) {
   return (numerator + denominator - 1n) / denominator;
 }
 
+/** Normalize a signed exchange ratio into position-token size and 6-decimal price. */
+export function ctfExchangeOrderTerms(order: CtfExchangeOrder) {
+  assertSide(order.side);
+  assertUint256('makerAmount', order.makerAmount);
+  assertUint256('takerAmount', order.takerAmount);
+  if (order.makerAmount === 0n || order.takerAmount === 0n) {
+    throw new Error('Order maker and taker amounts must be greater than zero.');
+  }
+
+  if (order.side === Side.BUY) {
+    return {
+      sizeRaw: order.takerAmount,
+      priceRaw:
+        (order.makerAmount * CTF_EXCHANGE_PRICE_SCALE) / order.takerAmount,
+    };
+  }
+  return {
+    sizeRaw: order.makerAmount,
+    priceRaw: divideRoundUp(
+      order.takerAmount * CTF_EXCHANGE_PRICE_SCALE,
+      order.makerAmount,
+    ),
+  };
+}
+
+/** Maker-side asset needed by CTFExchange for a position-token fill amount. */
+export function ctfExchangeMakerAmountForFill(
+  order: CtfExchangeOrder,
+  fillSizeRaw: bigint,
+) {
+  assertUint256('fillSizeRaw', fillSizeRaw);
+  const { sizeRaw } = ctfExchangeOrderTerms(order);
+  if (fillSizeRaw > sizeRaw) {
+    throw new Error('Fill size exceeds the signed order size.');
+  }
+  return order.side === Side.SELL
+    ? fillSizeRaw
+    : (fillSizeRaw * order.makerAmount) / order.takerAmount;
+}
+
 /**
  * Encode a six-decimal price and position-token size into the ratio consumed by
  * CTFExchange. The contract settles SELL as

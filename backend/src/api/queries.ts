@@ -21,6 +21,8 @@ import {
 } from '@prisma/client';
 
 import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
+import { findFillableSignedOrders } from '../orderbook/fillability.js';
+import { toOffchainOrderDto } from '../orderbook/order.js';
 
 import {
   ACTIVITY_TYPES,
@@ -269,7 +271,13 @@ function compareRaw(left: string, right: string): number {
   return leftRaw < rightRaw ? -1 : leftRaw > rightRaw ? 1 : 0;
 }
 
-function buildLevels(orders: readonly OrderDtoRow[], side: 'BID' | 'ASK') {
+interface LevelOrder {
+  side: string;
+  priceRaw: string;
+  remainingRaw: string;
+}
+
+function buildLevels(orders: readonly LevelOrder[], side: 'BID' | 'ASK') {
   const sizeByPrice = new Map<string, { sizeRaw: bigint; orderCount: number }>();
   for (const order of orders) {
     if (order.side !== side) continue;
@@ -298,6 +306,7 @@ function buildOrderBook(
   outcome: 'YES' | 'NO',
   tokenId: string,
   rows: readonly OrderDtoRow[],
+  signedRows: readonly import('@prisma/client').SignedOrder[],
 ): OrderBook {
   const orders = rows
     .filter((row) => row.tokenId === tokenId)
@@ -309,13 +318,30 @@ function buildOrderBook(
       }
       return left.createdAt - right.createdAt || left.orderId.localeCompare(right.orderId);
     });
+  const offchainOrders = signedRows
+    .filter((row) => row.tokenId === tokenId)
+    .sort((left, right) => {
+      if (left.side !== right.side) return left.side === 'BID' ? -1 : 1;
+      const priceOrder = compareRaw(left.priceRaw, right.priceRaw);
+      if (priceOrder !== 0) {
+        return left.side === 'BID' ? -priceOrder : priceOrder;
+      }
+      return left.createdAt - right.createdAt || left.orderHash.localeCompare(right.orderHash);
+    });
+  const bids = buildLevels([...orders, ...offchainOrders], 'BID');
+  const asks = buildLevels([...orders, ...offchainOrders], 'ASK');
   return {
     marketId,
     outcome,
     tokenId,
-    bids: buildLevels(orders, 'BID'),
-    asks: buildLevels(orders, 'ASK'),
+    bids,
+    asks,
+    bestBidRaw: bids[0]?.priceRaw ?? null,
+    bestAskRaw: asks[0]?.priceRaw ?? null,
     orders: orders.map(toOrderDto),
+    offchainOrders: offchainOrders.map((order) =>
+      toOffchainOrderDto(order, { fillable: true, reason: null }),
+    ),
   };
 }
 
@@ -323,7 +349,7 @@ export async function getMarketBook(
   prisma: PrismaClient,
   marketId: string,
 ): Promise<MarketBookResponse | null> {
-  const [market, orders] = await Promise.all([
+  const [market, orders, signedOrders] = await Promise.all([
     prisma.market.findUnique({
       where: { id: marketId },
       select: { id: true, yesTokenId: true, noTokenId: true },
@@ -332,12 +358,29 @@ export async function getMarketBook(
       where: { marketId, open: true },
       select: ORDER_SELECT,
     }),
+    findFillableSignedOrders(
+      prisma,
+      { marketId },
+      Math.floor(Date.now() / 1_000),
+    ),
   ]);
   if (market === null) return null;
   return {
     marketId,
-    yes: buildOrderBook(marketId, 'YES', market.yesTokenId ?? '', orders),
-    no: buildOrderBook(marketId, 'NO', market.noTokenId ?? '', orders),
+    yes: buildOrderBook(
+      marketId,
+      'YES',
+      market.yesTokenId ?? '',
+      orders,
+      signedOrders,
+    ),
+    no: buildOrderBook(
+      marketId,
+      'NO',
+      market.noTokenId ?? '',
+      orders,
+      signedOrders,
+    ),
   };
 }
 
@@ -355,7 +398,12 @@ export async function getOrderBook(
     where: { tokenId, open: true },
     select: ORDER_SELECT,
   });
-  return buildOrderBook(market.id, outcome, tokenId, orders);
+  const signedOrders = await findFillableSignedOrders(
+    prisma,
+    { tokenId },
+    Math.floor(Date.now() / 1_000),
+  );
+  return buildOrderBook(market.id, outcome, tokenId, orders, signedOrders);
 }
 
 export async function getPriceHistory(

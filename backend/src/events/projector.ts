@@ -59,6 +59,13 @@ async function marketIdForEvent(
     });
     return order?.marketId ?? null;
   }
+  if (typeof event.args.orderHash === 'string') {
+    const order = await prisma.signedOrder.findUnique({
+      where: { orderHash: event.args.orderHash.toLowerCase() },
+      select: { marketId: true },
+    });
+    return order?.marketId ?? null;
+  }
   return null;
 }
 
@@ -171,6 +178,38 @@ async function publishMarketPositions(
       ts,
     );
   }
+}
+
+async function publishSignedBookUpdatesForMakers(
+  prisma: PrismaClient,
+  eventBus: ServerEventBus,
+  makers: readonly string[],
+  ts: number,
+  reason: 'FILLABILITY_CHANGED' | 'EXCHANGE_EVENT',
+): Promise<void> {
+  const normalized = [...new Set(makers.filter((maker) => maker !== ZERO_ADDRESS))];
+  if (normalized.length === 0) return;
+  const orders = await prisma.signedOrder.findMany({
+    where: { maker: { in: normalized } },
+    select: { marketId: true },
+    distinct: ['marketId'],
+  });
+  for (const { marketId } of orders) {
+    const channel = `book:${marketId}` as const;
+    if (!eventBus.hasSubscribers(channel)) continue;
+    publish(
+      eventBus,
+      { channel, event: 'book.updated', data: { marketId, reason } },
+      ts,
+    );
+  }
+}
+
+function addressArgs(event: DecodedEvent, names: readonly string[]): string[] {
+  return names.flatMap((name) => {
+    const value = event.args[name];
+    return typeof value === 'string' ? [lowerAddress(value)] : [];
+  });
 }
 
 const MARKET_UPDATED_EVENTS = new Set([
@@ -379,6 +418,56 @@ async function publishSpecificEvent(
 
   if (key === 'CTF.TransferSingle' || key === 'CTF.TransferBatch') {
     await publishTransferPositions(prisma, eventBus, indexedEvent);
+    await publishSignedBookUpdatesForMakers(
+      prisma,
+      eventBus,
+      addressArgs(indexedEvent, ['from', 'to']),
+      indexedEvent.ts,
+      'FILLABILITY_CHANGED',
+    );
+  }
+
+  if (
+    key === 'CTF.ApprovalForAll' ||
+    key === 'COLLATERAL.Approval' ||
+    key === 'COLLATERAL.Transfer'
+  ) {
+    await publishSignedBookUpdatesForMakers(
+      prisma,
+      eventBus,
+      addressArgs(indexedEvent, ['account', 'owner', 'from', 'to']),
+      indexedEvent.ts,
+      'FILLABILITY_CHANGED',
+    );
+  }
+
+  if (
+    marketId !== null &&
+    (key === 'CTF_EXCHANGE.OrderFilled' ||
+      key === 'CTF_EXCHANGE.OrderCancelled')
+  ) {
+    const channel = `book:${marketId}` as const;
+    if (eventBus.hasSubscribers(channel)) {
+      publish(
+        eventBus,
+        {
+          channel,
+          event: 'book.updated',
+          data: { marketId, reason: 'EXCHANGE_EVENT' },
+        },
+        indexedEvent.ts,
+      );
+    }
+  }
+
+  if (key === 'CTF_EXCHANGE.AllOrdersCancelled') {
+    await publishSignedBookUpdatesForMakers(
+      prisma,
+      eventBus,
+      addressArgs(indexedEvent, ['maker']),
+      indexedEvent.ts,
+      'EXCHANGE_EVENT',
+    );
   }
 
   if (
@@ -402,6 +491,18 @@ async function publishSpecificEvent(
       }
     }
     await publishMarketPositions(prisma, eventBus, marketId, indexedEvent.ts);
+    const bookChannel = `book:${marketId}` as const;
+    if (eventBus.hasSubscribers(bookChannel)) {
+      publish(
+        eventBus,
+        {
+          channel: bookChannel,
+          event: 'book.updated',
+          data: { marketId, reason: 'EXCHANGE_EVENT' },
+        },
+        indexedEvent.ts,
+      );
+    }
   }
 
   const activity = eventBus.hasSubscribers('activity')

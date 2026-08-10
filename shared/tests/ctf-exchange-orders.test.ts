@@ -17,6 +17,8 @@ import {
   CTF_EXCHANGE_ORDER_TYPE_STRING,
   CTF_EXCHANGE_ORDER_TYPES,
   ctfExchangeOrderAmounts,
+  ctfExchangeMakerAmountForFill,
+  ctfExchangeOrderTerms,
   generateOrderSalt,
   getCtfExchangeOrderTypedData,
   hashCtfExchangeOrder,
@@ -179,6 +181,35 @@ describe('CTFExchange order construction', () => {
         sizeRaw: 2_500_001n,
       }),
     ).toEqual({ makerAmount: 2_500_001n, takerAmount: 1_425_004n });
+  });
+
+  it('normalizes stored ratios and partial-fill maker obligations', () => {
+    const buy = buildCtfExchangeOrder({
+      salt: 1n,
+      maker: '0x1111111111111111111111111111111111111111',
+      tokenId: 1n,
+      side: Side.BUY,
+      priceRaw: 600_000n,
+      sizeRaw: 2_500_000n,
+    });
+    const sell = buildCtfExchangeOrder({
+      salt: 2n,
+      maker: '0x1111111111111111111111111111111111111111',
+      tokenId: 1n,
+      side: Side.SELL,
+      priceRaw: 600_000n,
+      sizeRaw: 2_500_000n,
+    });
+    expect(ctfExchangeOrderTerms(buy)).toEqual({
+      priceRaw: 600_000n,
+      sizeRaw: 2_500_000n,
+    });
+    expect(ctfExchangeOrderTerms(sell)).toEqual({
+      priceRaw: 600_000n,
+      sizeRaw: 2_500_000n,
+    });
+    expect(ctfExchangeMakerAmountForFill(buy, 500_000n)).toBe(300_000n);
+    expect(ctfExchangeMakerAmountForFill(sell, 500_000n)).toBe(500_000n);
   });
 
   it('rejects a BUY notional that only rounding up could represent', () => {

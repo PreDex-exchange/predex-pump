@@ -41,6 +41,7 @@ function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
 function asClient(methods: {
   getBlockNumber: () => Promise<bigint>;
   getLogs: (parameters: {
+    address?: unknown;
     fromBlock?: bigint;
     toBlock?: bigint;
   }) => Promise<unknown[]>;
@@ -102,7 +103,8 @@ describe('indexer RPC resilience', () => {
     let getLogsCalls = 0;
     const client = asClient({
       getBlockNumber: async () => 103n,
-      getLogs: async ({ fromBlock, toBlock }) => {
+      getLogs: async ({ address, fromBlock, toBlock }) => {
+        if (!Array.isArray(address)) return [];
         ranges.push([fromBlock, toBlock]);
         getLogsCalls += 1;
         if (getLogsCalls <= 2) throw rateLimitError();
@@ -194,7 +196,8 @@ describe('indexer RPC resilience', () => {
           if (headCalls === 2) throw createError();
           return 101n;
         },
-        getLogs: async ({ fromBlock, toBlock }) => {
+        getLogs: async ({ address, fromBlock, toBlock }) => {
+          if (!Array.isArray(address)) return [];
           ranges.push([fromBlock, toBlock]);
           if (fromBlock === 101n) controller.abort();
           return [];

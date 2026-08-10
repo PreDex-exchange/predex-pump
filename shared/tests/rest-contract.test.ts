@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  OFFCHAIN_WITHDRAWAL_WARNING,
   routes,
   type AccountProfileResponse,
   type SessionResponse,
@@ -13,6 +14,19 @@ describe('truth REST contract', () => {
 
     const response = null as TruthSignalResponse | null;
     expect(response).toBeNull();
+  });
+});
+
+describe('off-chain order REST contract', () => {
+  it('exports canonical order routes and an explicit non-authoritative withdrawal warning', () => {
+    expect(routes.orders()).toBe('/orders');
+    expect(routes.order(`0x${'a'.repeat(64)}`)).toBe(
+      `/orders/0x${'a'.repeat(64)}`,
+    );
+    expect(OFFCHAIN_WITHDRAWAL_WARNING).toContain(
+      'on-chain cancellation is authoritative',
+    );
+    expect(OFFCHAIN_WITHDRAWAL_WARNING).toContain('cancelOrder/cancelAll');
   });
 });
 

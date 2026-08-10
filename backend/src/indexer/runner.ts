@@ -15,7 +15,14 @@ import {
 import type { RuntimeConfig } from '../config.js';
 import { parseMarketPhase } from '../dedup/indexer.js';
 import type { MarketDedupIndexer } from '../dedup/types.js';
-import { CONTRACT_BY_ADDRESS, TRACKED_ADDRESSES } from './abis.js';
+import {
+  COLLATERAL_APPROVAL_EVENT,
+  COLLATERAL_TRANSFER_EVENT,
+  CONTRACT_BY_ADDRESS,
+  CORE_TRACKED_ADDRESSES,
+  CTF_APPROVAL_EVENT,
+  CTF_EVENT_ABI,
+} from './abis.js';
 import { bigintArg, toDbInt } from './derive.js';
 import {
   handleDecodedEvent,
@@ -91,12 +98,68 @@ async function decodedEventsForRange(
   client: PublicClient,
   fromBlock: number,
   toBlock: number,
+  collateralOwners: readonly Address[],
 ): Promise<DecodedEvent[]> {
-  const logs = await client.getLogs({
-    address: TRACKED_ADDRESSES,
+  const range = {
     fromBlock: BigInt(fromBlock),
     toBlock: BigInt(toBlock),
+  } as const;
+  // Keep the calls sequential so a shared endpoint's rate-limit response stops
+  // the range immediately instead of creating a burst of doomed requests.
+  const coreLogs = await client.getLogs({
+    address: CORE_TRACKED_ADDRESSES,
+    ...range,
   });
+  const ctfLogs = await client.getLogs({
+    address: ADDRESSES.ctf,
+    events: CTF_EVENT_ABI,
+    ...range,
+  });
+  const ctfApprovalLogs = await client.getLogs({
+    address: ADDRESSES.ctf,
+    event: CTF_APPROVAL_EVENT,
+    args: { operator: ADDRESSES.ctfExchange },
+    ...range,
+  });
+  const collateralApprovalLogs = await client.getLogs({
+    address: ADDRESSES.usdc,
+    event: COLLATERAL_APPROVAL_EVENT,
+    args: { spender: ADDRESSES.ctfExchange },
+    ...range,
+  });
+  const collateralIncomingLogs =
+    collateralOwners.length === 0
+      ? []
+      : await client.getLogs({
+          address: ADDRESSES.usdc,
+          event: COLLATERAL_TRANSFER_EVENT,
+          args: { to: collateralOwners },
+          ...range,
+        });
+  const collateralOutgoingLogs =
+    collateralOwners.length === 0
+      ? []
+      : await client.getLogs({
+          address: ADDRESSES.usdc,
+          event: COLLATERAL_TRANSFER_EVENT,
+          args: { from: collateralOwners },
+          ...range,
+        });
+  const logs = [
+    ...new Map(
+      [
+        ...coreLogs,
+        ...ctfLogs,
+        ...ctfApprovalLogs,
+        ...collateralApprovalLogs,
+        ...collateralIncomingLogs,
+        ...collateralOutgoingLogs,
+      ].map((log) => [
+        `${log.address}:${String(log.transactionHash)}:${String(log.logIndex)}`,
+        log,
+      ]),
+    ).values(),
+  ];
 
   logs.sort((left, right) => {
     const blockDelta = Number((left.blockNumber ?? 0n) - (right.blockNumber ?? 0n));
@@ -417,10 +480,21 @@ export async function runIndexer(
     while (!stopController.signal.aborted) {
       while (nextBlock <= head && !stopController.signal.aborted) {
         const toBlock = Math.min(head, nextBlock + config.blockChunk - 1);
+        const collateralOwners = (
+          await prisma.signedOrder.findMany({
+            where: {
+              exchangeSide: 0,
+              status: { in: ['OPEN', 'PARTIALLY_FILLED'] },
+              withdrawnAt: null,
+            },
+            select: { maker: true },
+            distinct: ['maker'],
+          })
+        ).map((order) => order.maker as Address);
         const decoded = await requestRpcWithRetry(
           prisma,
           `getLogs blocks=${nextBlock}-${toBlock}`,
-          () => decodedEventsForRange(client, nextBlock, toBlock),
+          () => decodedEventsForRange(client, nextBlock, toBlock, collateralOwners),
           stopController.signal,
           wait,
           random,

@@ -1,5 +1,5 @@
 import { ADDRESSES, ARC } from '@predex-pump/shared';
-import type { Market, Order, Prisma } from '@prisma/client';
+import type { Market, Order, Prisma, SignedOrder } from '@prisma/client';
 import type { Address, Hex } from 'viem';
 
 import {
@@ -47,6 +47,9 @@ const ACTIVITY_TYPE: Readonly<Record<string, string>> = {
   'MINI_CLOB.OrderFilled': 'OrderFilled',
   'MINI_CLOB.OrderCancelled': 'OrderCancelled',
   'CTF.PayoutRedemption': 'Redeem',
+  'CTF_EXCHANGE.OrderFilled': 'OrderFilled',
+  'CTF_EXCHANGE.OrderCancelled': 'OrderCancelled',
+  'CTF_EXCHANGE.AllOrdersCancelled': 'OrderCancelled',
 };
 
 function eventId(event: DecodedEvent): string {
@@ -230,6 +233,7 @@ async function activityContext(tx: Tx, event: DecodedEvent): Promise<ActivityCon
   const { args } = event;
   let market: Market | null = null;
   let order: Order | null = null;
+  let signedOrder: SignedOrder | null = null;
 
   if (typeof args.marketId === 'bigint') {
     market = await tx.market.findUnique({ where: { id: args.marketId.toString() } });
@@ -245,6 +249,15 @@ async function activityContext(tx: Tx, event: DecodedEvent): Promise<ActivityCon
     order = await tx.order.findUnique({ where: { orderId: args.orderId.toString() } });
     if (order !== null) {
       market = await tx.market.findUnique({ where: { id: order.marketId } });
+    }
+  } else if (typeof args.orderHash === 'string') {
+    signedOrder = await tx.signedOrder.findUnique({
+      where: { orderHash: args.orderHash.toLowerCase() },
+    });
+    if (signedOrder !== null) {
+      market = await tx.market.findUnique({
+        where: { id: signedOrder.marketId },
+      });
     }
   } else if (event.eventName === 'TransferSingle' && typeof args.id === 'bigint') {
     const binding = await marketForToken(tx, args.id.toString());
@@ -282,6 +295,8 @@ async function activityContext(tx: Tx, event: DecodedEvent): Promise<ActivityCon
     outcome = outcomeFromIndex(BigInt(args.outcome));
   } else if (order !== null) {
     outcome = order.outcome as Outcome;
+  } else if (signedOrder !== null) {
+    outcome = signedOrder.outcome as Outcome;
   } else if (typeof args.tokenId === 'bigint' && market !== null) {
     const tokenId = args.tokenId.toString();
     if (market.yesTokenId === tokenId) outcome = 'YES';
@@ -293,6 +308,8 @@ async function activityContext(tx: Tx, event: DecodedEvent): Promise<ActivityCon
     side = sideFromIndex(BigInt(args.side));
   } else if (event.eventName === 'OrderFilled' && order !== null) {
     side = oppositeSide(order.side as Side);
+  } else if (event.eventName === 'OrderFilled' && signedOrder !== null) {
+    side = oppositeSide(signedOrder.side as Side);
   }
 
   let amountRaw: string | null = null;
@@ -304,6 +321,8 @@ async function activityContext(tx: Tx, event: DecodedEvent): Promise<ActivityCon
     'payout',
     'remainingSizeRaw',
     'activityMoneyInRaw',
+    'makerAmountFilled',
+    'takerAmountFilled',
   ]) {
     const value = args[candidate];
     if (typeof value === 'bigint') {
@@ -1060,6 +1079,214 @@ async function handleOrderCancelled(tx: Tx, event: DecodedEvent): Promise<void> 
   }
 }
 
+function eventIsNewer(
+  event: DecodedEvent,
+  existing: { blockNumber: number; logIndex: number },
+): boolean {
+  return (
+    event.blockNumber > existing.blockNumber ||
+    (event.blockNumber === existing.blockNumber && event.logIndex > existing.logIndex)
+  );
+}
+
+async function handleCtfExchangeApproval(
+  tx: Tx,
+  event: DecodedEvent,
+): Promise<void> {
+  const owner = lowerAddress(stringArg(event.args, 'account'));
+  const existing = await tx.ctfExchangeApproval.findUnique({ where: { owner } });
+  if (existing !== null && !eventIsNewer(event, existing)) return;
+  await tx.ctfExchangeApproval.upsert({
+    where: { owner },
+    create: {
+      owner,
+      approved: booleanArg(event.args, 'approved'),
+      blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
+      updatedAt: event.ts,
+    },
+    update: {
+      approved: booleanArg(event.args, 'approved'),
+      blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
+      updatedAt: event.ts,
+    },
+  });
+}
+
+async function handleCollateralApproval(
+  tx: Tx,
+  event: DecodedEvent,
+): Promise<void> {
+  const owner = lowerAddress(stringArg(event.args, 'owner'));
+  const existing = await tx.collateralExchangeApproval.findUnique({
+    where: { owner },
+  });
+  if (existing !== null && !eventIsNewer(event, existing)) return;
+  const allowanceRaw = bigintArg(event.args, 'value').toString();
+  await tx.collateralExchangeApproval.upsert({
+    where: { owner },
+    create: {
+      owner,
+      allowanceRaw,
+      blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
+      updatedAt: event.ts,
+    },
+    update: {
+      allowanceRaw,
+      blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
+      updatedAt: event.ts,
+    },
+  });
+}
+
+async function applyCollateralDelta(
+  tx: Tx,
+  event: DecodedEvent,
+  owner: string,
+  delta: bigint,
+): Promise<void> {
+  if (owner === ZERO_ADDRESS) return;
+  const existing = await tx.collateralBalance.findUnique({ where: { owner } });
+  // Only makers snapshotted during BUY-order ingest are tracked.
+  if (existing === null || !eventIsNewer(event, existing)) return;
+  const next = BigInt(existing.balanceRaw) + delta;
+  if (next < 0n) {
+    throw new Error(`Collateral balance delta underflow for tracked maker ${owner}`);
+  }
+  await tx.collateralBalance.update({
+    where: { owner },
+    data: {
+      balanceRaw: next.toString(),
+      blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
+      updatedAt: event.ts,
+    },
+  });
+}
+
+async function handleCollateralTransfer(
+  tx: Tx,
+  event: DecodedEvent,
+): Promise<void> {
+  const from = lowerAddress(stringArg(event.args, 'from'));
+  const to = lowerAddress(stringArg(event.args, 'to'));
+  if (from === to) return;
+  const value = bigintArg(event.args, 'value');
+  await applyCollateralDelta(tx, event, from, -value);
+  await applyCollateralDelta(tx, event, to, value);
+}
+
+async function handleExchangeTokenRegistered(
+  tx: Tx,
+  event: DecodedEvent,
+): Promise<void> {
+  const tokenId = bigintArg(event.args, 'tokenId').toString();
+  await tx.exchangeTokenRegistration.upsert({
+    where: { tokenId },
+    create: {
+      tokenId,
+      complementTokenId: bigintArg(event.args, 'complement').toString(),
+      conditionId: stringArg(event.args, 'conditionId').toLowerCase(),
+      blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
+      registeredAt: event.ts,
+    },
+    update: {
+      complementTokenId: bigintArg(event.args, 'complement').toString(),
+      conditionId: stringArg(event.args, 'conditionId').toLowerCase(),
+      blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
+    },
+  });
+}
+
+async function handleExchangeOrderFilled(
+  tx: Tx,
+  event: DecodedEvent,
+): Promise<void> {
+  const orderHash = stringArg(event.args, 'orderHash').toLowerCase();
+  const order = await tx.signedOrder.findUnique({ where: { orderHash } });
+  if (order === null) return;
+  const fillSize =
+    order.exchangeSide === 0
+      ? bigintArg(event.args, 'takerAmountFilled')
+      : bigintArg(event.args, 'makerAmountFilled');
+  const filled = BigInt(order.filledRaw) + fillSize;
+  const size = BigInt(order.sizeRaw);
+  if (filled > size) {
+    throw new Error(`Exchange fill exceeds signed order size for ${orderHash}`);
+  }
+  const remaining = size - filled;
+  const status =
+    remaining === 0n
+      ? 'FILLED'
+      : order.withdrawnAt === null
+        ? 'PARTIALLY_FILLED'
+        : order.status;
+  await tx.signedOrder.update({
+    where: { orderHash },
+    data: {
+      filledRaw: filled.toString(),
+      remainingRaw: remaining.toString(),
+      status,
+      lastOnchainTxHash: event.txHash,
+      lastOnchainBlock: event.blockNumber,
+      updatedAt: event.ts,
+    },
+  });
+  await tx.settlementMatch.updateMany({
+    where: { txHash: event.txHash.toLowerCase(), status: 'SUBMITTED' },
+    data: { status: 'CONFIRMED', updatedAt: event.ts },
+  });
+}
+
+async function handleExchangeOrderCancelled(
+  tx: Tx,
+  event: DecodedEvent,
+): Promise<void> {
+  const orderHash = stringArg(event.args, 'orderHash').toLowerCase();
+  await tx.signedOrder.updateMany({
+    where: { orderHash, status: { not: 'FILLED' } },
+    data: {
+      status: 'CANCELLED',
+      lastOnchainTxHash: event.txHash,
+      lastOnchainBlock: event.blockNumber,
+      updatedAt: event.ts,
+    },
+  });
+}
+
+async function handleAllExchangeOrdersCancelled(
+  tx: Tx,
+  event: DecodedEvent,
+): Promise<void> {
+  const maker = lowerAddress(stringArg(event.args, 'maker'));
+  const newNonce = bigintArg(event.args, 'newNonce');
+  const candidates = await tx.signedOrder.findMany({
+    where: {
+      maker,
+      status: { in: ['OPEN', 'PARTIALLY_FILLED', 'WITHDRAWN'] },
+    },
+    select: { orderHash: true, nonceRaw: true },
+  });
+  const invalidated = candidates
+    .filter((order) => BigInt(order.nonceRaw) !== newNonce)
+    .map((order) => order.orderHash);
+  if (invalidated.length === 0) return;
+  await tx.signedOrder.updateMany({
+    where: { orderHash: { in: invalidated } },
+    data: {
+      status: 'NONCE_INVALIDATED',
+      lastOnchainTxHash: event.txHash,
+      lastOnchainBlock: event.blockNumber,
+      updatedAt: event.ts,
+    },
+  });
+}
+
 async function handleTransfer(
   tx: Tx,
   from: string,
@@ -1129,6 +1356,18 @@ async function persistResolution(
   await tx.market.update({
     where: { id: market.id },
     data: { resolvedAt: market.resolvedAt ?? event.ts },
+  });
+  await tx.signedOrder.updateMany({
+    where: {
+      marketId: market.id,
+      status: { in: ['OPEN', 'PARTIALLY_FILLED', 'WITHDRAWN'] },
+    },
+    data: {
+      status: 'MARKET_RESOLVED',
+      lastOnchainTxHash: event.txHash,
+      lastOnchainBlock: event.blockNumber,
+      updatedAt: event.ts,
+    },
   });
   await markMarketPositions(tx, market.id);
 }
@@ -1364,6 +1603,20 @@ export async function initializeReadModel(tx: Tx, deployBlock: number): Promise<
 }
 
 export async function handleDecodedEvent(tx: Tx, event: DecodedEvent): Promise<boolean> {
+  if (
+    key(event) === 'CTF.ApprovalForAll' &&
+    lowerAddress(stringArg(event.args, 'operator')) !==
+      lowerAddress(ADDRESSES.ctfExchange)
+  ) {
+    return false;
+  }
+  if (
+    key(event) === 'COLLATERAL.Approval' &&
+    lowerAddress(stringArg(event.args, 'spender')) !==
+      lowerAddress(ADDRESSES.ctfExchange)
+  ) {
+    return false;
+  }
   const inserted = await insertActivityGuard(tx, event);
   if (!inserted) return false;
 
@@ -1426,8 +1679,29 @@ export async function handleDecodedEvent(tx: Tx, event: DecodedEvent): Promise<b
     case 'CTF.TransferBatch':
       await handleTransferBatch(tx, event);
       break;
+    case 'CTF.ApprovalForAll':
+      await handleCtfExchangeApproval(tx, event);
+      break;
     case 'CTF.ConditionResolution':
       await handleConditionResolution(tx, event);
+      break;
+    case 'COLLATERAL.Approval':
+      await handleCollateralApproval(tx, event);
+      break;
+    case 'COLLATERAL.Transfer':
+      await handleCollateralTransfer(tx, event);
+      break;
+    case 'CTF_EXCHANGE.TokenRegistered':
+      await handleExchangeTokenRegistered(tx, event);
+      break;
+    case 'CTF_EXCHANGE.OrderFilled':
+      await handleExchangeOrderFilled(tx, event);
+      break;
+    case 'CTF_EXCHANGE.OrderCancelled':
+      await handleExchangeOrderCancelled(tx, event);
+      break;
+    case 'CTF_EXCHANGE.AllOrdersCancelled':
+      await handleAllExchangeOrdersCancelled(tx, event);
       break;
     case 'ORACLE.QuestionResolved':
       await handleQuestionResolved(tx, event);

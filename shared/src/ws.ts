@@ -6,6 +6,7 @@ import type {
   ActivityEvent,
   Fill,
   Market,
+  OffchainOrder,
   Order,
   Position,
   Resolution,
@@ -44,6 +45,9 @@ export type ServerEvent =
   | { channel: `book:${string}`; event: 'order.filled'; data: Fill }
   | { channel: `book:${string}`; event: 'order.cancelled'; data: Order }
   | { channel: `book:${string}`; event: 'book.seeded'; data: { marketId: string; orders: Order[] } }
+  | { channel: `book:${string}`; event: 'offchain.order.placed'; data: OffchainOrder }
+  | { channel: `book:${string}`; event: 'offchain.order.withdrawn'; data: OffchainOrder }
+  | { channel: `book:${string}`; event: 'book.updated'; data: { marketId: string; reason: 'FILLABILITY_CHANGED' | 'EXCHANGE_EVENT' } }
   | { channel: `account:${string}`; event: 'position.updated'; data: Position }
   | { channel: `account:${string}`; event: 'trade'; data: Trade }
   | { channel: 'activity'; event: 'activity'; data: ActivityEvent };
