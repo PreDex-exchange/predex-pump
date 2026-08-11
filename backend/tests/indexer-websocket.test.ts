@@ -23,6 +23,7 @@ import {
   CONTRACT_BY_ADDRESS,
 } from '../src/indexer/abis.js';
 import { runIndexer } from '../src/indexer/runner.js';
+import { testChainStateReader } from './chain-state-fixtures.js';
 import {
   runSubscriptionSupervisor,
   type IndexerSubscriptionHandle,
@@ -300,6 +301,7 @@ describe('WebSocket-driven indexer', () => {
     const run = runIndexer(testPrisma, config, {
       once: false,
       client,
+      chainStateReader: testChainStateReader,
       signal: controller.signal,
       subscriptionTransportFactory,
       ...(onEvents === undefined

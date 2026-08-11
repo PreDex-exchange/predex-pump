@@ -12,6 +12,7 @@ import {
 
 import { loadRuntimeConfig, type RuntimeConfig } from '../src/config.js';
 import { runIndexer } from '../src/indexer/runner.js';
+import { testChainStateReader } from './chain-state-fixtures.js';
 import { resetDatabase, testPrisma } from './database.js';
 import { seedContractData } from './fixtures.js';
 
@@ -88,7 +89,11 @@ describe('indexer startup policy', () => {
     const { client } = fakeClient(async () => 105n, ranges);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
-    await runIndexer(testPrisma, testConfig(), { once: true, client });
+    await runIndexer(testPrisma, testConfig(), {
+      once: true,
+      client,
+      chainStateReader: testChainStateReader,
+    });
 
     expect(ranges).toEqual([[101n, 105n]]);
     expect(
@@ -113,6 +118,7 @@ describe('indexer startup policy', () => {
     await runIndexer(testPrisma, testConfig(), {
       once: true,
       client,
+      chainStateReader: testChainStateReader,
       now: () => recordedAt,
     });
 
@@ -165,7 +171,11 @@ describe('indexer startup policy', () => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await runIndexer(testPrisma, testConfig(), { once: true, client });
+    await runIndexer(testPrisma, testConfig(), {
+      once: true,
+      client,
+      chainStateReader: testChainStateReader,
+    });
 
     expect(multicall).toHaveBeenCalledTimes(1);
     expect(multicall).toHaveBeenCalledWith(
@@ -199,6 +209,7 @@ describe('indexer startup policy', () => {
       runIndexer(testPrisma, testConfig({ indexerStartPolicy: 'head' }), {
         once: true,
         client,
+        chainStateReader: testChainStateReader,
       }),
     ).rejects.toThrow(/Invalid Arc head/);
 
@@ -224,6 +235,7 @@ describe('indexer startup policy', () => {
       runIndexer(testPrisma, testConfig({ indexerStartPolicy: 'head' }), {
         once: true,
         client,
+        chainStateReader: testChainStateReader,
       }),
     ).rejects.toThrow('RPC returned an empty body');
 
@@ -243,7 +255,11 @@ describe('indexer startup policy', () => {
     const { client, getLogs } = fakeClient(async () => 104n);
 
     await expect(
-      runIndexer(testPrisma, testConfig(), { once: true, client }),
+      runIndexer(testPrisma, testConfig(), {
+        once: true,
+        client,
+        chainStateReader: testChainStateReader,
+      }),
     ).rejects.toThrow(
       'Head guard: Arc head=104 is behind last accepted head=105',
     );
@@ -259,7 +275,11 @@ describe('indexer startup policy', () => {
     const { client, getLogs } = fakeClient(async () => 104n);
 
     await expect(
-      runIndexer(testPrisma, testConfig(), { once: true, client }),
+      runIndexer(testPrisma, testConfig(), {
+        once: true,
+        client,
+        chainStateReader: testChainStateReader,
+      }),
     ).rejects.toThrow(
       'Cursor guard: database lastBlock=105 is ahead of Arc head=104',
     );
@@ -275,6 +295,7 @@ describe('indexer startup policy', () => {
     await runIndexer(testPrisma, testConfig(), {
       once: true,
       client,
+      chainStateReader: testChainStateReader,
       replayFrom: 100,
     });
 
@@ -297,7 +318,12 @@ describe('indexer startup policy', () => {
         indexerStartPolicy: 'resume',
         indexerMaxBackfillBlocks: 1_000,
       }),
-      { once: true, client, startPolicy: 'head' },
+      {
+        once: true,
+        client,
+        startPolicy: 'head',
+        chainStateReader: testChainStateReader,
+      },
     );
 
     expect(ranges).toEqual([[102n, 102n]]);
@@ -323,7 +349,12 @@ describe('indexer startup policy', () => {
         indexerStartPolicy: 'head',
         indexerMaxBackfillBlocks: 1,
       }),
-      { once: true, client, startPolicy: 'resume' },
+      {
+        once: true,
+        client,
+        startPolicy: 'resume',
+        chainStateReader: testChainStateReader,
+      },
     );
 
     expect(ranges).toEqual([[101n, 108n]]);

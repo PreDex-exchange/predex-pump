@@ -679,6 +679,16 @@ describe('REST shared contract', () => {
       secondsSinceLastSuccessfulPoll: expect.any(Number),
       balancesReconciled: true,
       unreconciledBalanceGapCount: 0,
+      chainState: {
+        ready: true,
+        status: 'complete',
+        attemptedBlock: 100,
+        snapshotBlock: 100,
+        attemptedAt: expect.any(String),
+        completedAt: expect.any(String),
+        error: null,
+        issues: [],
+      },
       historyGaps: [],
     });
   });

@@ -719,6 +719,15 @@ async function handleDefaultParams(tx: Tx, event: DecodedEvent): Promise<void> {
     bigintArg(event.args, 'marketTypeVersion'),
     'marketTypeVersion',
   );
+  const existing = await tx.registryConfig.findUniqueOrThrow({ where: { id: 1 } });
+  if (
+    !eventIsNewer(event, {
+      blockNumber: existing.updatedBlock,
+      logIndex: existing.updatedLogIndex,
+    })
+  ) {
+    return;
+  }
   await tx.registryConfig.update({
     where: { id: 1 },
     data: {
@@ -756,6 +765,7 @@ async function handleDefaultParams(tx: Tx, event: DecodedEvent): Promise<void> {
       protocolFeeBps: toDbInt(tupleBigint(params, 'protocolFeeBps'), 'protocolFeeBps'),
       depthFeeBps: toDbInt(tupleBigint(params, 'depthFeeBps'), 'depthFeeBps'),
       updatedBlock: event.blockNumber,
+      updatedLogIndex: event.logIndex,
     },
   });
 }
@@ -1474,6 +1484,16 @@ async function handleRegistryClosedOut(tx: Tx, event: DecodedEvent): Promise<voi
 async function handleMarketTypeRegistered(tx: Tx, event: DecodedEvent): Promise<void> {
   const version = toDbInt(bigintArg(event.args, 'version'), 'marketTypeVersion');
   const lmsrAddress = lowerAddress(stringArg(event.args, 'lmsr'));
+  const existingType = await tx.registeredMarketType.findUnique({ where: { version } });
+  if (
+    existingType !== null &&
+    !eventIsNewer(event, {
+      blockNumber: existingType.blockNumber,
+      logIndex: existingType.logIndex,
+    })
+  ) {
+    return;
+  }
   await tx.registeredMarketType.upsert({
     where: { version },
     create: {
@@ -1482,21 +1502,30 @@ async function handleMarketTypeRegistered(tx: Tx, event: DecodedEvent): Promise<
       configHash: stringArg(event.args, 'configHash').toLowerCase(),
       registeredAt: event.ts,
       blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
     },
     update: {
       lmsrAddress,
       configHash: stringArg(event.args, 'configHash').toLowerCase(),
       blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
     },
   });
   const config = await tx.registryConfig.findUniqueOrThrow({ where: { id: 1 } });
-  if (version >= config.marketTypeVersion) {
+  if (
+    version >= config.marketTypeVersion &&
+    eventIsNewer(event, {
+      blockNumber: config.updatedBlock,
+      logIndex: config.updatedLogIndex,
+    })
+  ) {
     await tx.registryConfig.update({
       where: { id: 1 },
       data: {
         marketTypeVersion: version,
         currentLmsrAddress: lmsrAddress,
         updatedBlock: event.blockNumber,
+        updatedLogIndex: event.logIndex,
       },
     });
   }
@@ -1504,6 +1533,16 @@ async function handleMarketTypeRegistered(tx: Tx, event: DecodedEvent): Promise<
 
 async function handleCommitteeAdded(tx: Tx, event: DecodedEvent): Promise<void> {
   const address = lowerAddress(stringArg(event.args, 'signer'));
+  const existing = await tx.committeeMember.findUnique({ where: { address } });
+  if (
+    existing !== null &&
+    !eventIsNewer(event, {
+      blockNumber: existing.updatedBlock,
+      logIndex: existing.updatedLogIndex,
+    })
+  ) {
+    return;
+  }
   await tx.committeeMember.upsert({
     where: { address },
     create: {
@@ -1511,17 +1550,29 @@ async function handleCommitteeAdded(tx: Tx, event: DecodedEvent): Promise<void> 
       active: true,
       addedAt: event.ts,
       updatedBlock: event.blockNumber,
+      updatedLogIndex: event.logIndex,
     },
     update: {
       active: true,
       removedAt: null,
       updatedBlock: event.blockNumber,
+      updatedLogIndex: event.logIndex,
     },
   });
 }
 
 async function handleCommitteeRemoved(tx: Tx, event: DecodedEvent): Promise<void> {
   const address = lowerAddress(stringArg(event.args, 'signer'));
+  const existing = await tx.committeeMember.findUnique({ where: { address } });
+  if (
+    existing !== null &&
+    !eventIsNewer(event, {
+      blockNumber: existing.updatedBlock,
+      logIndex: existing.updatedLogIndex,
+    })
+  ) {
+    return;
+  }
   await tx.committeeMember.upsert({
     where: { address },
     create: {
@@ -1530,16 +1581,27 @@ async function handleCommitteeRemoved(tx: Tx, event: DecodedEvent): Promise<void
       addedAt: event.ts,
       removedAt: event.ts,
       updatedBlock: event.blockNumber,
+      updatedLogIndex: event.logIndex,
     },
     update: {
       active: false,
       removedAt: event.ts,
       updatedBlock: event.blockNumber,
+      updatedLogIndex: event.logIndex,
     },
   });
 }
 
 async function handleThresholdChanged(tx: Tx, event: DecodedEvent): Promise<void> {
+  const existing = await tx.registryConfig.findUniqueOrThrow({ where: { id: 1 } });
+  if (
+    !eventIsNewer(event, {
+      blockNumber: existing.updatedBlock,
+      logIndex: existing.updatedLogIndex,
+    })
+  ) {
+    return;
+  }
   await tx.registryConfig.update({
     where: { id: 1 },
     data: {
@@ -1548,6 +1610,7 @@ async function handleThresholdChanged(tx: Tx, event: DecodedEvent): Promise<void
         'committeeThreshold',
       ),
       updatedBlock: event.blockNumber,
+      updatedLogIndex: event.logIndex,
     },
   });
 }

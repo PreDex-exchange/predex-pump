@@ -23,6 +23,10 @@ import {
 } from '@prisma/client';
 
 import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
+import {
+  inspectChainStateRows,
+  inspectPersistedChainState,
+} from '../indexer/chain-state-bootstrap.js';
 import { findFillableSignedOrders } from '../orderbook/fillability.js';
 import { toOffchainOrderDto } from '../orderbook/order.js';
 
@@ -696,15 +700,20 @@ export async function listActivity(
 }
 
 export async function getConfig(prisma: PrismaClient): Promise<ConfigResponse | null> {
-  const [config, members] = await Promise.all([
+  const [config, members, marketTypes] = await Promise.all([
     prisma.registryConfig.findUnique({ where: { id: 1 } }),
     prisma.committeeMember.findMany({
       where: { active: true },
-      select: { address: true },
+      select: { address: true, active: true },
       orderBy: { address: 'asc' },
     }),
+    prisma.registeredMarketType.findMany({
+      select: { version: true, lmsrAddress: true, configHash: true },
+    }),
   ]);
-  if (config === null) return null;
+  if (!inspectChainStateRows(config, members, marketTypes).ready || config === null) {
+    return null;
+  }
   return {
     chainId: config.chainId,
     addresses: {
@@ -761,12 +770,13 @@ export async function getHealth(
   stallAfterMs = DEFAULT_INDEXER_STALL_MS,
   now = new Date(),
 ): Promise<HealthResponse> {
-  const [state, subscription, gaps] = await Promise.all([
+  const [state, subscription, gaps, persistedChainState] = await Promise.all([
     prisma.indexerState.findUnique({ where: { id: 1 } }),
     prisma.indexerSubscriptionState.findUnique({ where: { id: 1 } }),
     prisma.indexerGap.findMany({
       orderBy: [{ recordedAt: 'desc' }, { id: 'desc' }],
     }),
+    inspectPersistedChainState(prisma),
   ]);
   const historyGaps: IndexerHistoryGap[] = gaps.map((gap) => ({
     skippedFromBlock: gap.skippedFromBlock,
@@ -791,6 +801,22 @@ export async function getHealth(
     (gap) => gap.balanceReconciliationStatus !== 'complete',
   ).length;
   const balancesReconciled = unreconciledBalanceGapCount === 0;
+  const bootstrapStatus =
+    state?.chainStateBootstrapStatus.toLowerCase() === 'complete'
+      ? 'complete'
+      : state?.chainStateBootstrapStatus.toLowerCase() === 'failed'
+        ? 'failed'
+        : 'pending';
+  const chainState = {
+    ready: persistedChainState.ready && bootstrapStatus === 'complete',
+    status: bootstrapStatus,
+    attemptedBlock: state?.chainStateBootstrapAttemptedBlock ?? null,
+    snapshotBlock: state?.chainStateBootstrapBlock ?? null,
+    attemptedAt: state?.chainStateBootstrapAttemptedAt?.toISOString() ?? null,
+    completedAt: state?.chainStateBootstrappedAt?.toISOString() ?? null,
+    error: state?.chainStateBootstrapError ?? null,
+    issues: persistedChainState.issues,
+  } as const;
   if (state === null) {
     return {
       ok: false,
@@ -803,6 +829,7 @@ export async function getHealth(
       secondsSinceLastSuccessfulPoll: null,
       balancesReconciled,
       unreconciledBalanceGapCount,
+      chainState,
       historyGaps,
     };
   }
@@ -824,6 +851,7 @@ export async function getHealth(
   const indexerStatus = stalled
     ? 'stalled'
     : historyGaps.length > 0 ||
+        !chainState.ready ||
         state.consecutiveRpcFailures > 0 ||
         subscription?.status !== 'connected'
       ? 'degraded'
@@ -833,7 +861,11 @@ export async function getHealth(
     subscription?.headBlock ?? state.headBlock,
   );
   return {
-    ok: !stalled && state.lastBlock <= headBlock && balancesReconciled,
+    ok:
+      !stalled &&
+      state.lastBlock <= headBlock &&
+      balancesReconciled &&
+      chainState.ready,
     chainId: state.chainId,
     indexedBlock: state.lastBlock,
     headBlock,
@@ -843,6 +875,7 @@ export async function getHealth(
     secondsSinceLastSuccessfulPoll,
     balancesReconciled,
     unreconciledBalanceGapCount,
+    chainState,
     historyGaps,
   };
 }

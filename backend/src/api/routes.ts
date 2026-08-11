@@ -284,7 +284,10 @@ export function registerRestRoutes(
   app.get(routes.config(), async (): Promise<ConfigResponse> => {
     const response = await readConfig();
     if (response === null) {
-      throw new HttpError(503, 'Registry config has not been indexed yet');
+      throw new HttpError(
+        503,
+        'Required chain configuration is unavailable; check indexer health',
+      );
     }
     return response;
   });

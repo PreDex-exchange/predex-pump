@@ -38,6 +38,12 @@ import {
 import { inspectRpcError, retryDelayMs } from './retry.js';
 import { lockIndexerCursor } from './cursor-lock.js';
 import {
+  bootstrapChainState,
+  inspectPersistedChainState,
+  ViemChainStateReader,
+  type ChainStateReader,
+} from './chain-state-bootstrap.js';
+import {
   createViemSubscriptionTransport,
   runSubscriptionSupervisor,
   subscriptionEndpointLabel,
@@ -58,6 +64,7 @@ export interface IndexerOptions {
   random?: () => number;
   now?: () => Date;
   subscriptionTransportFactory?: IndexerSubscriptionTransportFactory;
+  chainStateReader?: ChainStateReader;
 }
 
 export interface RangeResult {
@@ -725,6 +732,26 @@ export async function runIndexer(
       now,
     );
     let state = startup.state;
+    const chainStateReader =
+      options.chainStateReader ?? new ViemChainStateReader(client);
+    const runChainStateBootstrap = async (
+      snapshotBlock: number,
+    ): Promise<boolean> => {
+      const bootstrap = await bootstrapChainState(prisma, chainStateReader, {
+        snapshotBlock,
+        now,
+      });
+      const message =
+        `[indexer] chain-state bootstrap status=${bootstrap.status} ` +
+        `block=${bootstrap.snapshotBlock} rpcRequests=${bootstrap.rpcRequestCount} ` +
+        `changed=${bootstrap.changedRows} protectedNewer=${bootstrap.protectedNewerRows}`;
+      if (bootstrap.status === 'complete') {
+        console.info(message);
+        return true;
+      }
+      console.error(`${message} error="${bootstrap.error ?? 'unknown failure'}"`);
+      return false;
+    };
 
     if (
       options.replayFrom !== undefined &&
@@ -733,6 +760,29 @@ export async function runIndexer(
       throw new Error(
         `--replay-from must be between DEPLOY_BLOCK=${config.deployBlock} and head=${head}`,
       );
+    }
+
+    const persistedChainState = await inspectPersistedChainState(prisma);
+    const shouldBootstrapBeforeCatchUp =
+      !replayingAtStartup &&
+      state.lastBlock >= config.deployBlock &&
+      (startup.decision === 'head' ||
+        state.chainStateBootstrapStatus !== 'COMPLETE' ||
+        !persistedChainState.ready);
+    let bootstrappedBeforeCatchUp = false;
+    if (shouldBootstrapBeforeCatchUp) {
+      while (!stopController.signal.aborted) {
+        bootstrappedBeforeCatchUp = await runChainStateBootstrap(state.lastBlock);
+        if (bootstrappedBeforeCatchUp) break;
+        if (options.once) return;
+        // Keep the API and its degraded health response live, but do not apply
+        // a MarketCreated event against missing/zero registry parameters.
+        await wait(
+          Math.max(config.pollMs, 30_000),
+          stopController.signal,
+        );
+      }
+      if (stopController.signal.aborted) return;
     }
 
     const outstandingGapIds = await outstandingBalanceGapIds(prisma);
@@ -826,6 +876,11 @@ export async function runIndexer(
       state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
       nextBlock = Math.max(config.deployBlock, state.lastBlock + 1);
       replaying = false;
+    }
+
+    if (!stopController.signal.aborted && !bootstrappedBeforeCatchUp) {
+      state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
+      await runChainStateBootstrap(state.lastBlock);
     }
 
     if (!options.once) {

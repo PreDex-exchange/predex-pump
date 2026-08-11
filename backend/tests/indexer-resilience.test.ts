@@ -22,6 +22,7 @@ import { loadRuntimeConfig, type RuntimeConfig } from '../src/config.js';
 import { ServerEventBus } from '../src/events/bus.js';
 import { CONTRACT_BY_ADDRESS } from '../src/indexer/abis.js';
 import { runIndexer } from '../src/indexer/runner.js';
+import { testChainStateReader } from './chain-state-fixtures.js';
 import { resetDatabase, testPrisma } from './database.js';
 
 const RPC_URL = 'https://rpc.example.test';
@@ -123,6 +124,7 @@ describe('indexer RPC resilience', () => {
         once: true,
         client,
         onEvents,
+        chainStateReader: testChainStateReader,
         random: () => 0,
         wait: async (milliseconds) => {
           delays.push(milliseconds);
@@ -224,6 +226,7 @@ describe('indexer RPC resilience', () => {
       const run = runIndexer(testPrisma, config, {
         once: false,
         client,
+        chainStateReader: testChainStateReader,
         random: () => 0,
         signal: controller.signal,
         wait: async (milliseconds) => {

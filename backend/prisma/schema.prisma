@@ -534,6 +534,7 @@ model RegistryConfig {
   depthFeeBps                   Int      @default(0)
   committeeThreshold            Int      @default(0)
   updatedBlock                  Int
+  updatedLogIndex               Int      @default(-1)
   updatedAt                     DateTime @updatedAt
 }
 
@@ -543,28 +544,36 @@ model RegisteredMarketType {
   configHash   String
   registeredAt Int
   blockNumber  Int
+  logIndex     Int    @default(-1)
 }
 
 model CommitteeMember {
-  address      String  @id
-  active       Boolean
-  addedAt      Int
-  removedAt    Int?
-  updatedBlock Int
+  address         String  @id
+  active          Boolean
+  addedAt         Int
+  removedAt       Int?
+  updatedBlock    Int
+  updatedLogIndex Int     @default(-1)
 
   @@index([active])
 }
 
 // Singleton replay cursor and chain-lag state.
 model IndexerState {
-  id                     Int       @id @default(1)
-  chainId                Int
-  deployBlock            Int
-  lastBlock              Int
-  headBlock              Int       @default(0)
-  lastSuccessfulPollAt   DateTime?
-  consecutiveRpcFailures Int       @default(0)
-  updatedAt              DateTime  @updatedAt
+  id                                Int       @id @default(1)
+  chainId                           Int
+  deployBlock                       Int
+  lastBlock                         Int
+  headBlock                         Int       @default(0)
+  lastSuccessfulPollAt              DateTime?
+  consecutiveRpcFailures            Int       @default(0)
+  chainStateBootstrapStatus         String    @default("PENDING")
+  chainStateBootstrapAttemptedBlock Int?
+  chainStateBootstrapBlock          Int?
+  chainStateBootstrapAttemptedAt    DateTime?
+  chainStateBootstrappedAt          DateTime?
+  chainStateBootstrapError          String?
+  updatedAt                         DateTime  @updatedAt
 }
 
 // Append-only audit trail for startup cursor advances that intentionally skip
