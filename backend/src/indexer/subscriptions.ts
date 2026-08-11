@@ -1,7 +1,6 @@
-import { ADDRESSES, ARC } from '@predex-pump/shared';
+import { ADDRESSES } from '@predex-pump/shared';
 import {
   createPublicClient,
-  defineChain,
   encodeEventTopics,
   type AbiEvent,
   type Address,
@@ -9,6 +8,7 @@ import {
   webSocket,
 } from 'viem';
 
+import { ARC_CHAIN } from '../chain.js';
 import {
   COLLATERAL_APPROVAL_EVENT,
   CORE_TRACKED_ADDRESSES,
@@ -18,18 +18,6 @@ import {
 import { toDbInt } from './derive.js';
 
 const SUBSCRIPTION_REQUEST_TIMEOUT_MS = 10_000;
-
-const arc = defineChain({
-  id: ARC.chainId,
-  name: ARC.name,
-  nativeCurrency: ARC.nativeCurrency,
-  rpcUrls: {
-    default: {
-      http: [...ARC.rpcUrls],
-      webSocket: [...ARC.webSocketRpcUrls],
-    },
-  },
-});
 
 type SubscriptionTopic = Hex | Hex[] | null;
 
@@ -67,7 +55,7 @@ export function createViemSubscriptionTransport(
   url: string,
 ): IndexerSubscriptionTransport {
   const client = createPublicClient({
-    chain: arc,
+    chain: ARC_CHAIN,
     transport: webSocket(url, {
       keepAlive: { interval: 10_000 },
       reconnect: false,

@@ -10,6 +10,7 @@
     "build": "prisma generate && tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "tsx tests/prepare-database.ts && vitest run",
+    "smoke:arc-multicall": "tsx scripts/arc-multicall-smoke.ts",
     "db:generate": "prisma generate",
     "db:up": "docker compose up -d postgres",
     "services:up": "docker compose up -d postgres qdrant",

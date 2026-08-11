@@ -48,8 +48,10 @@ const arcAgentChainDefinition = {
   rpcUrls: {
     default: {
       http: [...ARC.rpcUrls],
+      webSocket: [...ARC.webSocketRpcUrls],
     },
   },
+  contracts: ARC.contracts,
   testnet: true,
 } as const;
 

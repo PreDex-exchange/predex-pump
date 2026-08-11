@@ -29,6 +29,7 @@ import {
   getMarketsByIds,
   listMarkets,
 } from '../api/queries.js';
+import { ARC_CHAIN } from '../chain.js';
 import type { AccountLayerConfig } from './config.js';
 
 export const SESSION_COOKIE_NAME = 'predex_session';
@@ -134,7 +135,10 @@ export class AccountService {
       this.verifySignature = verifier;
       return;
     }
-    const client = createPublicClient({ transport: http(config.rpcUrl) });
+    const client = createPublicClient({
+      chain: ARC_CHAIN,
+      transport: http(config.rpcUrl),
+    });
     this.verifySignature = async (input) => {
       try {
         return await verifySiweMessage(client, input);

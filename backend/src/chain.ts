@@ -1,8 +1,7 @@
+import { ARC } from '@predex-pump/shared';
 import { defineChain } from 'viem';
 
-import { ADDRESSES, ARC } from '@/lib/shared/addresses';
-
-export const arcTestnet = defineChain({
+export const ARC_CHAIN = defineChain({
   id: ARC.chainId,
   name: ARC.name,
   nativeCurrency: ARC.nativeCurrency,
@@ -15,5 +14,3 @@ export const arcTestnet = defineChain({
   contracts: ARC.contracts,
   testnet: true,
 });
-
-export const arcAddresses = ADDRESSES;

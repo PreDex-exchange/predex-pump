@@ -11,7 +11,6 @@ import {
 } from '@predex-pump/shared/tx';
 import {
   createPublicClient,
-  defineChain,
   fallback,
   http,
   type Abi,
@@ -20,14 +19,11 @@ import {
   type PublicClient,
 } from 'viem';
 
+import { ARC_CHAIN } from '../chain.js';
+
 const conditionalTokensAbi = conditionalTokensAbiJson as Abi;
 
-export const ARC_CHAIN = defineChain({
-  id: ARC.chainId,
-  name: ARC.name,
-  nativeCurrency: ARC.nativeCurrency,
-  rpcUrls: { default: { http: [...ARC.rpcUrls] } },
-});
+export { ARC_CHAIN };
 
 export interface FreshOrderChainState {
   blockNumber: number;

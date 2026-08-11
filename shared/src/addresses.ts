@@ -20,6 +20,11 @@ export const ARC = {
     'wss://rpc.drpc.testnet.arc.network',
   ],
   nativeCurrency: { name: 'USD Coin', symbol: 'USDC', decimals: 18 },
+  contracts: {
+    multicall3: {
+      address: '0xcA11bde05977b3631167028862bE2a173976CA11',
+    },
+  },
   // The collateral is read/written as a 6-decimal ERC-20. 1_000_000 raw = 1 USDC.
   usdcErc20Decimals: 6,
 } as const;

@@ -3,7 +3,6 @@ import type { PrismaClient } from '@prisma/client';
 import {
   createPublicClient,
   decodeEventLog,
-  defineChain,
   fallback,
   HttpRequestError,
   http,
@@ -13,6 +12,7 @@ import {
 } from 'viem';
 
 import type { RuntimeConfig } from '../config.js';
+import { ARC_CHAIN } from '../chain.js';
 import { parseMarketPhase } from '../dedup/indexer.js';
 import type { MarketDedupIndexer } from '../dedup/types.js';
 import {
@@ -38,18 +38,6 @@ import {
 } from './subscriptions.js';
 import type { DecodedEvent, EventArgs } from './types.js';
 
-const arc = defineChain({
-  id: ARC.chainId,
-  name: ARC.name,
-  nativeCurrency: ARC.nativeCurrency,
-  rpcUrls: {
-    default: {
-      http: [...ARC.rpcUrls],
-      webSocket: [...ARC.webSocketRpcUrls],
-    },
-  },
-});
-
 export interface IndexerOptions {
   once: boolean;
   replayFrom?: number;
@@ -72,7 +60,7 @@ export interface RangeResult {
 
 function createArcClient(rpcUrls: readonly string[]): PublicClient {
   return createPublicClient({
-    chain: arc,
+    chain: ARC_CHAIN,
     transport: fallback(
       rpcUrls.map((url) =>
         http(url, {
