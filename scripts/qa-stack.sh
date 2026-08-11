@@ -10,8 +10,10 @@
 # The frontend is always http://127.0.0.1:3002 (never port 3000). Useful pages:
 # /, /create, /market/1, /market/2, /portfolio, /account, and /activity.
 # Market 1 is live on HYBRID (price tick 1000 raw / 0.001; size multiple 1000);
-# market 2 is resolved. `down` removes QA containers/network but retains the
-# named Postgres and Qdrant volumes.
+# market 2 is resolved. By default the stack attaches to the canonical `backend`
+# Compose project's Postgres/Qdrant containers. Set QA_COMPOSE_PROJECT to use a
+# different, isolated Compose project. `down` never removes attached containers
+# and never removes Docker networks or volumes.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -19,14 +21,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 STATE_DIR="$ROOT_DIR/.qa"
 LOG_DIR="$STATE_DIR/logs"
 COMPOSE_FILE="$ROOT_DIR/backend/docker-compose.yml"
-COMPOSE_PROJECT="predex-pump-qa"
+COMPOSE_PROJECT="${QA_COMPOSE_PROJECT:-backend}"
 DATABASE_URL="postgresql://predex:predex@127.0.0.1:5432/predex_pump?schema=public"
 FRONTEND_URL="http://127.0.0.1:3002"
 BACKEND_URL="http://127.0.0.1:3001"
 WALLET_URL="http://127.0.0.1:3003"
 WALLET_SCRIPT_URL="$WALLET_URL/provider.js"
 MODE="read-only"
-DOCKER_STARTED=0
+COMPOSE_PROJECT_FILE="$STATE_DIR/compose-project"
+CREATED_CONTAINERS_FILE="$STATE_DIR/docker-created-containers"
+STARTED_CONTAINERS_FILE="$STATE_DIR/docker-started-containers"
+ATTACHED_SERVICES=()
+CREATED_SERVICES=()
+STARTED_EXISTING_SERVICES=()
 
 usage() {
   cat <<'HELP'
@@ -46,6 +53,19 @@ Runtime key:
   QA_WALLET_PRIVATE_KEY is required only by `up`. It must be a 0x-prefixed
   32-byte private key supplied by the operator at runtime. The value is never
   printed, logged, saved to a file, passed to Next/backend, or built into assets.
+
+Database services:
+  QA_COMPOSE_PROJECT=backend is the default. It attaches to the canonical
+  backend-postgres-1 and backend-qdrant-1 containers and their existing data.
+
+  For a genuinely isolated stack, first make sure ports 5432 and 6333 are free,
+  then choose a new project namespace explicitly:
+    QA_COMPOSE_PROJECT=my-qa-stack QA_WALLET_PRIVATE_KEY=<set-in-shell> \
+      ./scripts/qa-stack.sh up --read-only
+
+  The selected project is recorded for teardown, so the matching `down` command
+  does not need the override to be repeated. Each project has separate named
+  volumes; changing the project changes which database state the UI displays.
 
 QA URLs:
   Frontend       http://127.0.0.1:3002
@@ -69,9 +89,11 @@ Production gate:
   artifacts for the provider marker/key. The signer also refuses NODE_ENV=production.
 
 Teardown:
-  `down` stops the signer, backend, and frontend; Docker Compose removes the QA
-  Postgres/Qdrant containers and network while retaining both named volumes and
-  the non-secret process logs under .qa/logs/.
+  `down` stops only the signer, backend, and frontend processes recorded by `up`.
+  Attached Postgres/Qdrant containers are never stopped or removed. A previously
+  stopped container started by `up` is stopped again; a container created by
+  `up` is removed by exact container ID. Docker networks and volumes are always
+  retained, as are the non-secret process logs under .qa/logs/.
 HELP
 }
 
@@ -82,6 +104,46 @@ fail() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+validate_compose_project() {
+  [[ "$COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]] ||
+    fail 'QA_COMPOSE_PROJECT must start with a lowercase letter or digit and contain only lowercase letters, digits, hyphens, or underscores'
+}
+
+docker_command() {
+  env -u QA_WALLET_PRIVATE_KEY docker "$@"
+}
+
+compose() {
+  docker_command compose \
+    --project-name "$COMPOSE_PROJECT" --file "$COMPOSE_FILE" "$@"
+}
+
+compose_service_container_id() {
+  local service="$1"
+  local output
+  output="$(compose ps --all --quiet "$service")"
+  if [[ "$output" == *$'\n'* ]]; then
+    fail "compose project '$COMPOSE_PROJECT' has more than one container for service '$service'"
+  fi
+  if [[ -n "$output" && ! "$output" =~ ^[0-9a-f]{12,64}$ ]]; then
+    fail "unexpected container ID for compose project '$COMPOSE_PROJECT' service '$service'"
+  fi
+  printf '%s' "$output"
+}
+
+compose_running_service_container_id() {
+  local service="$1"
+  local output
+  output="$(compose ps --status running --quiet "$service")"
+  if [[ "$output" == *$'\n'* ]]; then
+    fail "compose project '$COMPOSE_PROJECT' has more than one running container for service '$service'"
+  fi
+  if [[ -n "$output" && ! "$output" =~ ^[0-9a-f]{12,64}$ ]]; then
+    fail "unexpected running container ID for compose project '$COMPOSE_PROJECT' service '$service'"
+  fi
+  printf '%s' "$output"
 }
 
 port_is_listening() {
@@ -97,18 +159,56 @@ port_is_listening() {
   fail 'port checks require lsof or nc'
 }
 
-assert_ports_free() {
+compose_service_owns_host_port() {
+  local service="$1"
+  local container_port="$2"
+  local host_port="$3"
+  local container_id
+  local mapping
+  container_id="$(compose_running_service_container_id "$service")"
+  [[ -n "$container_id" ]] || return 1
+  while IFS= read -r mapping; do
+    if [[ -n "$mapping" && "${mapping##*:}" == "$host_port" ]]; then
+      return 0
+    fi
+  done < <(docker_command container port "$container_id" "${container_port}/tcp" 2>/dev/null)
+  return 1
+}
+
+assert_application_ports_free() {
   local port
-  for port in 3001 3002 3003 5432 6333; do
+  for port in 3001 3002 3003; do
     if port_is_listening "$port"; then
-      fail "TCP port $port is already occupied; refusing to attach to an existing service"
+      fail "TCP port $port is already occupied; backend, frontend, and signer ports must be free"
     fi
   done
 }
 
-compose() {
-  env -u QA_WALLET_PRIVATE_KEY docker compose \
-    --project-name "$COMPOSE_PROJECT" --file "$COMPOSE_FILE" "$@"
+assert_database_port() {
+  local service="$1"
+  local container_port="$2"
+  local host_port="$3"
+  local running_id
+  if port_is_listening "$host_port"; then
+    if compose_service_owns_host_port "$service" "$container_port" "$host_port"; then
+      return
+    fi
+    fail "TCP port $host_port is occupied by an unrelated process; compose project '$COMPOSE_PROJECT' service '$service' does not publish that port"
+  fi
+
+  if compose_service_owns_host_port "$service" "$container_port" "$host_port"; then
+    fail "compose project '$COMPOSE_PROJECT' service '$service' publishes TCP port $host_port, but the port is not listening"
+  fi
+  running_id="$(compose_running_service_container_id "$service")"
+  if [[ -n "$running_id" ]]; then
+    fail "compose project '$COMPOSE_PROJECT' service '$service' is running but does not publish required TCP port $host_port"
+  fi
+}
+
+assert_ports_usable() {
+  assert_application_ports_free
+  assert_database_port postgres 5432 5432
+  assert_database_port qdrant 6333 6333
 }
 
 install_runtime_dependencies() {
@@ -229,6 +329,194 @@ stop_processes() {
   stop_pid_file wallet
 }
 
+record_container() {
+  local record_file="$1"
+  local service="$2"
+  local container_id="$3"
+  printf '%s %s\n' "$service" "$container_id" >> "$record_file"
+}
+
+record_compose_project() {
+  printf '%s\n' "$COMPOSE_PROJECT" > "$COMPOSE_PROJECT_FILE"
+}
+
+load_recorded_compose_project() {
+  local recorded_project
+  [[ -f "$COMPOSE_PROJECT_FILE" ]] ||
+    fail 'QA Docker ownership state has no recorded compose project; refusing to change Docker services'
+  IFS= read -r recorded_project < "$COMPOSE_PROJECT_FILE" || true
+  [[ "$recorded_project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] ||
+    fail 'recorded QA compose project is invalid; refusing to change Docker services'
+  COMPOSE_PROJECT="$recorded_project"
+}
+
+wait_for_compose_service() {
+  local service="$1"
+  local container_id="$2"
+  local status
+  local started_at=$SECONDS
+  while (( SECONDS - started_at < 60 )); do
+    status="$(docker_command container inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+    case "$status" in
+      healthy|running)
+        printf '%s is healthy.\n' "$service"
+        return
+        ;;
+      unhealthy|exited|dead)
+        fail "compose service '$service' entered state '$status' before becoming healthy"
+        ;;
+    esac
+    sleep 1
+  done
+  fail "compose service '$service' did not become healthy within 60s"
+}
+
+start_or_attach_compose_service() {
+  local service="$1"
+  local existing_id
+  local running_id
+  local created_id
+  existing_id="$(compose_service_container_id "$service")"
+  running_id="$(compose_running_service_container_id "$service")"
+
+  if [[ -n "$running_id" ]]; then
+    [[ -z "$existing_id" || "$existing_id" == "$running_id" ]] ||
+      fail "compose service '$service' has inconsistent running and existing container IDs"
+    wait_for_compose_service "$service" "$running_id"
+    ATTACHED_SERVICES+=("$service")
+    return
+  fi
+
+  if [[ -n "$existing_id" ]]; then
+    record_container "$STARTED_CONTAINERS_FILE" "$service" "$existing_id"
+    compose start "$service"
+    wait_for_compose_service "$service" "$existing_id"
+    STARTED_EXISTING_SERVICES+=("$service")
+    return
+  fi
+
+  if ! compose create "$service"; then
+    created_id="$(compose_service_container_id "$service" || true)"
+    if [[ -n "$created_id" ]]; then
+      record_container "$CREATED_CONTAINERS_FILE" "$service" "$created_id"
+    fi
+    return 1
+  fi
+  created_id="$(compose_service_container_id "$service")"
+  [[ -n "$created_id" ]] || fail "compose create did not create a container for service '$service'"
+  record_container "$CREATED_CONTAINERS_FILE" "$service" "$created_id"
+  compose start "$service"
+  wait_for_compose_service "$service" "$created_id"
+  CREATED_SERVICES+=("$service")
+}
+
+join_services() {
+  local joined=''
+  local service
+  for service in "$@"; do
+    if [[ -n "$joined" ]]; then
+      joined+=', '
+    fi
+    joined+="$service"
+  done
+  printf '%s' "$joined"
+}
+
+report_compose_attachment() {
+  local project_kind='override'
+  if [[ "$COMPOSE_PROJECT" == backend ]]; then
+    project_kind='canonical'
+  fi
+  printf 'Compose project: %s (%s)\n' "$COMPOSE_PROJECT" "$project_kind"
+  printf 'Database URL:   %s\n' "$DATABASE_URL"
+  if ((${#ATTACHED_SERVICES[@]})); then
+    printf 'Attached to existing services: %s\n' "$(join_services "${ATTACHED_SERVICES[@]}")"
+  fi
+  if ((${#STARTED_EXISTING_SERVICES[@]})); then
+    printf 'Started pre-existing stopped services: %s\n' "$(join_services "${STARTED_EXISTING_SERVICES[@]}")"
+  fi
+  if ((${#CREATED_SERVICES[@]})); then
+    printf 'Started new services: %s\n' "$(join_services "${CREATED_SERVICES[@]}")"
+  fi
+}
+
+prepare_compose_services() {
+  record_compose_project
+  start_or_attach_compose_service postgres
+  start_or_attach_compose_service qdrant
+  assert_database_port postgres 5432 5432
+  assert_database_port qdrant 6333 6333
+  report_compose_attachment
+}
+
+container_compose_identity() {
+  local container_id="$1"
+  docker_command container inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}|{{ index .Config.Labels "com.docker.compose.service" }}' "$container_id" 2>/dev/null
+}
+
+teardown_recorded_containers() {
+  local record_file="$1"
+  local action="$2"
+  local service
+  local container_id
+  local extra
+  local identity
+  local result=0
+  [[ -f "$record_file" ]] || return 0
+
+  while IFS=' ' read -r service container_id extra; do
+    [[ -n "$service" && -n "$container_id" && -z "${extra:-}" ]] || {
+      printf 'Skipping invalid QA Docker ownership record in %s.\n' "$record_file" >&2
+      result=1
+      continue
+    }
+    case "$service" in
+      postgres|qdrant) ;;
+      *)
+        printf 'Skipping unknown QA Docker service %s.\n' "$service" >&2
+        result=1
+        continue
+        ;;
+    esac
+    if [[ ! "$container_id" =~ ^[0-9a-f]{12,64}$ ]]; then
+      printf 'Skipping invalid QA Docker container ID for %s.\n' "$service" >&2
+      result=1
+      continue
+    fi
+    if ! identity="$(container_compose_identity "$container_id")"; then
+      printf 'Could not verify recorded %s container %s; leaving it unchanged.\n' "$service" "$container_id" >&2
+      result=1
+      continue
+    fi
+    if [[ "$identity" != "$COMPOSE_PROJECT|$service" ]]; then
+      printf 'Skipping container %s because it is not compose project %s service %s.\n' "$container_id" "$COMPOSE_PROJECT" "$service" >&2
+      result=1
+      continue
+    fi
+    case "$action" in
+      stop)
+        printf 'Stopping pre-existing %s container started by this QA run (%s)...\n' "$service" "$container_id"
+        docker_command container stop "$container_id" >/dev/null || result=1
+        ;;
+      remove)
+        printf 'Removing %s container created by this QA run (%s)...\n' "$service" "$container_id"
+        docker_command container rm --force "$container_id" >/dev/null || result=1
+        ;;
+      *)
+        fail "unknown Docker teardown action: $action"
+        ;;
+    esac
+  done < "$record_file"
+  return "$result"
+}
+
+teardown_owned_compose_services() {
+  local result=0
+  teardown_recorded_containers "$STARTED_CONTAINERS_FILE" stop || result=1
+  teardown_recorded_containers "$CREATED_CONTAINERS_FILE" remove || result=1
+  return "$result"
+}
+
 print_log_tail() {
   local name="$1"
   local log_file="$LOG_DIR/$name.log"
@@ -240,16 +528,24 @@ print_log_tail() {
 
 cleanup_failed_up() {
   local status=$?
+  local docker_cleanup_status=0
   trap - ERR INT TERM
   printf '\nQA stack startup failed; cleaning up partial state.\n' >&2
   print_log_tail wallet
   print_log_tail backend
   print_log_tail frontend
   stop_processes
-  if [[ "$DOCKER_STARTED" -eq 1 || -f "$STATE_DIR/docker.started" ]]; then
-    compose down >/dev/null 2>&1 || true
+  if [[ -f "$COMPOSE_PROJECT_FILE" ]]; then
+    load_recorded_compose_project
+    teardown_owned_compose_services || docker_cleanup_status=$?
   fi
   rm -f "$STATE_DIR/docker.started" "$STATE_DIR/active"
+  if ((docker_cleanup_status == 0)); then
+    rm -f "$CREATED_CONTAINERS_FILE" "$STARTED_CONTAINERS_FILE" \
+      "$COMPOSE_PROJECT_FILE"
+  else
+    printf 'Docker cleanup was incomplete; exact ownership records were retained for a later `qa-stack.sh down`.\n' >&2
+  fi
   exit "$status"
 }
 
@@ -354,7 +650,9 @@ launch_frontend() {
 }
 
 up() {
-  [[ ! -e "$STATE_DIR/active" && ! -e "$STATE_DIR/docker.started" ]] ||
+  [[ ! -e "$STATE_DIR/active" && ! -e "$STATE_DIR/docker.started" &&
+    ! -e "$COMPOSE_PROJECT_FILE" && ! -e "$CREATED_CONTAINERS_FILE" &&
+    ! -e "$STARTED_CONTAINERS_FILE" ]] ||
     fail 'QA state already exists; run ./scripts/qa-stack.sh down first'
   [[ -n "${QA_WALLET_PRIVATE_KEY:-}" ]] ||
     fail 'QA_WALLET_PRIVATE_KEY must be supplied by the operator at runtime'
@@ -365,8 +663,9 @@ up() {
   require_command pnpm
   require_command docker
   require_command curl
-  env -u QA_WALLET_PRIVATE_KEY docker info >/dev/null 2>&1 || fail 'Docker is not available'
-  assert_ports_free
+  validate_compose_project
+  docker_command info >/dev/null 2>&1 || fail 'Docker is not available'
+  assert_ports_usable
   install_runtime_dependencies
 
   mkdir -p "$LOG_DIR"
@@ -375,10 +674,7 @@ up() {
   : > "$LOG_DIR/frontend.log"
   trap cleanup_failed_up ERR INT TERM
 
-  printf 'Starting isolated Postgres and Qdrant containers...\n'
-  compose up -d --wait postgres qdrant
-  DOCKER_STARTED=1
-  : > "$STATE_DIR/docker.started"
+  prepare_compose_services
 
   printf 'Applying Prisma migrations...\n'
   (
@@ -424,51 +720,70 @@ up() {
 
 down() {
   local docker_result
+  local docker_status=0
   mkdir -p "$STATE_DIR"
   stop_processes
-  if [[ -f "$STATE_DIR/docker.started" ]]; then
-    printf 'Stopping QA Postgres and Qdrant containers...\n'
-    compose down
-    docker_result='QA Docker containers/network were removed; named data volumes were retained.'
-  else
-    docker_result='No recorded QA Docker services were changed.'
+  if [[ -f "$COMPOSE_PROJECT_FILE" ]]; then
+    load_recorded_compose_project
+  elif [[ -f "$CREATED_CONTAINERS_FILE" || -f "$STARTED_CONTAINERS_FILE" ]]; then
+    fail 'QA Docker ownership records exist without a compose project; refusing to change Docker services'
   fi
-  rm -f "$STATE_DIR/docker.started" "$STATE_DIR/active"
+
+  if [[ -f "$CREATED_CONTAINERS_FILE" || -f "$STARTED_CONTAINERS_FILE" ]]; then
+    teardown_owned_compose_services || docker_status=$?
+    if ((docker_status != 0)); then
+      fail 'one or more recorded Docker services could not be safely torn down; ownership records were retained'
+    fi
+    docker_result='Only containers recorded by exact ID were restored or removed. Docker networks and volumes were retained.'
+  elif [[ -f "$STATE_DIR/docker.started" ]]; then
+    printf 'Legacy Docker state has no exact container ownership records; leaving all Docker services unchanged.\n' >&2
+    docker_result='No Docker container, network, or volume was changed.'
+  else
+    docker_result='Attached Postgres/Qdrant were left running; no Docker container, network, or volume was changed.'
+  fi
+  rm -f "$CREATED_CONTAINERS_FILE" "$STARTED_CONTAINERS_FILE" \
+    "$COMPOSE_PROJECT_FILE" "$STATE_DIR/docker.started" "$STATE_DIR/active"
   printf 'QA stack is down. %s Non-secret .qa/logs were retained.\n' "$docker_result"
 }
 
-command_name="${1:---help}"
-case "$command_name" in
-  --help|-h|help)
-    usage
-    ;;
-  up)
-    shift
-    while (($#)); do
-      case "$1" in
-        --read-only)
-          MODE=read-only
-          ;;
-        --broadcast)
-          MODE=broadcast
-          ;;
-        --help|-h)
-          usage
-          exit 0
-          ;;
-        *)
-          fail "unknown up option: $1"
-          ;;
-      esac
+main() {
+  local command_name="${1:---help}"
+  case "$command_name" in
+    --help|-h|help)
+      usage
+      ;;
+    up)
       shift
-    done
-    up
-    ;;
-  down)
-    (($# == 1)) || fail 'down accepts no options'
-    down
-    ;;
-  *)
-    fail "unknown command: $command_name"
-    ;;
-esac
+      while (($#)); do
+        case "$1" in
+          --read-only)
+            MODE=read-only
+            ;;
+          --broadcast)
+            MODE=broadcast
+            ;;
+          --help|-h)
+            usage
+            return 0
+            ;;
+          *)
+            fail "unknown up option: $1"
+            ;;
+        esac
+        shift
+      done
+      up
+      ;;
+    down)
+      (($# == 1)) || fail 'down accepts no options'
+      down
+      ;;
+    *)
+      fail "unknown command: $command_name"
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
