@@ -16,6 +16,27 @@
   flex: none;
 }
 
+.content {
+  min-width: 0;
+}
+
+.withoutMascot {
+  flex-direction: column;
+  text-align: center;
+}
+
+.withoutMascot .content {
+  width: min(100%, 56ch);
+}
+
+.withoutMascot p {
+  max-width: none;
+}
+
+.withoutMascot .actions {
+  justify-content: center;
+}
+
 .panel h3 {
   margin-bottom: var(--space-1);
   font-family: var(--font-fredoka), sans-serif;

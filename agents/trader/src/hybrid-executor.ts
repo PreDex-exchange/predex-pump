@@ -100,6 +100,10 @@ export const ORDER_INGEST_REJECTION_POLICY = {
     classification: 'retryable',
     reason: 'the exchange approval was missing; approval state will be refreshed once',
   },
+  ORDER_ALREADY_WITHDRAWN: {
+    classification: 'permanent',
+    reason: 'the signed digest was already withdrawn from the operator book',
+  },
   MARKET_RESOLVED: {
     classification: 'permanent',
     reason: 'the market is resolved and no longer accepts exchange orders',

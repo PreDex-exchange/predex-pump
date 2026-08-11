@@ -95,13 +95,13 @@ export type TxPhase =
   | 'awaiting-signature'
   | 'pending'
   | 'confirmed'
+  | 'rejected'
   | 'reverted';
 
 export interface TxProgress {
   phase: TxPhase;
   message: string;
   hash?: Hash;
-  error?: string;
 }
 
 export type TxReporter = (progress: TxProgress) => void;
@@ -1880,50 +1880,4 @@ export async function sweepProtocolAfterCloseoutOnArc({
     report,
   );
   return { receipt };
-}
-
-export function chainErrorMessage(error: unknown) {
-  const messages: string[] = [];
-  let current: unknown = error;
-
-  for (let depth = 0; depth < 8 && current; depth += 1) {
-    if (typeof current === 'object') {
-      const value = current as {
-        name?: unknown;
-        shortMessage?: unknown;
-        details?: unknown;
-        message?: unknown;
-        errorName?: unknown;
-        cause?: unknown;
-        code?: unknown;
-      };
-      if (value.code === 4001) return 'The wallet signature request was rejected.';
-      for (const candidate of [
-        value.errorName,
-        value.shortMessage,
-        value.details,
-        value.message,
-      ]) {
-        if (
-          typeof candidate === 'string' &&
-          candidate.trim() &&
-          !messages.includes(candidate.trim())
-        ) {
-          messages.push(candidate.trim());
-        }
-      }
-      current = value.cause;
-    } else {
-      messages.push(String(current));
-      break;
-    }
-  }
-
-  const preferred = messages.find(
-    (message) =>
-      !message.startsWith('Contract Call:') &&
-      !message.startsWith('Request Arguments:') &&
-      message.length < 500,
-  );
-  return preferred ?? messages[0] ?? 'The Arc transaction could not be completed.';
 }

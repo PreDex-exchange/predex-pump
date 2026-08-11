@@ -2,11 +2,7 @@
 
 import { useCallback, useState } from 'react';
 
-import {
-  chainErrorMessage,
-  type TxProgress,
-  type TxReporter,
-} from './transactions';
+import type { TxProgress, TxReporter } from './transactions';
 
 const INITIAL_STATE: TxProgress = {
   phase: 'idle',
@@ -16,6 +12,7 @@ const INITIAL_STATE: TxProgress = {
 export interface TxFlowOptions {
   checkingMessage?: string;
   failureMessage?: string;
+  failurePhase?: 'rejected' | 'reverted';
 }
 
 export function useTxFlow() {
@@ -34,14 +31,12 @@ export function useTxFlow() {
       });
       try {
         return await operation(setState);
-      } catch (error) {
-        const message = chainErrorMessage(error);
+      } catch {
         setState((current) => ({
-          phase: 'reverted',
+          phase: options.failurePhase ?? 'reverted',
           message:
             options.failureMessage ?? 'The transaction did not complete.',
           hash: current.hash,
-          error: message,
         }));
         return null;
       }
@@ -53,6 +48,7 @@ export function useTxFlow() {
   const isBusy =
     state.phase !== 'idle' &&
     state.phase !== 'confirmed' &&
+    state.phase !== 'rejected' &&
     state.phase !== 'reverted';
 
   return { state, execute, reset, isBusy };

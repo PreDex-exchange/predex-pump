@@ -14,6 +14,7 @@ import { createSiweMessage } from 'viem/siwe';
 import { useAccount, useSignMessage } from 'wagmi';
 
 import { backendRestClient } from '@/lib/api/rest-client';
+import { publicWalletErrorMessage } from '@/lib/wallet-errors';
 
 interface AuthContextValue {
   session: SessionResponse | null;
@@ -78,7 +79,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await queryClient.invalidateQueries({ queryKey: ['account-profile'] });
     } catch (error) {
       setActionError(
-        error instanceof Error ? error : new Error('Wallet sign-in did not complete.'),
+        new Error(
+          publicWalletErrorMessage(
+            error,
+            'Wallet sign-in did not complete. Check the connection and try again.',
+          ),
+        ),
       );
     } finally {
       setIsSigningIn(false);
@@ -91,10 +97,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const session = await backendRestClient.signOut();
       queryClient.setQueryData(['auth-session'], session);
       queryClient.removeQueries({ queryKey: ['account-profile'] });
-    } catch (error) {
-      setActionError(
-        error instanceof Error ? error : new Error('Sign-out did not complete.'),
-      );
+    } catch {
+      setActionError(new Error('Sign-out did not complete. Try again.'));
     }
   }, [queryClient]);
 
@@ -103,7 +107,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session: sessionQuery.data ?? null,
       isLoading: sessionQuery.isLoading,
       isSigningIn,
-      error: actionError ?? sessionQuery.error,
+      error:
+        actionError ??
+        (sessionQuery.error
+          ? new Error('The saved account session could not be restored. Try again.')
+          : null),
       signIn,
       signOut,
       refetch: () => {

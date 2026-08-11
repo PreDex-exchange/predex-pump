@@ -15,7 +15,7 @@ import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
 import { collateralErc20Abi } from '@/lib/chain/contracts';
 import { depositToCircleGatewayOnArc } from '@/lib/chain/transactions';
 import { useTxFlow } from '@/lib/chain/useTxFlow';
-import { formatUsdc, parseUsdcInput, shortAddress } from '@/lib/format';
+import { formatRaw, parseUsdcInput, shortAddress } from '@/lib/format';
 
 import styles from './GatewayDepositPanel.module.css';
 
@@ -28,6 +28,13 @@ interface DepositResult {
   amountRaw: bigint;
   approvalTxHash: Hash;
   depositTxHash: Hash;
+}
+
+function formatGatewayUsdc(raw: string | bigint) {
+  return formatRaw(raw.toString(), {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  });
 }
 
 export function GatewayDepositPanel({
@@ -135,7 +142,7 @@ export function GatewayDepositPanel({
           <NumberDisplay size="body">
             {gatewayLoading || !gatewayBalance
               ? '—'
-              : `${formatUsdc(gatewayBalance.totalRaw)} USDC`}
+              : `${formatGatewayUsdc(gatewayBalance.totalRaw)} USDC`}
           </NumberDisplay>
         </div>
         <div>
@@ -143,7 +150,7 @@ export function GatewayDepositPanel({
           <NumberDisplay size="body" tone="yes">
             {gatewayLoading || !gatewayBalance
               ? '—'
-              : `${formatUsdc(gatewayBalance.availableRaw)} USDC`}
+              : `${formatGatewayUsdc(gatewayBalance.availableRaw)} USDC`}
           </NumberDisplay>
         </div>
         <button
@@ -197,7 +204,7 @@ export function GatewayDepositPanel({
               ? 'loading…'
               : walletBalance.data === undefined
                 ? '—'
-                : `${formatUsdc(walletBalance.data.toString())} USDC`}
+                : `${formatGatewayUsdc(walletBalance.data)} USDC`}
           </span>
         </small>
         {amountError && isConnected && !wrongNetwork && (
@@ -270,7 +277,7 @@ export function GatewayDepositPanel({
       {result && (
         <div className={styles.success} role="status">
           <strong>
-            {formatUsdc(result.amountRaw.toString())} USDC deposited on Arc
+            {formatGatewayUsdc(result.amountRaw)} USDC deposited on Arc
           </strong>
           <a href={`${explorerUrl}/tx/${result.approvalTxHash}`} rel="noreferrer" target="_blank">
             Approval {shortAddress(result.approvalTxHash, 8, 6)}
@@ -292,7 +299,7 @@ export function GatewayDepositPanel({
         }}
         onConfirm={deposit}
         open={confirmOpen}
-        title={`Deposit ${amountRaw === null ? '—' : formatUsdc(amountRaw.toString())} USDC`}
+        title={`Deposit ${amountRaw === null ? '—' : formatGatewayUsdc(amountRaw)} USDC`}
       >
         <p>
           You will see two wallet prompts. First approve the exact amount, then deposit it
@@ -310,7 +317,7 @@ export function GatewayDepositPanel({
           <div>
             <dt>Amount</dt>
             <dd className="numeric">
-              {amountRaw === null ? '—' : formatUsdc(amountRaw.toString())} USDC
+              {amountRaw === null ? '—' : formatGatewayUsdc(amountRaw)} USDC
             </dd>
           </div>
         </dl>

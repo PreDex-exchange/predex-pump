@@ -9,6 +9,9 @@ import {
 import { parseSiweMessage } from 'viem/siwe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { WalletBar } from '@/components/layout/WalletBar';
+import { WALLET_REQUEST_DECLINED_MESSAGE } from '@/lib/wallet-errors';
+
 import { AuthProvider, useAuth } from './AuthProvider';
 
 const SIGNATURE = `0x${'34'.repeat(65)}` as const;
@@ -19,6 +22,9 @@ const mocks = vi.hoisted(() => ({
   verifySiwe: vi.fn(),
   signOut: vi.fn(),
   signMessageAsync: vi.fn(),
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  switchChain: vi.fn(),
 }));
 const ADDRESS = mocks.address;
 const authenticated = {
@@ -37,12 +43,29 @@ vi.mock('@/lib/api/rest-client', () => ({
 }));
 
 vi.mock('wagmi', () => ({
-  useAccount: () => ({ address: mocks.address, isConnected: true }),
+  useAccount: () => ({
+    address: mocks.address,
+    chainId: 5_042_002,
+    isConnected: true,
+  }),
+  useConnect: () => ({
+    connect: mocks.connect,
+    connectors: [{ id: 'injected' }],
+    error: null,
+    isPending: false,
+  }),
+  useDisconnect: () => ({ disconnect: mocks.disconnect }),
+  useReadContract: () => ({ data: 5_000_000n, isLoading: false }),
   useSignMessage: () => ({ signMessageAsync: mocks.signMessageAsync }),
+  useSwitchChain: () => ({
+    switchChain: mocks.switchChain,
+    error: null,
+    isPending: false,
+  }),
 }));
 
 function Consumer() {
-  const { session, isLoading, signIn } = useAuth();
+  const { session, isLoading, error, signIn } = useAuth();
   return (
     <div>
       <span>
@@ -55,15 +78,17 @@ function Consumer() {
       <button onClick={() => void signIn()} type="button">
         sign
       </button>
+      {error && <span role="alert">{error.message}</span>}
     </div>
   );
 }
 
-function renderAuth(queryClient = new QueryClient()) {
+function renderAuth(queryClient = new QueryClient(), showHeader = false) {
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <Consumer />
+        {showHeader && <WalletBar />}
       </AuthProvider>
     </QueryClientProvider>,
   );
@@ -75,6 +100,9 @@ beforeEach(() => {
   mocks.verifySiwe.mockReset();
   mocks.signOut.mockReset();
   mocks.signMessageAsync.mockReset();
+  mocks.connect.mockReset();
+  mocks.disconnect.mockReset();
+  mocks.switchChain.mockReset();
 });
 
 afterEach(cleanup);
@@ -124,5 +152,36 @@ describe('AuthProvider', () => {
       version: '1',
     });
     await screen.findByText(`signed:${ADDRESS}`);
+  });
+
+  it('renders a rejected wallet signature as safe copy on the page and header', async () => {
+    const rawProviderMessage =
+      'User rejected the request. Details: User rejected the request. Version: viem@2.55.8';
+    mocks.getSession.mockResolvedValue({ authenticated: false });
+    mocks.getSiweNonce.mockResolvedValue({
+      nonce: 'a1b2c3d4e5f6',
+      domain: 'localhost:3000',
+      uri: 'http://localhost:3000',
+      chainId: 5_042_002,
+      statement: 'Sign in to predex.fun.',
+      issuedAt: '2026-08-01T00:00:00.000Z',
+      expirationTime: '2026-08-01T00:05:00.000Z',
+    });
+    mocks.signMessageAsync.mockRejectedValue(
+      Object.assign(new Error(rawProviderMessage), {
+        cause: { code: 4001, message: rawProviderMessage },
+      }),
+    );
+    const rendered = renderAuth(new QueryClient(), true);
+    await screen.findByText('anonymous');
+
+    fireEvent.click(screen.getByRole('button', { name: 'sign' }));
+
+    await waitFor(() =>
+      expect(screen.getAllByText(WALLET_REQUEST_DECLINED_MESSAGE)).toHaveLength(2),
+    );
+    expect(rendered.container.innerHTML).not.toMatch(
+      /viem|Details:|Version:|2\.55\.8/u,
+    );
   });
 });

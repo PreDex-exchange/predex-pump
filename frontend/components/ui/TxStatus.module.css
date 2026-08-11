@@ -39,17 +39,6 @@
   font-size: 0.68rem;
 }
 
-.status pre {
-  overflow-wrap: anywhere;
-  margin: var(--space-2) 0 0;
-  color: var(--error);
-  font-family: var(--font-nunito), sans-serif;
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.4;
-  white-space: pre-wrap;
-}
-
 .approval-pending .heading > span,
 .pending .heading > span,
 .awaiting-approval .heading > span,
@@ -67,11 +56,13 @@
   background: var(--yes);
 }
 
+.rejected,
 .reverted {
   border-color: var(--error);
   background: var(--error-soft);
 }
 
+.rejected .heading > span,
 .reverted .heading > span {
   background: var(--error);
 }

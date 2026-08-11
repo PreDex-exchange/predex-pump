@@ -1,8 +1,28 @@
+.bar {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: flex-end;
+  flex-direction: column;
+}
+
 .group {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: var(--space-3);
   margin-left: auto;
+}
+
+.feedback {
+  width: min(100%, 360px);
+  margin: var(--space-2) 0 0;
+  color: var(--error);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .network {
@@ -142,9 +162,19 @@
   }
 }
 
-@media (max-width: 620px) {
+@media (max-width: 700px) {
+  .bar {
+    width: 100%;
+    align-items: stretch;
+  }
+
   .group {
     width: 100%;
+  }
+
+  .feedback {
+    width: 100%;
+    text-align: center;
   }
 
   .wallet {

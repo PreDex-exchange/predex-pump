@@ -128,14 +128,14 @@ function Ladder({
             }`}
             key={`${side}:${level.priceRaw}`}
           >
-            <span className="numeric">{formatPrice(level.priceRaw, 3)}</span>
+            <span className="numeric">{formatPrice(level.priceRaw, 6)}</span>
             <span className="numeric">
               {formatRaw(level.sizeRaw, {
                 minimumFractionDigits: 0,
                 maximumFractionDigits: 3,
               })}
             </span>
-            <span className="numeric">{formatUsdc(totalRaw, 3)}</span>
+            <span className="numeric">{formatUsdc(totalRaw, 6)}</span>
             <span className="numeric">{level.orderCount}</span>
           </div>
         );
@@ -453,7 +453,7 @@ function MiniClobOrderBookPanel({
                         BigInt(book.asks[0].priceRaw) -
                         BigInt(book.bids[0].priceRaw)
                       ).toString(),
-                      3,
+                      6,
                     )
                   : '—'}
               </strong>
@@ -642,7 +642,7 @@ function MiniClobOrderBookPanel({
                     </span>
                     <span className={styles.sideLabel}>{order.side}</span>
                     <span className="numeric">
-                      {formatPrice(order.priceRaw, 3)}
+                      {formatPrice(order.priceRaw, 6)}
                     </span>
                     <span className="numeric">
                       {formatRaw(order.remainingRaw, {
