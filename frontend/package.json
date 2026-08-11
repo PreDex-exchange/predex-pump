@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/build-production.mjs",
     "start": "next start",
     "lint": "eslint .",
     "smoke:ctf-exchange-order": "node scripts/ctf-exchange-order-smoke.mjs",

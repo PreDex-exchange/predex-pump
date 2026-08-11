@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { DM_Mono, Fredoka, Nunito } from 'next/font/google';
 import { headers } from 'next/headers';
+import Script from 'next/script';
 import type { ReactNode } from 'react';
 import { cookieToInitialState } from 'wagmi';
 
@@ -47,9 +48,18 @@ export default async function RootLayout({
     getWagmiConfig(),
     (await headers()).get('cookie'),
   );
+  // next.config.ts sets this only for `next dev` with the explicit QA flag.
+  // The injected-provider implementation is served by the local QA signer and
+  // is never imported into (or copied into) the Next production bundle.
+  const qaWalletScriptUrl = process.env.PREDEX_QA_WALLET_SCRIPT_URL;
 
   return (
     <html lang="en">
+      <head>
+        {qaWalletScriptUrl ? (
+          <Script src={qaWalletScriptUrl} strategy="beforeInteractive" />
+        ) : null}
+      </head>
       <body className={`${fredoka.variable} ${nunito.variable} ${dmMono.variable}`}>
         <AppProviders initialState={initialState}>
           <AppHeader />
