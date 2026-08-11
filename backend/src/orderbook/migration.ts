@@ -214,6 +214,7 @@ export class BookMigrationOperator {
         noSeedOrderId: { not: null },
         yesTokenId: { not: null },
         noTokenId: { not: null },
+        resolution: { is: null },
         orders: { some: { isSeed: true, open: true } },
       },
       orderBy: [{ graduatedAt: 'asc' }, { id: 'asc' }],

@@ -396,6 +396,46 @@ describe('graduated book migration', () => {
     expect(harness.submitter.cancelSubmissions).toBe(1);
   });
 
+  it('never detects a resolved graduated market with an open seed', async () => {
+    const harness = await createHarness();
+    await testPrisma.resolution.create({
+      data: {
+        marketId: '1',
+        conditionId: MARKET_ONE_CONDITION,
+        outcome: 'YES',
+        payoutYes: 1,
+        payoutNo: 0,
+        denominator: 1,
+        resolvedAt: BOOK_NOW - 1,
+        txHash: `0x${'c'.repeat(64)}`,
+        logIndex: 1,
+      },
+    });
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'IDLE',
+    });
+    await expect(
+      testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }),
+    ).resolves.toBeNull();
+    expect(harness.reader.migrationReads).toBe(0);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
+  it('still detects an unresolved graduated market with an open seed', async () => {
+    const harness = await createHarness();
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    await expect(
+      testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({ status: 'STAGED' });
+    expect(harness.reader.migrationReads).toBe(1);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
   it('never detects or migrates an already-migrated market again', async () => {
     const harness = await createHarness();
     await testPrisma.bookMigration.create({
@@ -460,6 +500,36 @@ describe('graduated book migration', () => {
     expect(harness.submitter.cancelSubmissions).toBe(0);
     harness.clock.value += 5;
     await runToStatus(harness, 'MIGRATED');
+  });
+
+  it('fails terminally without cancelling when the market resolves before cancellation', async () => {
+    const harness = await createHarness();
+    await runToStatus(harness, 'CANCELLING');
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+
+    harness.state.payoutDenominator = 1n;
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'FAILED',
+      marketId: '1',
+      retryAfterMs: 0,
+      failureCode: 'MARKET_RESOLVED',
+    });
+    await expect(
+      testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'FAILED',
+      lastFailureCode: 'MARKET_RESOLVED',
+      migratedAt: null,
+    });
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'IDLE',
+    });
+    expect(
+      await testPrisma.bookMigration.count({ where: { marketId: '1' } }),
+    ).toBe(1);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
   });
 
   it('resumes from the confirmed-cancel checkpoint and publishes after restart', async () => {
