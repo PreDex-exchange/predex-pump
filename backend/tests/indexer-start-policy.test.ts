@@ -13,6 +13,7 @@ import {
 import { loadRuntimeConfig, type RuntimeConfig } from '../src/config.js';
 import { runIndexer } from '../src/indexer/runner.js';
 import { resetDatabase, testPrisma } from './database.js';
+import { seedContractData } from './fixtures.js';
 
 interface FakeGetLogsParameters {
   address?: unknown;
@@ -132,6 +133,9 @@ describe('indexer startup policy', () => {
         reason: 'threshold_exceeded',
         maxBackfillBlocks: 5,
         recordedAt,
+        balanceReconciliationStatus: 'COMPLETE',
+        balanceReconciliationBlock: 109,
+        balanceReconciledAt: recordedAt,
       }),
     ]);
     expect(error).toHaveBeenCalledWith(
@@ -139,6 +143,42 @@ describe('indexer startup policy', () => {
         'cursorBefore=100 cursorAfter=109 head=110 startPolicy=auto ' +
         'reason=threshold_exceeded maxBackfillBlocks=5',
     );
+  });
+
+  it('automatically reconciles scoped balances before indexing past a recorded gap', async () => {
+    await seedContractData();
+    await testPrisma.indexerState.update({
+      where: { id: 1 },
+      data: { deployBlock: 100, lastBlock: 100, headBlock: 100 },
+    });
+    const ranges: Array<[bigint | undefined, bigint | undefined]> = [];
+    const { client } = fakeClient(async () => 110n, ranges);
+    const multicall = vi.fn(
+      async (parameters: { contracts: readonly unknown[]; blockNumber: bigint }) =>
+        parameters.contracts.map(() => ({
+          status: 'success' as const,
+          result: 1_000_000n,
+        })),
+    );
+    Object.assign(client, { multicall });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await runIndexer(testPrisma, testConfig(), { once: true, client });
+
+    expect(multicall).toHaveBeenCalledTimes(1);
+    expect(multicall).toHaveBeenCalledWith(
+      expect.objectContaining({ blockNumber: 109n, allowFailure: true }),
+    );
+    expect(ranges).toEqual([[110n, 110n]]);
+    expect(await testPrisma.indexerGap.findMany()).toEqual([
+      expect.objectContaining({
+        balanceReconciliationStatus: 'COMPLETE',
+        balanceReconciliationBlock: 109,
+        balanceReconciliationError: null,
+      }),
+    ]);
   });
 
   it.each([

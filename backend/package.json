@@ -23,6 +23,7 @@
     "indexer": "tsx src/indexer.ts",
     "indexer:once": "tsx src/indexer.ts --once",
     "operator": "tsx src/operator.ts",
+    "operator:reconcile-balances": "tsx src/reconcile-balances.ts",
     "operator:set-tick": "tsx src/set-market-tick.ts",
     "summary": "tsx src/summary.ts",
     "dedup:backfill": "tsx src/dedup/backfill.ts",

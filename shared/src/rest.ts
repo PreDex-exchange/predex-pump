@@ -257,6 +257,7 @@ export type ActivityResponse = Page<ActivityEvent>;
 
 // GET /health → indexer liveness so the frontend can show chain-lag
 export type IndexerStatus = 'healthy' | 'degraded' | 'stalled';
+export type BalanceReconciliationStatus = 'pending' | 'failed' | 'complete';
 
 export interface IndexerHistoryGap {
   skippedFromBlock: number;
@@ -269,6 +270,11 @@ export interface IndexerHistoryGap {
   reason: 'threshold_exceeded' | 'operator_override';
   maxBackfillBlocks: number;
   recordedAt: string;
+  balanceReconciliationStatus: BalanceReconciliationStatus;
+  balanceReconciliationBlock: number | null;
+  balanceReconciliationAttemptedAt: string | null;
+  balanceReconciledAt: string | null;
+  balanceReconciliationError: string | null;
 }
 
 export interface HealthResponse {
@@ -280,6 +286,9 @@ export interface HealthResponse {
   indexerStatus: IndexerStatus;
   lastSuccessfulPollAt: string | null;
   secondsSinceLastSuccessfulPoll: number | null;
+  /** False while any recorded gap still has unverified derived balances. */
+  balancesReconciled: boolean;
+  unreconciledBalanceGapCount: number;
   /** Append-only audit history of blocks intentionally omitted at startup. */
   historyGaps: IndexerHistoryGap[];
 }

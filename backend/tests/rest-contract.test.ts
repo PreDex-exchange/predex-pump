@@ -677,6 +677,8 @@ describe('REST shared contract', () => {
       indexerStatus: 'healthy',
       lastSuccessfulPollAt: expect.any(String),
       secondsSinceLastSuccessfulPoll: expect.any(Number),
+      balancesReconciled: true,
+      unreconciledBalanceGapCount: 0,
       historyGaps: [],
     });
   });
@@ -702,8 +704,10 @@ describe('REST shared contract', () => {
     const response = await app.inject({ method: 'GET', url: '/health' });
     expect(response.statusCode).toBe(200);
     expect(response.json<HealthResponse>()).toMatchObject({
-      ok: true,
+      ok: false,
       indexerStatus: 'degraded',
+      balancesReconciled: false,
+      unreconciledBalanceGapCount: 1,
       historyGaps: [
         {
           skippedFromBlock: 11,
@@ -716,6 +720,11 @@ describe('REST shared contract', () => {
           reason: 'threshold_exceeded',
           maxBackfillBlocks: 50,
           recordedAt: recordedAt.toISOString(),
+          balanceReconciliationStatus: 'pending',
+          balanceReconciliationBlock: null,
+          balanceReconciliationAttemptedAt: null,
+          balanceReconciledAt: null,
+          balanceReconciliationError: null,
         },
       ],
     });

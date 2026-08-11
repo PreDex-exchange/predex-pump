@@ -16,6 +16,12 @@ import { ARC_CHAIN } from '../chain.js';
 import { parseMarketPhase } from '../dedup/indexer.js';
 import type { MarketDedupIndexer } from '../dedup/types.js';
 import {
+  formatBalanceReconciliationChange,
+  outstandingBalanceGapIds,
+  reconcileIndexedBalances,
+  ViemBalanceChainReader,
+} from '../reconciliation/balances.js';
+import {
   COLLATERAL_APPROVAL_EVENT,
   COLLATERAL_TRANSFER_EVENT,
   CONTRACT_BY_ADDRESS,
@@ -30,6 +36,7 @@ import {
   preloadMarketIdentities,
 } from './handlers.js';
 import { inspectRpcError, retryDelayMs } from './retry.js';
+import { lockIndexerCursor } from './cursor-lock.js';
 import {
   createViemSubscriptionTransport,
   runSubscriptionSupervisor,
@@ -236,6 +243,7 @@ export async function applyDecodedEvents(
 ): Promise<number> {
   const newlyAppliedEvents = await prisma.$transaction(
     async (tx) => {
+      const state = await lockIndexerCursor(tx);
       await preloadMarketIdentities(tx, events);
       const applied: DecodedEvent[] = [];
       for (const event of events) {
@@ -244,7 +252,6 @@ export async function applyDecodedEvents(
         }
       }
 
-      const state = await tx.indexerState.findUniqueOrThrow({ where: { id: 1 } });
       await tx.indexerState.update({
         where: { id: 1 },
         data: {
@@ -726,6 +733,36 @@ export async function runIndexer(
       throw new Error(
         `--replay-from must be between DEPLOY_BLOCK=${config.deployBlock} and head=${head}`,
       );
+    }
+
+    const outstandingGapIds = await outstandingBalanceGapIds(prisma);
+    if (outstandingGapIds.length > 0) {
+      console.warn(
+        `[indexer] balance reconciliation required gaps=${outstandingGapIds.join(',')}`,
+      );
+      const reconciliation = await reconcileIndexedBalances(
+        prisma,
+        new ViemBalanceChainReader(client),
+        { gapIds: outstandingGapIds, now },
+      );
+      for (const change of reconciliation.changes) {
+        console.info(formatBalanceReconciliationChange(change));
+      }
+      console.info(
+        `[indexer] balance reconciliation block=${reconciliation.snapshotBlock} ` +
+          `accountMarkets=${reconciliation.scopedAccountMarkets} ` +
+          `collateralAccounts=${reconciliation.scopedCollateralAccounts} ` +
+          `rpcRequests=${reconciliation.rpcRequestCount} ` +
+          `changed=${reconciliation.changes.length} ` +
+          `failures=${reconciliation.failures.length}`,
+      );
+      if (reconciliation.failures.length > 0) {
+        throw new Error(
+          `Balance reconciliation failed after an indexer gap: ${reconciliation.failures
+            .map((failure) => failure.error)
+            .join('; ')}`,
+        );
+      }
     }
 
     let nextBlock =

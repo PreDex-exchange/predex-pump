@@ -547,12 +547,23 @@ async function adjustPosition(
   marketId: string,
   outcome: Outcome,
   delta: bigint,
-  ts: number,
+  event: Pick<DecodedEvent, 'blockNumber' | 'ts'>,
 ): Promise<void> {
   if (account === ZERO_ADDRESS) return;
-  await ensureAccount(tx, account, ts);
+  await ensureAccount(tx, account, event.ts);
   const selector = { account_marketId_outcome: { account, marketId, outcome } };
   const current = await tx.position.findUnique({ where: selector });
+  // An absolute reconciliation snapshot already includes every transfer in
+  // this block range. This matters for an operator replay of a recorded gap:
+  // applying those formerly-missing deltas after the snapshot would double
+  // count them and corrupt the repaired balance again.
+  if (
+    current?.balanceReconciledBlock !== null &&
+    current?.balanceReconciledBlock !== undefined &&
+    event.blockNumber <= current.balanceReconciledBlock
+  ) {
+    return;
+  }
   const nextQty = BigInt(current?.qtyRaw ?? '0') + delta;
   if (nextQty < 0n) {
     throw new Error(
@@ -566,11 +577,11 @@ async function adjustPosition(
       marketId,
       outcome,
       qtyRaw: nextQty.toString(),
-      updatedAt: ts,
+      updatedAt: event.ts,
     },
     update: {
       qtyRaw: nextQty.toString(),
-      updatedAt: ts,
+      updatedAt: event.ts,
     },
   });
   await markPosition(tx, account, marketId, outcome);
@@ -1293,12 +1304,12 @@ async function handleTransfer(
   to: string,
   tokenId: bigint,
   value: bigint,
-  ts: number,
+  event: Pick<DecodedEvent, 'blockNumber' | 'ts'>,
 ): Promise<void> {
   const binding = await marketForToken(tx, tokenId.toString());
   if (binding === null) return;
-  await adjustPosition(tx, from, binding.market.id, binding.outcome, -value, ts);
-  await adjustPosition(tx, to, binding.market.id, binding.outcome, value, ts);
+  await adjustPosition(tx, from, binding.market.id, binding.outcome, -value, event);
+  await adjustPosition(tx, to, binding.market.id, binding.outcome, value, event);
 }
 
 async function handleTransferSingle(tx: Tx, event: DecodedEvent): Promise<void> {
@@ -1308,7 +1319,7 @@ async function handleTransferSingle(tx: Tx, event: DecodedEvent): Promise<void> 
     lowerAddress(stringArg(event.args, 'to')),
     bigintArg(event.args, 'id'),
     bigintArg(event.args, 'value'),
-    event.ts,
+    event,
   );
 }
 
@@ -1326,7 +1337,7 @@ async function handleTransferBatch(tx: Tx, event: DecodedEvent): Promise<void> {
     if (tokenId === undefined || value === undefined) {
       throw new Error(`Missing TransferBatch entry ${index}`);
     }
-    await handleTransfer(tx, from, to, tokenId, value, event.ts);
+    await handleTransfer(tx, from, to, tokenId, value, event);
   }
 }
 

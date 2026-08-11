@@ -23,6 +23,8 @@ const healthy: HealthResponse = {
   indexerStatus: 'healthy',
   lastSuccessfulPollAt: '2026-07-31T00:00:00.000Z',
   secondsSinceLastSuccessfulPoll: 1,
+  balancesReconciled: true,
+  unreconciledBalanceGapCount: 0,
   historyGaps: [],
 };
 
@@ -47,6 +49,8 @@ describe('IndexerLagIndicator liveness', () => {
     state.health = {
       ...healthy,
       indexerStatus: 'degraded',
+      balancesReconciled: false,
+      unreconciledBalanceGapCount: 1,
       historyGaps: [
         {
           skippedFromBlock: 101,
@@ -59,12 +63,17 @@ describe('IndexerLagIndicator liveness', () => {
           reason: 'threshold_exceeded',
           maxBackfillBlocks: 5,
           recordedAt: '2026-08-11T12:00:00.000Z',
+          balanceReconciliationStatus: 'pending',
+          balanceReconciliationBlock: null,
+          balanceReconciliationAttemptedAt: null,
+          balanceReconciledAt: null,
+          balanceReconciliationError: null,
         },
       ],
     };
 
     const status = render(<IndexerLagIndicator />).getByRole('status');
-    expect(status.textContent).toContain('Indexer history gap (9 blocks)');
+    expect(status.textContent).toContain('Balances unreconciled after indexer gap');
     expect(status.getAttribute('title')).toContain(
       'History skipped blocks 101-109',
     );

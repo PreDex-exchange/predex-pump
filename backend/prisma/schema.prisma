@@ -362,6 +362,10 @@ model Position {
   marketId           String
   outcome            String // YES | NO
   qtyRaw             String  @default("0")
+  // The full chain block represented by an absolute reconciliation snapshot.
+  // Transfers from an explicit replay at or before this block must not be
+  // applied to qtyRaw a second time.
+  balanceReconciledBlock Int?
   costBasisRaw       String  @default("0")
   costBasisEstimated Boolean @default(true)
   realizedPnlRaw     String  @default("0")
@@ -579,7 +583,16 @@ model IndexerGap {
   maxBackfillBlocks Int
   recordedAt        DateTime @default(now())
 
+  // A gap is unsafe for balance-derived fillability until a cursor-aligned
+  // CTF/USDC snapshot has repaired the bounded set of relevant accounts.
+  balanceReconciliationStatus      String    @default("PENDING")
+  balanceReconciliationBlock       Int?
+  balanceReconciliationAttemptedAt DateTime?
+  balanceReconciledAt              DateTime?
+  balanceReconciliationError       String?
+
   @@index([recordedAt(sort: Desc), id(sort: Desc)])
+  @@index([balanceReconciliationStatus, recordedAt(sort: Asc), id(sort: Asc)])
 }
 
 // Kept separate from IndexerState so high-frequency subscription liveness

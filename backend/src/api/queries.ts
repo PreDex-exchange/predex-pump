@@ -779,7 +779,18 @@ export async function getHealth(
     reason: gap.reason as IndexerHistoryGap['reason'],
     maxBackfillBlocks: gap.maxBackfillBlocks,
     recordedAt: gap.recordedAt.toISOString(),
+    balanceReconciliationStatus:
+      gap.balanceReconciliationStatus.toLowerCase() as IndexerHistoryGap['balanceReconciliationStatus'],
+    balanceReconciliationBlock: gap.balanceReconciliationBlock,
+    balanceReconciliationAttemptedAt:
+      gap.balanceReconciliationAttemptedAt?.toISOString() ?? null,
+    balanceReconciledAt: gap.balanceReconciledAt?.toISOString() ?? null,
+    balanceReconciliationError: gap.balanceReconciliationError,
   }));
+  const unreconciledBalanceGapCount = historyGaps.filter(
+    (gap) => gap.balanceReconciliationStatus !== 'complete',
+  ).length;
+  const balancesReconciled = unreconciledBalanceGapCount === 0;
   if (state === null) {
     return {
       ok: false,
@@ -790,6 +801,8 @@ export async function getHealth(
       indexerStatus: 'stalled',
       lastSuccessfulPollAt: null,
       secondsSinceLastSuccessfulPoll: null,
+      balancesReconciled,
+      unreconciledBalanceGapCount,
       historyGaps,
     };
   }
@@ -820,7 +833,7 @@ export async function getHealth(
     subscription?.headBlock ?? state.headBlock,
   );
   return {
-    ok: !stalled && state.lastBlock <= headBlock,
+    ok: !stalled && state.lastBlock <= headBlock && balancesReconciled,
     chainId: state.chainId,
     indexedBlock: state.lastBlock,
     headBlock,
@@ -828,6 +841,8 @@ export async function getHealth(
     indexerStatus,
     lastSuccessfulPollAt: lastSuccessfulLivenessAt?.toISOString() ?? null,
     secondsSinceLastSuccessfulPoll,
+    balancesReconciled,
+    unreconciledBalanceGapCount,
     historyGaps,
   };
 }
