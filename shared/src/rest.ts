@@ -259,6 +259,22 @@ export type ActivityResponse = Page<ActivityEvent>;
 // GET /health → indexer liveness so the frontend can show chain-lag
 export type IndexerStatus = 'healthy' | 'degraded' | 'stalled';
 export type BalanceReconciliationStatus = 'pending' | 'failed' | 'complete';
+export type ChainStateBootstrapStatus = 'pending' | 'failed' | 'complete';
+export type ChainStateIssue =
+  | 'registry-parameters-invalid'
+  | 'committee-snapshot-invalid'
+  | 'market-types-snapshot-invalid';
+
+export interface ChainStateHealth {
+  ready: boolean;
+  status: ChainStateBootstrapStatus;
+  attemptedBlock: number | null;
+  snapshotBlock: number | null;
+  attemptedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+  issues: ChainStateIssue[];
+}
 
 export interface IndexerHistoryGap {
   skippedFromBlock: number;
@@ -290,6 +306,8 @@ export interface HealthResponse {
   /** False while any recorded gap still has unverified derived balances. */
   balancesReconciled: boolean;
   unreconciledBalanceGapCount: number;
+  /** Current global registry/committee/type snapshot required by Create and settlement. */
+  chainState: ChainStateHealth;
   /** Append-only audit history of blocks intentionally omitted at startup. */
   historyGaps: IndexerHistoryGap[];
 }

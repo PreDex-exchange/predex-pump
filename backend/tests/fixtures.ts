@@ -45,6 +45,11 @@ export async function seedContractData(): Promise<void> {
       lastBlock: 100,
       headBlock: 103,
       lastSuccessfulPollAt: new Date(),
+      chainStateBootstrapStatus: 'COMPLETE',
+      chainStateBootstrapAttemptedBlock: 100,
+      chainStateBootstrapBlock: 100,
+      chainStateBootstrapAttemptedAt: new Date(),
+      chainStateBootstrappedAt: new Date(),
     },
   });
   await testPrisma.indexerSubscriptionState.create({
@@ -70,6 +75,16 @@ export async function seedContractData(): Promise<void> {
         updatedBlock: 91,
       },
     ],
+  });
+  await testPrisma.registeredMarketType.create({
+    data: {
+      version: 2,
+      lmsrAddress: ADDRESSES.lmsr.toLowerCase(),
+      configHash: `0x${'f'.repeat(64)}`,
+      registeredAt: 1_700_000_000,
+      blockNumber: 90,
+      logIndex: 0,
+    },
   });
   await testPrisma.account.createMany({
     data: [

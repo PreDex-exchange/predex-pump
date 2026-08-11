@@ -12,6 +12,7 @@ export function IndexerLagIndicator() {
       data.ok &&
       data.lagBlocks <= 0 &&
       data.balancesReconciled &&
+      data.chainState.ready &&
       data.historyGaps.length === 0)
   ) {
     return null;
@@ -25,6 +26,11 @@ export function IndexerLagIndicator() {
   let label = 'Indexer catching up';
   if (data.indexerStatus === 'stalled') {
     label = 'Indexer stalled';
+  } else if (!data.chainState.ready) {
+    label =
+      data.chainState.status === 'failed' || data.chainState.issues.length > 0
+        ? 'Chain configuration unavailable'
+        : 'Chain configuration bootstrap pending';
   } else if (unreconciledGap !== undefined) {
     label = 'Balances unreconciled after indexer gap';
   } else if (latestGap !== undefined) {
@@ -49,13 +55,23 @@ export function IndexerLagIndicator() {
         (unreconciledGap.balanceReconciliationError === null
           ? ''
           : `: ${unreconciledGap.balanceReconciliationError}`);
+  const chainState = data.chainState.ready
+    ? ''
+    : `. Chain configuration bootstrap ${data.chainState.status}` +
+      (data.chainState.attemptedBlock === null
+        ? ''
+        : ` at block ${data.chainState.attemptedBlock.toLocaleString('en-US')}`) +
+      (data.chainState.issues.length === 0
+        ? ''
+        : `; invalid snapshots: ${data.chainState.issues.join(', ')}`) +
+      (data.chainState.error === null ? '' : `; error: ${data.chainState.error}`);
 
   return (
     <span
       aria-live="polite"
       className={styles.indicator}
       role="status"
-      title={`${lastPoll}. Indexed block ${data.indexedBlock.toLocaleString('en-US')} of ${data.headBlock.toLocaleString('en-US')}${historyGap}${balanceReconciliation}`}
+      title={`${lastPoll}. Indexed block ${data.indexedBlock.toLocaleString('en-US')} of ${data.headBlock.toLocaleString('en-US')}${historyGap}${balanceReconciliation}${chainState}`}
     >
       <span aria-hidden="true" className={styles.dot} />
       {label}

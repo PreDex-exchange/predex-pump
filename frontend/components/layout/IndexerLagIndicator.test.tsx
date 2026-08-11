@@ -25,6 +25,16 @@ const healthy: HealthResponse = {
   secondsSinceLastSuccessfulPoll: 1,
   balancesReconciled: true,
   unreconciledBalanceGapCount: 0,
+  chainState: {
+    ready: true,
+    status: 'complete',
+    attemptedBlock: 100,
+    snapshotBlock: 100,
+    attemptedAt: '2026-07-31T00:00:00.000Z',
+    completedAt: '2026-07-31T00:00:00.000Z',
+    error: null,
+    issues: [],
+  },
   historyGaps: [],
 };
 
@@ -43,6 +53,28 @@ describe('IndexerLagIndicator liveness', () => {
     state.health = healthy;
     const { container } = render(<IndexerLagIndicator />);
     expect(container.innerHTML).toBe('');
+  });
+
+  it('surfaces a failed required chain-state bootstrap', () => {
+    state.health = {
+      ...healthy,
+      ok: false,
+      indexerStatus: 'degraded',
+      chainState: {
+        ready: false,
+        status: 'failed',
+        attemptedBlock: 110,
+        snapshotBlock: null,
+        attemptedAt: '2026-08-12T00:00:00.000Z',
+        completedAt: null,
+        error: 'oracle currentSigners(1) failed in Multicall3',
+        issues: ['committee-snapshot-invalid'],
+      },
+    };
+
+    const status = render(<IndexerLagIndicator />).getByRole('status');
+    expect(status.textContent).toContain('Chain configuration unavailable');
+    expect(status.getAttribute('title')).toContain('committee-snapshot-invalid');
   });
 
   it('prominently surfaces an audited history gap even when caught up', () => {
