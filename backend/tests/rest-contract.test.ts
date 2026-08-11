@@ -47,6 +47,7 @@ describe('REST shared contract', () => {
             candidates: [
               {
                 marketId: '1',
+                question,
                 score: 0.98,
                 reason: `Same fact as "${question}"`,
               },
@@ -150,6 +151,7 @@ describe('REST shared contract', () => {
       candidates: [
         {
           marketId: '1',
+          question: 'BTC > $70,000 by Friday close?',
           score: 0.98,
           reason: 'Same fact as "BTC > $70,000 by Friday close?"',
         },

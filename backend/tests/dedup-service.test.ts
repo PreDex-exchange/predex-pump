@@ -85,6 +85,94 @@ describe('retrieve-then-judge dedup service', () => {
   });
 
   it.each([
+    {
+      failure: 'HTTP 429 quota exhaustion',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'insufficient_quota',
+              type: 'insufficient_quota',
+            },
+          }),
+          { status: 429 },
+        ),
+    },
+    {
+      failure: 'a transport exception',
+      fetchImpl: async () => {
+        throw new TypeError('network unavailable');
+      },
+    },
+  ])(
+    'falls back to deterministic dedup after $failure from a configured provider',
+    async ({ fetchImpl }) => {
+      const question = 'Will BTC close above $70k Friday?';
+      const fallback = new FallbackMarketIntelligenceProvider();
+      const store = new InMemoryMarketVectorStore();
+      await new MarketVectorIndexer(fallback, store).indexMarket({
+        marketId: '42',
+        question,
+        phase: 'Opened',
+      });
+      const configuredProvider = createMarketIntelligenceProvider({
+        apiKey: 'configured-but-unusable',
+        timeoutMs: 100,
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+
+      await expect(
+        new DedupService(configuredProvider, store, 5).check(question),
+      ).resolves.toMatchObject({
+        available: true,
+        isDuplicate: true,
+        canonicalMarketId: '42',
+        candidates: [
+          {
+            marketId: '42',
+            question,
+          },
+        ],
+      });
+    },
+  );
+
+  it('does not treat a successful empty provider search as a failure', async () => {
+    const provider: MarketIntelligenceProvider = {
+      mode: 'openai',
+      embed: async () => Array(1_536).fill(0),
+      extractFields: async () => ({
+        subject: 'new fact',
+        comparator: null,
+        strike: null,
+        deadline: null,
+        basis: null,
+      }),
+      judgeSameFact: async () => {
+        throw new Error('No candidates should be judged');
+      },
+    };
+    const searchedModes: EmbeddingProviderMode[] = [];
+    const emptyStore: MarketVectorStore = {
+      upsertMarket: async () => undefined,
+      searchMarkets: async (_vector, _limit, mode) => {
+        searchedModes.push(mode);
+        return [];
+      },
+    };
+
+    await expect(
+      new DedupService(provider, emptyStore, 5).check('Will a new fact happen?'),
+    ).resolves.toEqual({
+      available: true,
+      isDuplicate: false,
+      canonicalMarketId: null,
+      candidates: [],
+    });
+    expect(searchedModes).toEqual(['openai']);
+  });
+
+  it.each([
     [
       'Will BTC close above $70k Friday?',
       'BTC > $70,000 by Friday close?',

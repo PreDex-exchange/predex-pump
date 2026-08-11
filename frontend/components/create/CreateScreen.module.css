@@ -298,6 +298,38 @@
   box-shadow: 0 5px 18px rgb(83 57 26 / 7%);
 }
 
+.dedupPending {
+  border-color: var(--no);
+  background: var(--no-soft);
+}
+
+.dedupUnavailable {
+  border-color: var(--error);
+  background: var(--error-soft);
+}
+
+.dedupUnavailable strong,
+.dedupUnavailable p {
+  color: var(--error);
+}
+
+.dedupClear {
+  border-color: var(--yes);
+  background: var(--yes-soft);
+}
+
+.dedupRetry {
+  padding: 7px 11px;
+  margin-top: var(--space-3);
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: var(--text-small);
+  font-weight: 800;
+}
+
 .dedupHint strong {
   display: block;
   color: var(--ink);
@@ -325,33 +357,17 @@
   border-top: 1px solid rgb(83 57 26 / 14%);
 }
 
-.dedupCandidateMeta {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-size: 0.72rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.dedupCandidateMeta a {
+.dedupCandidateQuestion {
+  display: block;
   color: var(--brand-ink);
+  font-size: 0.76rem;
   font-weight: 900;
+  line-height: 1.35;
   text-decoration: none;
 }
 
-.dedupCandidateMeta > span {
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.dedupCandidates small {
-  display: block;
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 0.66rem;
-  font-weight: 700;
-  line-height: 1.35;
+.dedupCandidateQuestion:hover {
+  text-decoration: underline;
 }
 
 .dedupTradeLink {
@@ -480,8 +496,21 @@
   font-size: 0.7rem;
 }
 
-.stubNote {
+.launchControl {
+  width: 100%;
+}
+
+.launchHelp {
   margin: var(--space-3) 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.stubNote {
+  margin: var(--space-2) 0 0;
   color: var(--muted);
   font-size: 0.68rem;
   text-align: center;
@@ -512,6 +541,14 @@
   height: 8px;
   border-radius: 50%;
   background: var(--yes);
+}
+
+.configUnavailableStatus {
+  color: var(--error);
+}
+
+.configUnavailableStatus > span {
+  background: var(--error);
 }
 
 .rules {

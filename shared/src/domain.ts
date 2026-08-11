@@ -412,6 +412,8 @@ export interface MarketFactFields {
 /** An existing market considered by the creation-time duplicate check. */
 export interface DedupCandidate {
   marketId: string;
+  /** Existing market question, suitable for display to a creator. */
+  question: string;
   /** Cosine similarity returned by the ANN index. */
   score: number;
   /** Conservative same-fact judgment or the authoritative field conflict. */

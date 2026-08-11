@@ -71,7 +71,12 @@ describe('CreatorAgent', () => {
         isDuplicate: true,
         canonicalMarketId: '42',
         candidates: [
-          { marketId: '42', score: 1, reason: 'Exact same fact.' },
+          {
+            marketId: '42',
+            question: 'Will a new fact happen?',
+            score: 1,
+            reason: 'Exact same fact.',
+          },
         ],
       }),
     });

@@ -145,6 +145,7 @@ export function formatDateTime(timestamp: number) {
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
+    year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
   }).format(timestamp * 1000);

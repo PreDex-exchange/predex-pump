@@ -1,11 +1,11 @@
-import type {
-  DedupCheckResponse,
-} from '@predex-pump/shared/rest';
+import type { DedupCheckResponse } from '@predex-pump/shared/rest';
 import {
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
+  within,
 } from '@testing-library/react';
 import {
   afterEach,
@@ -19,8 +19,72 @@ import {
 import { CreateScreen } from './CreateScreen';
 
 const testState = vi.hoisted(() => ({
+  config: null as unknown,
+  configLoading: false,
+  configError: null as Error | null,
   dedup: null as DedupCheckResponse | null,
+  dedupLoading: false,
+  dedupError: null as Error | null,
 }));
+
+const mocks = vi.hoisted(() => ({
+  configRefetch: vi.fn(),
+  dedupRefetch: vi.fn(),
+  dedupCheck: vi.fn(),
+  recordAccountBehavior: vi.fn(async () => undefined),
+  txExecute: vi.fn(async () => null),
+  txReset: vi.fn(),
+  buildMarketMetadata: vi.fn(() => ({
+    ancillaryData: '0x01',
+    metadataHash: `0x${'ab'.repeat(32)}`,
+  })),
+  createMarketOnArc: vi.fn(),
+}));
+
+const validConfig = {
+  chainId: 5_042_002,
+  addresses: {
+    usdc: `0x${'01'.repeat(20)}`,
+    ctf: `0x${'02'.repeat(20)}`,
+    oracle: `0x${'03'.repeat(20)}`,
+    lmsr: `0x${'04'.repeat(20)}`,
+    registry: `0x${'05'.repeat(20)}`,
+    miniClob: `0x${'06'.repeat(20)}`,
+  },
+  marketTypeVersion: 1,
+  seedFloorRaw: '1000000',
+  seedCapRaw: '100000000',
+  graduationTollRaw: '1000000',
+  protocolFeeBps: 100,
+  minTradingWindowSeconds: 3_600,
+  maxTradingWindowSeconds: 604_800,
+  committee: {
+    oracle: `0x${'03'.repeat(20)}`,
+    signers: [`0x${'07'.repeat(20)}`],
+    threshold: 1,
+  },
+};
+
+const uniqueResponse: DedupCheckResponse = {
+  available: true,
+  isDuplicate: false,
+  canonicalMarketId: null,
+  candidates: [],
+};
+
+const duplicateResponse: DedupCheckResponse = {
+  available: true,
+  isDuplicate: true,
+  canonicalMarketId: '42',
+  candidates: [
+    {
+      marketId: '42',
+      question: 'Will this measurable fact happen by Friday?',
+      score: 0.99,
+      reason: 'Same fact.',
+    },
+  ],
+};
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -50,51 +114,36 @@ vi.mock('@/components/feed/MarketCard', () => ({
 
 vi.mock('@/lib/api/hooks', () => ({
   useConfig: () => ({
-    data: {
-      chainId: 5_042_002,
-      addresses: {
-        usdc: `0x${'01'.repeat(20)}`,
-        ctf: `0x${'02'.repeat(20)}`,
-        oracle: `0x${'03'.repeat(20)}`,
-        lmsr: `0x${'04'.repeat(20)}`,
-        registry: `0x${'05'.repeat(20)}`,
-        miniClob: `0x${'06'.repeat(20)}`,
-      },
-      marketTypeVersion: 1,
-      seedFloorRaw: '1000000',
-      seedCapRaw: '100000000',
-      graduationTollRaw: '1000000',
-      protocolFeeBps: 100,
-      minTradingWindowSeconds: 3_600,
-      maxTradingWindowSeconds: 604_800,
-      committee: {
-        oracle: `0x${'03'.repeat(20)}`,
-        signers: [`0x${'07'.repeat(20)}`],
-        threshold: 1,
-      },
-    },
-    isLoading: false,
-    error: null,
-    refetch: vi.fn(),
+    data: testState.config,
+    isLoading: testState.configLoading,
+    error: testState.configError,
+    refetch: mocks.configRefetch,
   }),
   useDedupCheck: () => ({
     data: testState.dedup,
-    isLoading: false,
-    error: null,
-    refetch: vi.fn(),
+    isLoading: testState.dedupLoading,
+    error: testState.dedupError,
+    refetch: mocks.dedupRefetch,
   }),
 }));
 
+vi.mock('@/lib/api/rest-client', () => ({
+  backendRestClient: {
+    dedupCheck: mocks.dedupCheck,
+    recordAccountBehavior: mocks.recordAccountBehavior,
+  },
+}));
+
 vi.mock('@/lib/chain/transactions', () => ({
-  buildMarketMetadata: vi.fn(),
-  createMarketOnArc: vi.fn(),
+  buildMarketMetadata: mocks.buildMarketMetadata,
+  createMarketOnArc: mocks.createMarketOnArc,
 }));
 
 vi.mock('@/lib/chain/useTxFlow', () => ({
   useTxFlow: () => ({
     state: { phase: 'idle', message: 'Ready.' },
-    execute: vi.fn(),
-    reset: vi.fn(),
+    execute: mocks.txExecute,
+    reset: mocks.txReset,
     isBusy: false,
   }),
 }));
@@ -102,39 +151,56 @@ vi.mock('@/lib/chain/useTxFlow', () => ({
 afterEach(cleanup);
 
 beforeEach(() => {
-  testState.dedup = null;
+  testState.config = validConfig;
+  testState.configLoading = false;
+  testState.configError = null;
+  testState.dedup = uniqueResponse;
+  testState.dedupLoading = false;
+  testState.dedupError = null;
+  vi.clearAllMocks();
+  mocks.dedupCheck.mockResolvedValue(uniqueResponse);
+  mocks.txExecute.mockResolvedValue(null);
 });
 
-function enterValidQuestion() {
+function enterValidQuestion(
+  value = 'Will this measurable fact happen by Friday?',
+) {
   fireEvent.change(screen.getByPlaceholderText('Will…?'), {
-    target: { value: 'Will this measurable fact happen by Friday?' },
+    target: { value },
   });
 }
 
-describe('CreateScreen dedup advisory', () => {
-  it('shows a duplicate hint without disabling the submit path', () => {
-    testState.dedup = {
-      available: true,
-      isDuplicate: true,
-      canonicalMarketId: '42',
-      candidates: [
-        { marketId: '42', score: 0.99, reason: 'Same fact.' },
-      ],
-    };
+function openReview() {
+  enterValidQuestion();
+  fireEvent.click(screen.getByRole('button', { name: /Launch a market/u }));
+  return screen.getByRole('dialog');
+}
+
+describe('CreateScreen market launch guardrails', () => {
+  it('explains the disabled CTA on first load', () => {
+    render(<CreateScreen />);
+
+    const launch = screen.getByRole('button', { name: /Launch a market/u });
+    expect(launch.hasAttribute('disabled')).toBe(true);
+    expect(launch.getAttribute('aria-disabled')).toBe('true');
+    expect(launch.getAttribute('aria-describedby')).toBe('launch-help');
+    expect(screen.getByText('Enter a market question to continue.')).toBeTruthy();
+  });
+
+  it('shows a pending duplicate check and blocks opening the review', () => {
+    testState.dedup = null;
+    testState.dedupLoading = true;
     render(<CreateScreen />);
     enterValidQuestion();
 
+    expect(screen.getByText('Checking for existing markets…')).toBeTruthy();
     expect(
-      screen.getByText('A market for this already exists'),
-    ).toBeTruthy();
-    expect(
-      screen
-        .getByRole('button', { name: /Launch a market/u })
-        .hasAttribute('disabled'),
-    ).toBe(false);
+      screen.getByRole('button', { name: /Launch a market/u }).hasAttribute('disabled'),
+    ).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('stays silent and keeps submit enabled when dedup is unavailable', () => {
+  it('surfaces an unavailable check and blocks launch until retry succeeds', () => {
     testState.dedup = {
       available: false,
       isDuplicate: false,
@@ -144,13 +210,84 @@ describe('CreateScreen dedup advisory', () => {
     render(<CreateScreen />);
     enterValidQuestion();
 
+    expect(screen.getByText('Duplicate check unavailable')).toBeTruthy();
+    expect(screen.getByText(/Retry the check before launching/u)).toBeTruthy();
     expect(
-      screen.queryByText('A market for this already exists'),
-    ).toBeNull();
+      screen.getByRole('button', { name: /Launch a market/u }).hasAttribute('disabled'),
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry duplicate check' }));
+    expect(mocks.dedupRefetch).toHaveBeenCalledOnce();
+  });
+
+  it('shows a duplicate warning in both the form and confirmation dialog', () => {
+    testState.dedup = duplicateResponse;
+    render(<CreateScreen />);
+    const dialog = openReview();
+
+    expect(screen.getAllByText('A market for this already exists')).toHaveLength(2);
     expect(
-      screen
-        .getByRole('button', { name: /Launch a market/u })
-        .hasAttribute('disabled'),
-    ).toBe(false);
+      within(dialog).getAllByText(
+        'Will this measurable fact happen by Friday?',
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('re-verifies dedup before invoking the transaction flow', async () => {
+    render(<CreateScreen />);
+    const dialog = openReview();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Approve & launch' }));
+
+    await waitFor(() => expect(mocks.dedupCheck).toHaveBeenCalledOnce());
+    await waitFor(() => expect(mocks.txExecute).toHaveBeenCalledOnce());
+    expect(mocks.dedupCheck).toHaveBeenCalledWith({
+      question: 'Will this measurable fact happen by Friday?',
+    });
+    expect(mocks.dedupCheck.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.txExecute.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it('stops before signing when the commit-time recheck finds a new duplicate', async () => {
+    mocks.dedupCheck.mockResolvedValue(duplicateResponse);
+    render(<CreateScreen />);
+    const dialog = openReview();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Approve & launch' }));
+
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText('A market for this already exists'),
+      ).toBeTruthy(),
+    );
+    expect(mocks.txExecute).not.toHaveBeenCalled();
+  });
+
+  it('renders a config failure honestly and retries it', () => {
+    testState.config = null;
+    testState.configError = new Error('config failed');
+    render(<CreateScreen />);
+
+    expect(screen.getByText('Config unavailable')).toBeTruthy();
+    expect(screen.queryByText('Live config')).toBeNull();
+    expect(screen.getByText('The live registry rules could not load.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(mocks.configRefetch).toHaveBeenCalledOnce();
+  });
+
+  it('shows the exact committed seed precision and a year in the review', () => {
+    render(<CreateScreen />);
+    const seedLabel = screen.getByText('Initial seed').closest('label');
+    const seedInput = seedLabel?.querySelector('input');
+    expect(seedInput).not.toBeNull();
+    fireEvent.change(seedInput as HTMLInputElement, {
+      target: { value: '1.234567' },
+    });
+    const dialog = openReview();
+
+    expect(within(dialog).getByText('1.234567 USDC')).toBeTruthy();
+    expect(
+      within(dialog).getByText('Estimated end').parentElement?.textContent,
+    ).toMatch(/\b20\d{2}\b/u);
   });
 });

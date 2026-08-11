@@ -1,12 +1,15 @@
 'use client';
 
 import type { Address, Market, RegistryConfig } from '@predex-pump/shared/domain';
-import type { MarketDetailResponse } from '@predex-pump/shared/rest';
+import type {
+  DedupCheckResponse,
+  MarketDetailResponse,
+} from '@predex-pump/shared/rest';
 import { DEFAULT_MINIMUM_TICK_SIZE_RAW } from '@predex-pump/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
 import { MarketCard } from '@/components/feed/MarketCard';
@@ -53,6 +56,17 @@ const CUSTOM_WINDOW_UNITS = [
   { label: 'days', seconds: 86_400n, value: 'days' },
 ] as const;
 type CustomWindowUnit = (typeof CUSTOM_WINDOW_UNITS)[number]['value'];
+
+interface QuestionDedupResult {
+  question: string;
+  response: DedupCheckResponse;
+}
+
+function duplicateIdentity(response: DedupCheckResponse | null) {
+  return response?.available && response.isDuplicate
+    ? response.canonicalMarketId
+    : null;
+}
 
 function validateQuestion(value: string) {
   if (!value.trim()) return 'Enter a question for the market.';
@@ -231,6 +245,9 @@ export function CreateScreen() {
   );
   const [dismissedDedupKey, setDismissedDedupKey] = useState<string | null>(null);
   const [dedupFeedbackError, setDedupFeedbackError] = useState<string | null>(null);
+  const [commitDedup, setCommitDedup] = useState<QuestionDedupResult | null>(null);
+  const [dedupVerifying, setDedupVerifying] = useState(false);
+  const confirmOpenRef = useRef(false);
 
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -249,13 +266,24 @@ export function CreateScreen() {
     error: configError,
     refetch: refetchConfig,
   } = useConfig();
-  const { data: dedupResult } = useDedupCheck(question);
+  const {
+    data: dedupResult,
+    isLoading: dedupLoading,
+    error: dedupError,
+    refetch: refetchDedup,
+  } = useDedupCheck(question);
   const authenticated = session?.authenticated === true;
-  const dedupKey = dedupResult?.canonicalMarketId
-    ? `${question.trim()}:${dedupResult.canonicalMarketId}`
+  const normalizedQuestion = question.trim();
+  const commitDedupResult =
+    commitDedup?.question === normalizedQuestion ? commitDedup.response : null;
+  const currentDedupResult = commitDedupResult ?? dedupResult;
+  const dedupKey = currentDedupResult?.canonicalMarketId
+    ? `${normalizedQuestion}:${currentDedupResult.canonicalMarketId}`
     : null;
   const visibleDedupResult =
-    dedupKey !== null && dedupKey === dismissedDedupKey ? null : dedupResult;
+    dedupKey !== null && dedupKey === dismissedDedupKey
+      ? null
+      : currentDedupResult;
 
   function recordDedupFeedback(
     type: 'DEDUP_SUGGESTION_ACCEPTED' | 'DEDUP_SUGGESTION_REJECTED',
@@ -303,6 +331,12 @@ export function CreateScreen() {
   const categoryLabel =
     CATEGORIES.find((item) => item.value === category)?.label ?? 'No category';
   const isWrongNetwork = isConnected && chainId !== arcTestnet.id;
+  const currentDedupLoading = commitDedupResult === null && dedupLoading;
+  const currentDedupError = commitDedupResult === null ? dedupError : null;
+  const dedupReady =
+    !currentDedupLoading &&
+    currentDedupError === null &&
+    currentDedupResult?.available === true;
   const canLaunch =
     Boolean(config) &&
     !configError &&
@@ -311,9 +345,34 @@ export function CreateScreen() {
     !windowError &&
     seedRaw !== null &&
     tradingWindowSeconds !== null &&
+    dedupReady &&
     isConnected &&
     !isWrongNetwork &&
     Boolean(address);
+  let launchDisabledReason: string | null = null;
+  if (!normalizedQuestion) {
+    launchDisabledReason = 'Enter a market question to continue.';
+  } else if (questionError) {
+    launchDisabledReason = questionError;
+  } else if (seedError) {
+    launchDisabledReason = seedError;
+  } else if (windowError && config && !configLoading) {
+    launchDisabledReason = windowError;
+  } else if (configLoading) {
+    launchDisabledReason = 'Loading live registry rules…';
+  } else if (configError || !config) {
+    launchDisabledReason = 'Live registry rules are unavailable. Try again before launching.';
+  } else if (currentDedupLoading || currentDedupResult === null) {
+    launchDisabledReason = 'Checking for an existing market…';
+  } else if (currentDedupError || !currentDedupResult.available) {
+    launchDisabledReason = 'Duplicate check unavailable. Retry before launching.';
+  } else if (!isConnected) {
+    launchDisabledReason = 'Connect a wallet to continue.';
+  } else if (isWrongNetwork) {
+    launchDisabledReason = 'Switch your wallet to Arc Testnet before launching.';
+  } else if (!address) {
+    launchDisabledReason = 'The connected wallet address is unavailable.';
+  }
   const canPreviewTradingWindow =
     tradingWindowSeconds !== null &&
     tradingWindowSeconds <= BigInt(Number.MAX_SAFE_INTEGER);
@@ -328,6 +387,27 @@ export function CreateScreen() {
       : 0,
   });
 
+  async function runCommitDedupCheck(): Promise<DedupCheckResponse> {
+    setDedupVerifying(true);
+    let response: DedupCheckResponse;
+    try {
+      response = await backendRestClient.dedupCheck({
+        question: normalizedQuestion,
+      });
+    } catch {
+      response = {
+        available: false,
+        isDuplicate: false,
+        canonicalMarketId: null,
+        candidates: [],
+      };
+    } finally {
+      setDedupVerifying(false);
+    }
+    setCommitDedup({ question: normalizedQuestion, response });
+    return response;
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitted(true);
@@ -335,7 +415,10 @@ export function CreateScreen() {
     setSeedTouched(true);
     setWindowTouched(true);
 
-    if (canLaunch) setConfirmOpen(true);
+    if (canLaunch) {
+      confirmOpenRef.current = true;
+      setConfirmOpen(true);
+    }
   }
 
   async function handleConfirm() {
@@ -348,6 +431,18 @@ export function CreateScreen() {
       seedError ||
       windowError
     ) {
+      return;
+    }
+
+    const reviewedDuplicate = duplicateIdentity(currentDedupResult);
+    const freshDedup = await runCommitDedupCheck();
+    if (!confirmOpenRef.current || !freshDedup.available) return;
+    if (
+      freshDedup.isDuplicate &&
+      duplicateIdentity(freshDedup) !== reviewedDuplicate
+    ) {
+      // The modal must show a newly discovered duplicate before a later,
+      // explicit click can authorize an intentional launch.
       return;
     }
 
@@ -365,6 +460,7 @@ export function CreateScreen() {
     if (!result) return;
 
     setSubmitted(false);
+    confirmOpenRef.current = false;
     setConfirmOpen(false);
     if (result.marketId) {
       queryClient.setQueryData<MarketDetailResponse>(
@@ -394,6 +490,9 @@ export function CreateScreen() {
     setWindowTouched(false);
     setSubmitted(false);
     setCreatedMarketId(undefined);
+    setCommitDedup(null);
+    setDedupVerifying(false);
+    confirmOpenRef.current = false;
     tx.reset();
   }
 
@@ -497,6 +596,7 @@ export function CreateScreen() {
               )}
             </label>
             <DedupHint
+              error={normalizedQuestion ? currentDedupError : null}
               feedbackEnabled={authenticated}
               feedbackError={dedupFeedbackError}
               onAccept={(marketId) =>
@@ -506,7 +606,12 @@ export function CreateScreen() {
                 if (dedupKey) setDismissedDedupKey(dedupKey);
                 recordDedupFeedback('DEDUP_SUGGESTION_REJECTED', marketId);
               }}
-              response={visibleDedupResult}
+              onRetry={() => {
+                setCommitDedup(null);
+                refetchDedup();
+              }}
+              pending={Boolean(normalizedQuestion) && currentDedupLoading}
+              response={normalizedQuestion ? visibleDedupResult : null}
             />
 
             <fieldset className={`${styles.field} ${styles.durationField}`}>
@@ -718,16 +823,27 @@ export function CreateScreen() {
               </p>
             )}
 
-            <Button
-              disabled={!canLaunch}
-              fullWidth
-              size="large"
-              type="submit"
-              variant="coral"
+            <div
+              className={styles.launchControl}
+              title={launchDisabledReason ?? undefined}
             >
-              Launch a market
-              <span aria-hidden="true">→</span>
-            </Button>
+              <Button
+                aria-describedby="launch-help"
+                aria-disabled={!canLaunch}
+                disabled={!canLaunch}
+                fullWidth
+                size="large"
+                type="submit"
+                variant="coral"
+              >
+                Launch a market
+                <span aria-hidden="true">→</span>
+              </Button>
+            </div>
+            <p className={styles.launchHelp} id="launch-help" role="status">
+              {launchDisabledReason ??
+                'Ready to review; duplicates will be checked again before signing.'}
+            </p>
             <p className={styles.stubNote}>
               Uses ERC-20 USDC only. The wallet may request a Registry approval before createMarket.
             </p>
@@ -741,9 +857,20 @@ export function CreateScreen() {
                 <span className={styles.step}>Registry rules</span>
                 <h2>Know the numbers</h2>
               </div>
-              <span className={styles.liveDot}>
+              <span
+                className={`${styles.liveDot} ${
+                  configError || (!config && !configLoading)
+                    ? styles.configUnavailableStatus
+                    : ''
+                }`}
+                role="status"
+              >
                 <span aria-hidden="true" />
-                Live config
+                {configLoading
+                  ? 'Loading config'
+                  : configError || !config
+                    ? 'Config unavailable'
+                    : 'Live config'}
               </span>
             </div>
             <dl className={styles.rules}>
@@ -816,13 +943,26 @@ export function CreateScreen() {
       <ConfirmModal
         closeDisabled={tx.isBusy}
         closeOnConfirm={false}
-        confirmDisabled={tx.isBusy || tx.state.phase === 'confirmed'}
+        confirmDisabled={
+          dedupVerifying ||
+          tx.isBusy ||
+          tx.state.phase === 'confirmed' ||
+          currentDedupResult?.available !== true
+        }
         confirmLabel={
-          tx.state.phase === 'reverted' ? 'Retry live launch' : 'Approve & launch'
+          dedupVerifying
+            ? 'Checking duplicates…'
+            : tx.state.phase === 'reverted'
+              ? 'Retry live launch'
+              : currentDedupResult?.isDuplicate
+                ? 'Approve & launch anyway'
+                : 'Approve & launch'
         }
         kicker="Live Arc transaction"
         onClose={() => {
           if (tx.isBusy) return;
+          confirmOpenRef.current = false;
+          if (commitDedupResult?.available === false) setCommitDedup(null);
           setConfirmOpen(false);
           tx.reset();
         }}
@@ -830,6 +970,16 @@ export function CreateScreen() {
         open={confirmOpen}
         title="Review your market"
       >
+        <DedupHint
+          error={null}
+          onRetry={() => {
+            void runCommitDedupCheck();
+          }}
+          pending={dedupVerifying}
+          response={currentDedupResult}
+          showActions={false}
+          showFeedback={false}
+        />
         <p className={styles.confirmQuestion}>{question.trim()}</p>
         <dl className={styles.confirmRows}>
           <div>
@@ -839,7 +989,7 @@ export function CreateScreen() {
           <div>
             <dt>Seed</dt>
             <dd className="numeric">
-              {seedRaw ? formatUsdc(seedRaw) : '—'} USDC
+              {seedRaw ? formatUsdc(seedRaw, 6) : '—'} USDC
             </dd>
           </div>
           <div>

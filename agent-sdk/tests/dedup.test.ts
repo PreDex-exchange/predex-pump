@@ -19,6 +19,7 @@ describe('dedupCheck', () => {
       candidates: [
         {
           marketId: '42',
+          question: 'Will the fact happen?',
           score: 0.984,
           reason: 'The normalized fact and deadline match.',
         },

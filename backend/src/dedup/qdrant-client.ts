@@ -29,8 +29,13 @@ function truncate(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength)}…`;
 }
 
-function qdrantPointId(marketId: string): string {
-  const hex = createHash('sha256').update(`predex-market:${marketId}`).digest('hex');
+function qdrantPointId(
+  marketId: string,
+  embeddingProvider: EmbeddingProviderMode,
+): string {
+  const hex = createHash('sha256')
+    .update(`predex-market:${embeddingProvider}:${marketId}`)
+    .digest('hex');
   return [
     hex.slice(0, 8),
     hex.slice(8, 12),
@@ -187,7 +192,10 @@ export class QdrantMarketClient implements MarketVectorStore {
         body: JSON.stringify({
           points: [
             {
-              id: qdrantPointId(point.payload.marketId),
+              id: qdrantPointId(
+                point.payload.marketId,
+                point.payload.embeddingProvider,
+              ),
               vector: point.vector,
               payload: point.payload,
             },

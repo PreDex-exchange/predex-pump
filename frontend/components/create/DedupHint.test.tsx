@@ -17,8 +17,15 @@ const duplicate: DedupCheckResponse = {
   candidates: [
     {
       marketId: '42',
+      question: 'Will BTC close above $70k Friday?',
       score: 0.9842,
       reason: 'The normalized subject and deadline match.',
+    },
+    {
+      marketId: '7',
+      question: 'Will ETH close above $70k Friday?',
+      score: 0.93,
+      reason: 'Different subject.',
     },
   ],
 };
@@ -30,8 +37,15 @@ describe('DedupHint', () => {
     expect(
       screen.getByText('A market for this already exists'),
     ).toBeTruthy();
-    expect(screen.getByText('Market #42')).toBeTruthy();
-    expect(screen.getByText('score 0.984')).toBeTruthy();
+    expect(
+      screen.getByRole('link', {
+        name: 'Will BTC close above $70k Friday?',
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Market #/u)).toBeNull();
+    expect(screen.queryByText(/score 0\.984/u)).toBeNull();
+    expect(screen.queryByText('Will ETH close above $70k Friday?')).toBeNull();
+    expect(screen.queryByText('Different subject.')).toBeNull();
     expect(
       screen
         .getByRole('link', { name: /Trade it instead/u })
@@ -39,8 +53,8 @@ describe('DedupHint', () => {
     ).toBe('/market/42');
   });
 
-  it('renders nothing when the advisory service is degraded', () => {
-    const { container } = render(
+  it('renders an unavailable state that is distinct from a clear result', () => {
+    const { rerender } = render(
       <DedupHint
         response={{
           available: false,
@@ -51,9 +65,27 @@ describe('DedupHint', () => {
       />,
     );
 
-    expect(container.innerHTML).toBe('');
-    expect(
-      screen.queryByText('A market for this already exists'),
-    ).toBeNull();
+    expect(screen.getByText('Duplicate check unavailable')).toBeTruthy();
+    expect(screen.queryByText('No matching market found')).toBeNull();
+
+    rerender(
+      <DedupHint
+        response={{
+          available: true,
+          isDuplicate: false,
+          canonicalMarketId: null,
+          candidates: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('No matching market found')).toBeTruthy();
+    expect(screen.queryByText('Duplicate check unavailable')).toBeNull();
+  });
+
+  it('shows when a duplicate check is pending', () => {
+    render(<DedupHint pending response={null} />);
+
+    expect(screen.getByText('Checking for existing markets…')).toBeTruthy();
   });
 });

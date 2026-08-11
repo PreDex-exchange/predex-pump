@@ -56,13 +56,15 @@ describe('useDedupCheck', () => {
         {children}
       </QueryClientProvider>
     );
-    const { rerender } = renderHook(
+    const { rerender, result } = renderHook(
       ({ question }) => useDedupCheck(question, 500),
       {
         initialProps: { question: 'W' },
         wrapper,
       },
     );
+
+    expect(result.current.isLoading).toBe(true);
 
     await act(async () => {
       vi.advanceTimersByTime(300);
@@ -74,12 +76,16 @@ describe('useDedupCheck', () => {
     expect(mocks.dedupCheck).not.toHaveBeenCalled();
 
     await act(async () => {
-      vi.advanceTimersByTime(1);
+      await vi.advanceTimersByTimeAsync(1);
       await Promise.resolve();
     });
     expect(mocks.dedupCheck).toHaveBeenCalledOnce();
     expect(mocks.dedupCheck).toHaveBeenCalledWith({
       question: 'Will this happen?',
     });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.isLoading).toBe(false);
   });
 });

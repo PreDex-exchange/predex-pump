@@ -47,6 +47,7 @@ interface ResourceState<T> {
 interface ResourceOptions {
   refetchInterval?: number;
   enabled?: boolean;
+  retry?: boolean | number;
 }
 
 function useApiResource<T>(
@@ -61,6 +62,7 @@ function useApiResource<T>(
     refetchInterval: options.refetchInterval,
     refetchIntervalInBackground: false,
     enabled: options.enabled,
+    retry: options.retry,
   });
 
   return {
@@ -109,10 +111,12 @@ export function useDedupCheck(
     staleTime: 30_000,
   });
   const isCurrent = normalizedQuestion === debouncedQuestion;
+  const isPending =
+    normalizedQuestion.length > 0 && (!isCurrent || query.isFetching);
 
   return {
     data: isCurrent ? (query.data ?? null) : null,
-    isLoading: isCurrent && query.isLoading,
+    isLoading: isPending,
     error: isCurrent ? query.error : null,
     refetch: () => {
       void query.refetch();
@@ -263,7 +267,7 @@ export function useActivity(query: ActivityQuery = {}) {
 
 export function useConfig() {
   const load = useCallback(() => apiClient.getConfig(), []);
-  return useApiResource<RegistryConfig>(['config'], load);
+  return useApiResource<RegistryConfig>(['config'], load, { retry: false });
 }
 
 export function usePriceHistory(marketId: string, query: PriceHistoryQuery = {}) {
