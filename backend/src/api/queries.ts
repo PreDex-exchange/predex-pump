@@ -812,6 +812,7 @@ export async function getHealth(
     status: bootstrapStatus,
     attemptedBlock: state?.chainStateBootstrapAttemptedBlock ?? null,
     snapshotBlock: state?.chainStateBootstrapBlock ?? null,
+    rpcRequestCount: state?.chainStateBootstrapRpcRequestCount ?? 0,
     attemptedAt: state?.chainStateBootstrapAttemptedAt?.toISOString() ?? null,
     completedAt: state?.chainStateBootstrappedAt?.toISOString() ?? null,
     error: state?.chainStateBootstrapError ?? null,

@@ -684,6 +684,7 @@ describe('REST shared contract', () => {
         status: 'complete',
         attemptedBlock: 100,
         snapshotBlock: 100,
+        rpcRequestCount: 0,
         attemptedAt: expect.any(String),
         completedAt: expect.any(String),
         error: null,

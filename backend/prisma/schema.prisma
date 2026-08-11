@@ -572,6 +572,7 @@ model IndexerState {
   chainStateBootstrapBlock          Int?
   chainStateBootstrapAttemptedAt    DateTime?
   chainStateBootstrappedAt          DateTime?
+  chainStateBootstrapRpcRequestCount Int      @default(0)
   chainStateBootstrapError          String?
   updatedAt                         DateTime  @updatedAt
 }

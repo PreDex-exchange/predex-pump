@@ -73,6 +73,34 @@ export interface RegistryParameterSnapshot {
   depthFeeBps: number;
 }
 
+type ParameterZeroPolicy = 'required-positive' | 'zero-allowed';
+
+/**
+ * This classifies successfully-read chain values, not read completeness. Only
+ * the bounds needed to render and validate /create must be positive. Every
+ * other uint may represent a disabled fee, toll, delay, or optional economic
+ * policy; failed and partial reads are rejected separately before persistence.
+ */
+const PARAMETER_ZERO_POLICY = {
+  openingFeeRaw: 'zero-allowed',
+  seedFloorRaw: 'required-positive',
+  seedCapRaw: 'required-positive',
+  fCapRaw: 'zero-allowed',
+  singleTopUpCapRaw: 'zero-allowed',
+  graduationMoneyInThresholdRaw: 'zero-allowed',
+  graduationTollRaw: 'zero-allowed',
+  inventoryTargetRaw: 'zero-allowed',
+  inventoryLowRaw: 'zero-allowed',
+  inventoryHighRaw: 'zero-allowed',
+  freeCollateralBufferRaw: 'zero-allowed',
+  defaultTradingWindowSeconds: 'zero-allowed',
+  minTradingWindowSeconds: 'required-positive',
+  maxTradingWindowSeconds: 'required-positive',
+  minimumTimeOpenSeconds: 'zero-allowed',
+  protocolFeeBps: 'zero-allowed',
+  depthFeeBps: 'zero-allowed',
+} as const satisfies Record<keyof RegistryParameterSnapshot, ParameterZeroPolicy>;
+
 export interface MarketTypeSnapshot {
   version: number;
   lmsrAddress: string;
@@ -101,7 +129,7 @@ export interface ChainStateSnapshot {
 }
 
 export interface ChainStateReader {
-  readChainState(blockNumber: number): Promise<ChainStateSnapshot>;
+  readChainState(blockNumber: number, onRpcRequest?: () => void): Promise<ChainStateSnapshot>;
 }
 
 export interface ChainStateBootstrapResult {
@@ -282,51 +310,67 @@ export function validateChainStateSnapshot(snapshot: ChainStateSnapshot): void {
   const { params } = snapshot.registry;
   for (const [name, value] of Object.entries(params)) {
     if (name.endsWith('Raw') && !/^\d+$/u.test(String(value))) {
-      throw new Error(`Registry parameter ${name} is not a non-negative decimal string`);
+      throw new Error(
+        `Registry parameter ${name}=${String(value)} is not a non-negative decimal string`,
+      );
     }
   }
-  const integerParameters = [
-    params.defaultTradingWindowSeconds,
-    params.minTradingWindowSeconds,
-    params.maxTradingWindowSeconds,
-    params.minimumTimeOpenSeconds,
-    params.protocolFeeBps,
-    params.depthFeeBps,
-  ];
-  if (integerParameters.some((value) => !Number.isSafeInteger(value) || value < 0)) {
-    throw new Error('Registry defaultParams contains a malformed integer parameter');
+  const integerParameters = {
+    defaultTradingWindowSeconds: params.defaultTradingWindowSeconds,
+    minTradingWindowSeconds: params.minTradingWindowSeconds,
+    maxTradingWindowSeconds: params.maxTradingWindowSeconds,
+    minimumTimeOpenSeconds: params.minimumTimeOpenSeconds,
+    protocolFeeBps: params.protocolFeeBps,
+    depthFeeBps: params.depthFeeBps,
+  } as const;
+  for (const [name, value] of Object.entries(integerParameters)) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(
+        `Registry parameter ${name}=${String(value)} is not a non-negative safe integer`,
+      );
+    }
   }
-  const requiredPositiveRaw = [
-    params.seedFloorRaw,
-    params.seedCapRaw,
-    params.fCapRaw,
-    params.singleTopUpCapRaw,
-    params.graduationMoneyInThresholdRaw,
-    params.graduationTollRaw,
-    params.inventoryTargetRaw,
-  ];
-  if (requiredPositiveRaw.some((value) => BigInt(value) <= 0n)) {
-    throw new Error('Registry defaultParams contains a zero required economic parameter');
+  for (const [name, policy] of Object.entries(PARAMETER_ZERO_POLICY)) {
+    const value = params[name as keyof RegistryParameterSnapshot];
+    if (policy === 'required-positive' && BigInt(value) === 0n) {
+      throw new Error(
+        `Registry required parameter ${name}=${String(value)} must be greater than zero`,
+      );
+    }
   }
   if (BigInt(params.seedCapRaw) < BigInt(params.seedFloorRaw)) {
-    throw new Error('Registry seedCapRaw is below seedFloorRaw');
+    throw new Error(
+      `Registry parameter seedCapRaw=${params.seedCapRaw} is below seedFloorRaw=${params.seedFloorRaw}`,
+    );
+  }
+  if (params.maxTradingWindowSeconds < params.minTradingWindowSeconds) {
+    throw new Error(
+      `Registry parameter maxTradingWindowSeconds=${params.maxTradingWindowSeconds} is below minTradingWindowSeconds=${params.minTradingWindowSeconds}`,
+    );
   }
   if (
-    params.minTradingWindowSeconds <= 0 ||
-    params.maxTradingWindowSeconds < params.minTradingWindowSeconds ||
-    params.defaultTradingWindowSeconds < params.minTradingWindowSeconds ||
-    params.defaultTradingWindowSeconds > params.maxTradingWindowSeconds
+    params.defaultTradingWindowSeconds !== 0 &&
+    (params.defaultTradingWindowSeconds < params.minTradingWindowSeconds ||
+      params.defaultTradingWindowSeconds > params.maxTradingWindowSeconds)
   ) {
-    throw new Error('Registry trading-window bounds are invalid');
+    throw new Error(
+      `Registry parameter defaultTradingWindowSeconds=${params.defaultTradingWindowSeconds} is outside minTradingWindowSeconds=${params.minTradingWindowSeconds} and maxTradingWindowSeconds=${params.maxTradingWindowSeconds}`,
+    );
   }
-  if (
-    params.protocolFeeBps <= 0 ||
-    params.protocolFeeBps > 10_000 ||
-    params.depthFeeBps < 0 ||
-    params.depthFeeBps > 10_000 ||
-    params.protocolFeeBps + params.depthFeeBps > 10_000
-  ) {
-    throw new Error('Registry fee basis points are invalid');
+  if (params.protocolFeeBps > 10_000) {
+    throw new Error(
+      `Registry parameter protocolFeeBps=${params.protocolFeeBps} exceeds 10000`,
+    );
+  }
+  if (params.depthFeeBps > 10_000) {
+    throw new Error(
+      `Registry parameter depthFeeBps=${params.depthFeeBps} exceeds 10000`,
+    );
+  }
+  if (params.protocolFeeBps + params.depthFeeBps > 10_000) {
+    throw new Error(
+      `Registry fee total protocolFeeBps=${params.protocolFeeBps} + depthFeeBps=${params.depthFeeBps} exceeds 10000`,
+    );
   }
   if (
     !Number.isSafeInteger(snapshot.registry.defaultMarketTypeVersion) ||
@@ -400,7 +444,10 @@ export function validateChainStateSnapshot(snapshot: ChainStateSnapshot): void {
 export class ViemChainStateReader implements ChainStateReader {
   constructor(private readonly client: PublicClient) {}
 
-  async readChainState(blockNumber: number): Promise<ChainStateSnapshot> {
+  async readChainState(
+    blockNumber: number,
+    onRpcRequest: () => void = () => undefined,
+  ): Promise<ChainStateSnapshot> {
     if (!Number.isSafeInteger(blockNumber) || blockNumber <= 0) {
       throw new Error('Chain-state read block must be a positive safe integer');
     }
@@ -419,12 +466,13 @@ export class ViemChainStateReader implements ChainStateReader {
       contractCall(ADDRESSES.registry, registryAbi, 'miniClob'),
       contractCall(ADDRESSES.oracle, oracleAbi, 'ctf'),
     ];
+    rpcRequestCount += 1;
+    onRpcRequest();
     const firstResults = (await this.client.multicall({
       allowFailure: true,
       blockNumber: BigInt(blockNumber),
       contracts: firstCalls,
     })) as readonly unknown[];
-    rpcRequestCount += 1;
 
     const params = parseRegistryParameters(
       unwrapResult(firstResults, 0, 'registry defaultParams'),
@@ -475,12 +523,13 @@ export class ViemChainStateReader implements ChainStateReader {
 
     const dynamicResults: unknown[] = [];
     for (let offset = 0; offset < dynamicCalls.length; offset += MULTICALL_BATCH_SIZE) {
+      rpcRequestCount += 1;
+      onRpcRequest();
       const results = (await this.client.multicall({
         allowFailure: true,
         blockNumber: BigInt(blockNumber),
         contracts: dynamicCalls.slice(offset, offset + MULTICALL_BATCH_SIZE),
       })) as readonly unknown[];
-      rpcRequestCount += 1;
       dynamicResults.push(...results);
     }
 
@@ -570,8 +619,8 @@ export function inspectChainStateRows(
     positiveDecimal(config.seedFloorRaw) &&
     positiveDecimal(config.seedCapRaw) &&
     BigInt(config.seedCapRaw) >= BigInt(config.seedFloorRaw) &&
-    positiveDecimal(config.graduationTollRaw) &&
-    config.protocolFeeBps > 0 &&
+    /^\d+$/u.test(config.graduationTollRaw) &&
+    config.protocolFeeBps >= 0 &&
     config.protocolFeeBps <= 10_000 &&
     config.minTradingWindowSeconds > 0 &&
     config.maxTradingWindowSeconds >= config.minTradingWindowSeconds &&
@@ -642,6 +691,11 @@ function assertNoZeroRegression(
   marketTypeVersion: number,
   committeeThreshold: number,
 ): void {
+  // Persistence safety is intentionally separate from PARAMETER_ZERO_POLICY.
+  // Zero is valid chain truth for a fresh value, but an apparent zero must not
+  // erase an already-positive row. This is defense in depth against a
+  // provider/decoder returning zero-filled data; ordinary failed or partial
+  // reads never reach the persistence transaction at all.
   const pairs: Array<[string, bigint, bigint]> = [
     ...(
       [
@@ -701,6 +755,7 @@ async function recordBootstrapFailure(
   prisma: PrismaClient,
   snapshotBlock: number,
   attemptedAt: Date,
+  rpcRequestCount: number,
   error: string,
 ): Promise<void> {
   await prisma.indexerState.updateMany({
@@ -715,6 +770,7 @@ async function recordBootstrapFailure(
       chainStateBootstrapStatus: 'FAILED',
       chainStateBootstrapAttemptedBlock: snapshotBlock,
       chainStateBootstrapAttemptedAt: attemptedAt,
+      chainStateBootstrapRpcRequestCount: rpcRequestCount,
       chainStateBootstrapError: error,
     },
   });
@@ -897,6 +953,7 @@ async function persistChainStateSnapshot(
         indexerState.chainStateBootstrapStatus === 'COMPLETE' &&
         indexerState.chainStateBootstrapAttemptedBlock === snapshot.blockNumber &&
         indexerState.chainStateBootstrapBlock === snapshot.blockNumber &&
+        indexerState.chainStateBootstrapRpcRequestCount === snapshot.rpcRequestCount &&
         indexerState.chainStateBootstrapError === null;
       if (!statusMatches) {
         await tx.indexerState.update({
@@ -907,6 +964,7 @@ async function persistChainStateSnapshot(
             chainStateBootstrapBlock: snapshot.blockNumber,
             chainStateBootstrapAttemptedAt: attemptedAt,
             chainStateBootstrappedAt: attemptedAt,
+            chainStateBootstrapRpcRequestCount: snapshot.rpcRequestCount,
             chainStateBootstrapError: null,
           },
         });
@@ -930,7 +988,9 @@ export async function bootstrapChainState(
   const attemptedAt = (options.now ?? (() => new Date()))();
   let rpcRequestCount = 0;
   try {
-    const snapshot = await reader.readChainState(options.snapshotBlock);
+    const snapshot = await reader.readChainState(options.snapshotBlock, () => {
+      rpcRequestCount += 1;
+    });
     rpcRequestCount = snapshot.rpcRequestCount;
     if (snapshot.blockNumber !== options.snapshotBlock) {
       throw new Error(
@@ -948,7 +1008,13 @@ export async function bootstrapChainState(
     };
   } catch (error) {
     const message = errorMessage(error);
-    await recordBootstrapFailure(prisma, options.snapshotBlock, attemptedAt, message);
+    await recordBootstrapFailure(
+      prisma,
+      options.snapshotBlock,
+      attemptedAt,
+      rpcRequestCount,
+      message,
+    );
     return {
       status: 'failed',
       snapshotBlock: options.snapshotBlock,

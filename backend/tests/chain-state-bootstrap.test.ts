@@ -9,6 +9,7 @@ import { loadRuntimeConfig, type RuntimeConfig } from '../src/config.js';
 import { ServerEventBus } from '../src/events/bus.js';
 import {
   bootstrapChainState,
+  validateChainStateSnapshot,
   ViemChainStateReader,
   type ChainStateReader,
   type ChainStateSnapshot,
@@ -24,6 +25,25 @@ import { resetDatabase, testPrisma } from './database.js';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ZERO_HASH = `0x${'0'.repeat(64)}`;
+const LIVE_DEFAULT_PARAMS = [
+  0n,
+  1_000_000n,
+  5_000_000n,
+  10_000_000n,
+  1_000_000n,
+  0n,
+  100_000n,
+  20_000_000n,
+  5_000_000n,
+  25_000_000n,
+  1_000_000n,
+  2_592_000n,
+  300n,
+  7_776_000n,
+  0n,
+  20n,
+  0n,
+] as const;
 
 function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
   return {
@@ -38,7 +58,10 @@ function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
   };
 }
 
-function mockChainClient(options: { failSignerIndex?: number } = {}): {
+function mockChainClient(options: {
+  defaultParams?: unknown;
+  failSignerIndex?: number;
+} = {}): {
   client: PublicClient;
   multicall: ReturnType<typeof vi.fn>;
   getLogs: ReturnType<typeof vi.fn>;
@@ -65,7 +88,7 @@ function mockChainClient(options: { failSignerIndex?: number } = {}): {
         let result: unknown;
         switch (contract.functionName) {
           case 'defaultParams':
-            result = {
+            result = options.defaultParams ?? {
               openingFeeRaw: BigInt(params.openingFeeRaw),
               seedFloorRaw: BigInt(params.seedFloorRaw),
               seedCapRaw: BigInt(params.seedCapRaw),
@@ -223,8 +246,10 @@ describe('chain-state bootstrap', () => {
     await testPrisma.$disconnect();
   });
 
-  it('populates all global chain snapshots for a head-start and serves live config values', async () => {
-    const { client, getLogs, multicall } = mockChainClient();
+  it('bootstraps the exact live registry tuple and serves its usable config values', async () => {
+    const { client, getLogs, multicall } = mockChainClient({
+      defaultParams: LIVE_DEFAULT_PARAMS,
+    });
     const observedAt = new Date('2026-08-12T08:00:00.000Z');
     let registryParamsSeenBeforeHeadEvents: string | undefined;
     getLogs.mockImplementation(async (input: { address?: unknown }) => {
@@ -254,20 +279,20 @@ describe('chain-state bootstrap', () => {
       openingFeeRaw: '0',
       seedFloorRaw: '1000000',
       seedCapRaw: '5000000',
-      fCapRaw: '100000000',
-      singleTopUpCapRaw: '5000000',
-      graduationMoneyInThresholdRaw: '25000000',
+      fCapRaw: '10000000',
+      singleTopUpCapRaw: '1000000',
+      graduationMoneyInThresholdRaw: '0',
       graduationTollRaw: '100000',
-      inventoryTargetRaw: '5000000',
-      inventoryLowRaw: '2500000',
-      inventoryHighRaw: '7500000',
+      inventoryTargetRaw: '20000000',
+      inventoryLowRaw: '5000000',
+      inventoryHighRaw: '25000000',
       freeCollateralBufferRaw: '1000000',
-      defaultTradingWindowSeconds: 86_400,
+      defaultTradingWindowSeconds: 2_592_000,
       minTradingWindowSeconds: 300,
       maxTradingWindowSeconds: 7_776_000,
-      minimumTimeOpenSeconds: 300,
+      minimumTimeOpenSeconds: 0,
       protocolFeeBps: 20,
-      depthFeeBps: 10,
+      depthFeeBps: 0,
       marketTypeVersion: 2,
       committeeThreshold: 2,
       updatedBlock: 109,
@@ -362,6 +387,115 @@ describe('chain-state bootstrap', () => {
       lastBlock: 110,
       chainStateBootstrapStatus: 'COMPLETE',
       chainStateBootstrapBlock: 108,
+      chainStateBootstrapRpcRequestCount: 2,
+    });
+  });
+
+  it('accepts zero for every non-required MarketParams field', async () => {
+    await initializeAt(110);
+    const snapshot = chainStateSnapshot(110);
+    snapshot.registry.params = {
+      openingFeeRaw: '0',
+      seedFloorRaw: '1000000',
+      seedCapRaw: '5000000',
+      fCapRaw: '0',
+      singleTopUpCapRaw: '0',
+      graduationMoneyInThresholdRaw: '0',
+      graduationTollRaw: '0',
+      inventoryTargetRaw: '0',
+      inventoryLowRaw: '0',
+      inventoryHighRaw: '0',
+      freeCollateralBufferRaw: '0',
+      defaultTradingWindowSeconds: 0,
+      minTradingWindowSeconds: 300,
+      maxTradingWindowSeconds: 7_776_000,
+      minimumTimeOpenSeconds: 0,
+      protocolFeeBps: 0,
+      depthFeeBps: 0,
+    };
+
+    const result = await bootstrapChainState(testPrisma, readerFor(snapshot), {
+      snapshotBlock: 110,
+    });
+
+    expect(result).toMatchObject({
+      status: 'complete',
+      changedRows: expect.any(Number),
+    });
+    const app = await buildServer({
+      prisma: testPrisma,
+      eventBus: new ServerEventBus(),
+      logger: false,
+    });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/config' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        graduationTollRaw: '0',
+        protocolFeeBps: 0,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    [
+      'seedFloorRaw',
+      (snapshot: ChainStateSnapshot) => {
+        snapshot.registry.params.seedFloorRaw = '0';
+      },
+    ],
+    [
+      'seedCapRaw',
+      (snapshot: ChainStateSnapshot) => {
+        snapshot.registry.params.seedCapRaw = '0';
+      },
+    ],
+    [
+      'minTradingWindowSeconds',
+      (snapshot: ChainStateSnapshot) => {
+        snapshot.registry.params.minTradingWindowSeconds = 0;
+      },
+    ],
+    [
+      'maxTradingWindowSeconds',
+      (snapshot: ChainStateSnapshot) => {
+        snapshot.registry.params.maxTradingWindowSeconds = 0;
+      },
+    ],
+  ] as const)(
+    'rejects required parameter %s=0 by name and value',
+    (name, zeroParameter) => {
+      const snapshot = chainStateSnapshot(110);
+      zeroParameter(snapshot);
+
+      expect(() => validateChainStateSnapshot(snapshot)).toThrow(
+        `Registry required parameter ${name}=0 must be greater than zero`,
+      );
+    },
+  );
+
+  it('reports completed RPC attempts and the offending value in logs and health', async () => {
+    const invalidParams = [...LIVE_DEFAULT_PARAMS];
+    invalidParams[1] = 0n;
+    const { client } = mockChainClient({ defaultParams: invalidParams });
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await runIndexer(testPrisma, testConfig(), { once: true, client });
+
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /status=failed .*rpcRequests=2 .*seedFloorRaw=0 must be greater than zero/u,
+      ),
+    );
+    expect(await getHealth(testPrisma)).toMatchObject({
+      ok: false,
+      chainState: {
+        status: 'failed',
+        rpcRequestCount: 2,
+        error: expect.stringContaining('seedFloorRaw=0 must be greater than zero'),
+      },
     });
   });
 
@@ -385,6 +519,7 @@ describe('chain-state bootstrap', () => {
 
     expect(result).toMatchObject({
       status: 'failed',
+      rpcRequestCount: 2,
       changedRows: 0,
       error: expect.stringContaining('replace positive openingFeeRaw with zero'),
     });
@@ -394,8 +529,16 @@ describe('chain-state bootstrap', () => {
 
   it('persists none of a partial Multicall3 response and reports the failure in health', async () => {
     await initializeAt(110);
+    expect(
+      await bootstrapChainState(testPrisma, readerFor(chainStateSnapshot(110)), {
+        snapshotBlock: 110,
+      }),
+    ).toMatchObject({ status: 'complete' });
     const before = await materializedSnapshot();
-    const { client, multicall } = mockChainClient({ failSignerIndex: 1 });
+    const { client, multicall } = mockChainClient({
+      defaultParams: LIVE_DEFAULT_PARAMS,
+      failSignerIndex: 1,
+    });
 
     const result = await bootstrapChainState(
       testPrisma,
@@ -406,6 +549,7 @@ describe('chain-state bootstrap', () => {
     expect(multicall).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       status: 'failed',
+      rpcRequestCount: 2,
       changedRows: 0,
       error: expect.stringContaining('currentSigners(1) failed'),
     });
@@ -416,13 +560,10 @@ describe('chain-state bootstrap', () => {
         ready: false,
         status: 'failed',
         attemptedBlock: 110,
-        snapshotBlock: null,
+        snapshotBlock: 110,
+        rpcRequestCount: 2,
         error: expect.stringContaining('currentSigners(1) failed'),
-        issues: expect.arrayContaining([
-          'registry-parameters-invalid',
-          'committee-snapshot-invalid',
-          'market-types-snapshot-invalid',
-        ]),
+        issues: [],
       },
     });
   });

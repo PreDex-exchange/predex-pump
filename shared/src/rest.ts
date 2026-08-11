@@ -270,6 +270,7 @@ export interface ChainStateHealth {
   status: ChainStateBootstrapStatus;
   attemptedBlock: number | null;
   snapshotBlock: number | null;
+  rpcRequestCount: number;
   attemptedAt: string | null;
   completedAt: string | null;
   error: string | null;
