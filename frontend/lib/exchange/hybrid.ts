@@ -7,6 +7,11 @@ import type {
 } from '@predex-pump/shared/domain';
 import type { ExchangeApprovalStateResponse } from '@predex-pump/shared/rest';
 import {
+  assertAllowedMinimumTickSizeRaw,
+  isOrderSizeGranular,
+  isPriceOnTick,
+} from '@predex-pump/shared';
+import {
   ctfExchangeCollateralAmountForFill,
   ctfExchangeOrderAmounts,
   ctfExchangeOrderFromWire,
@@ -25,13 +30,22 @@ export function buildHybridOrderCommitment({
   side,
   priceRaw,
   sizeRaw,
+  minimumTickSizeRaw,
   expiration,
 }: {
   side: OrderSide;
   priceRaw: bigint;
   sizeRaw: bigint;
+  minimumTickSizeRaw: bigint;
   expiration: number;
 }): HybridOrderCommitment {
+  assertAllowedMinimumTickSizeRaw(minimumTickSizeRaw);
+  if (!isPriceOnTick(priceRaw, minimumTickSizeRaw)) {
+    throw new Error('Limit price must align to the market minimum tick size.');
+  }
+  if (!isOrderSizeGranular(sizeRaw)) {
+    throw new Error('Order size must align to the exchange size granularity.');
+  }
   const exchangeSide = side === 'BID' ? Side.BUY : Side.SELL;
   const amounts = ctfExchangeOrderAmounts({
     side: exchangeSide,

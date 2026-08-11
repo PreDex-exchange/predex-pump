@@ -79,24 +79,47 @@ const approvals: ExchangeApprovalStateResponse = {
 };
 
 describe('Hybrid order construction', () => {
-  it('uses P1 amount rounding for the displayed collateral commitment', () => {
+  it('builds exact collateral commitments only for tick-aligned granular orders', () => {
     const buy = buildHybridOrderCommitment({
       side: 'BID',
-      priceRaw: 570_001n,
-      sizeRaw: 2_500_001n,
+      priceRaw: 570_000n,
+      sizeRaw: 2_500_000n,
+      minimumTickSizeRaw: 1_000n,
       expiration: 2_000_000_000,
     });
     const sell = buildHybridOrderCommitment({
       side: 'ASK',
-      priceRaw: 570_001n,
-      sizeRaw: 2_500_001n,
+      priceRaw: 570_000n,
+      sizeRaw: 2_500_000n,
+      minimumTickSizeRaw: 1_000n,
       expiration: 2_000_000_000,
     });
 
-    expect(buy.collateralRaw).toBe(1_425_003n);
-    expect(sell.collateralRaw).toBe(1_425_004n);
+    expect(buy.collateralRaw).toBe(1_425_000n);
+    expect(sell.collateralRaw).toBe(1_425_000n);
     expect(buy.exchangeSide).toBe(Side.BUY);
     expect(sell.exchangeSide).toBe(Side.SELL);
+  });
+
+  it('rejects off-tick prices and awkward sizes before signing', () => {
+    expect(() =>
+      buildHybridOrderCommitment({
+        side: 'ASK',
+        priceRaw: 570_001n,
+        sizeRaw: 2_500_000n,
+        minimumTickSizeRaw: 1_000n,
+        expiration: 2_000_000_000,
+      }),
+    ).toThrow(/tick/u);
+    expect(() =>
+      buildHybridOrderCommitment({
+        side: 'ASK',
+        priceRaw: 570_000n,
+        sizeRaw: 2_500_001n,
+        minimumTickSizeRaw: 1_000n,
+        expiration: 2_000_000_000,
+      }),
+    ).toThrow(/granularity/u);
   });
 
   it('gates exact collateral and CTF approvals from indexed state', () => {
@@ -125,6 +148,7 @@ describe('single live venue projection', () => {
   it('never combines MiniCLOB and Hybrid orders into one ladder', () => {
     const book: OrderBook = {
       marketId: '1',
+      minimumTickSizeRaw: '1000',
       outcome: 'YES',
       tokenId: '101',
       bids: [

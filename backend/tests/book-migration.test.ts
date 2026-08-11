@@ -195,21 +195,24 @@ async function createHarness(input: {
   yes?: SeedOverrides;
   no?: SeedOverrides;
   approved?: boolean;
+  frozenYesPriceRaw?: bigint;
+  minimumTickSizeRaw?: bigint;
 } = {}): Promise<Harness> {
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
+  const frozenYesPriceRaw = input.frozenYesPriceRaw ?? 600_000n;
   const yesOrder = seedOrder({
     orderId: YES_SEED_ID,
     maker: account.address,
     tokenId: YES_TOKEN_ID,
-    priceRaw: 600_000n,
+    priceRaw: frozenYesPriceRaw,
     ...(input.yes === undefined ? {} : { overrides: input.yes }),
   });
   const noOrder = seedOrder({
     orderId: NO_SEED_ID,
     maker: account.address,
     tokenId: NO_TOKEN_ID,
-    priceRaw: 400_000n,
+    priceRaw: 1_000_000n - frozenYesPriceRaw,
     ...(input.no === undefined ? {} : { overrides: input.no }),
   });
   const yesInitiallyRecovered = yesOrder.open
@@ -243,7 +246,10 @@ async function createHarness(input: {
     data: {
       yesSeedOrderId: YES_SEED_ID.toString(),
       noSeedOrderId: NO_SEED_ID.toString(),
-      frozenYesPriceRaw: '600000',
+      frozenYesPriceRaw: frozenYesPriceRaw.toString(),
+      yesPriceRaw: frozenYesPriceRaw.toString(),
+      noPriceRaw: (1_000_000n - frozenYesPriceRaw).toString(),
+      minimumTickSizeRaw: (input.minimumTickSizeRaw ?? 1_000n).toString(),
     },
   });
   await testPrisma.order.createMany({
@@ -363,7 +369,7 @@ describe('graduated book migration', () => {
     expect(after?.no.offchainOrders).toHaveLength(1);
   });
 
-  it('migrates only each seed order unfilled remainder', async () => {
+  it('floors awkward partial-fill remainders to the representable size quantum', async () => {
     const harness = await createHarness({
       yes: { sizeRaw: 5_000_000n, filledRaw: 1_234_567n },
       no: { sizeRaw: 5_000_000n, filledRaw: 2_345_678n },
@@ -374,13 +380,62 @@ describe('graduated book migration', () => {
       orderBy: { outcome: 'asc' },
     });
     expect(replacements.map((order) => [order.outcome, order.sizeRaw])).toEqual([
-      ['NO', '2654322'],
-      ['YES', '3765433'],
+      ['NO', '2654000'],
+      ['YES', '3765000'],
     ]);
     expect(replacements.map((order) => order.priceRaw)).toEqual([
       '400000',
       '600000',
     ]);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      yesSnapshotRemainingRaw: '3765433',
+      noSnapshotRemainingRaw: '2654322',
+      yesReplacementSizeRaw: '3765000',
+      noReplacementSizeRaw: '2654000',
+      yesUnquotedRemainderRaw: '433',
+      noUnquotedRemainderRaw: '322',
+    });
+  });
+
+  it('quantizes the frozen YES ask upward, keeps complementary prices, and records deviations', async () => {
+    const harness = await createHarness({
+      frozenYesPriceRaw: 517_321n,
+      minimumTickSizeRaw: 1_000n,
+      yes: { sizeRaw: 900_000n, filledRaw: 449_877n },
+      no: { sizeRaw: 900_000n, filledRaw: 449_877n },
+    });
+
+    await runToStatus(harness, 'MIGRATED');
+    const replacements = await testPrisma.signedOrder.findMany({
+      where: { origin: 'BOOK_MIGRATION', status: 'OPEN' },
+      orderBy: { outcome: 'asc' },
+    });
+    expect(replacements.map((order) => [order.outcome, order.priceRaw, order.sizeRaw]))
+      .toEqual([
+        ['NO', '482000', '450000'],
+        ['YES', '518000', '450000'],
+      ]);
+    expect(BigInt(replacements[0]!.priceRaw) + BigInt(replacements[1]!.priceRaw))
+      .toBe(1_000_000n);
+    expect(BigInt(replacements[1]!.priceRaw)).toBeGreaterThanOrEqual(517_321n);
+
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      minimumTickSizeRaw: '1000',
+      yesPriceRaw: '517321',
+      noPriceRaw: '482679',
+      yesRealizedPriceRaw: '518000',
+      noRealizedPriceRaw: '482000',
+      yesPriceDeviationRaw: '679',
+      noPriceDeviationRaw: '-679',
+      yesReplacementSizeRaw: '450000',
+      noReplacementSizeRaw: '450000',
+      yesUnquotedRemainderRaw: '123',
+      noUnquotedRemainderRaw: '123',
+    });
   });
 
   it('does not create a zero-size replacement when one side is fully filled', async () => {

@@ -88,6 +88,7 @@ const market: Market = {
     depthFeeBps: 0,
     tradingWindowSeconds: 2592000,
     minimumTimeOpenSeconds: 0,
+    minimumTickSizeRaw: '1000',
   },
   createdAt: 1_785_500_000,
   tradingEndsAt: 1_788_092_000,

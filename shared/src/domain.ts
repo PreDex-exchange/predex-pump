@@ -45,6 +45,8 @@ export interface MarketParams {
   depthFeeBps: number;
   tradingWindowSeconds: number;
   minimumTimeOpenSeconds: number;
+  /** Mutable off-chain order-price quantum for this market. */
+  minimumTickSizeRaw: Raw;
 }
 
 export interface Market {
@@ -193,6 +195,8 @@ export interface OffchainOrder {
 
 export interface OrderBook {
   marketId: string;
+  /** Effective per-market price quantum applied to newly accepted orders. */
+  minimumTickSizeRaw: Raw;
   outcome: Outcome;
   tokenId: string;
   bids: BookLevel[]; // sorted best (highest price) first

@@ -104,6 +104,7 @@ function placeAction(): PlaceOrderAction {
     side: 'BID',
     priceRaw: 580_000n,
     sizeRaw: 100_000n,
+    minimumTickSizeRaw: 1_000n,
   };
 }
 

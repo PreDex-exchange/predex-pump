@@ -182,6 +182,31 @@ describe('POST /orders validation', () => {
     await expectReason(abovePar.request, 'INVALID_PRICE');
   });
 
+  it('accepts an on-tick price and rejects an off-tick price with PRICE_NOT_ON_TICK', async () => {
+    const onTick = await signedOrderRequest({
+      priceRaw: 517_000n,
+      sizeRaw: 123_000n,
+      salt: 131n,
+    });
+    expect((await submit(onTick.request)).statusCode).toBe(200);
+
+    const offTick = await signedOrderRequest({
+      priceRaw: 517_001n,
+      sizeRaw: 1_000_000n,
+      salt: 132n,
+    });
+    await expectReason(offTick.request, 'PRICE_NOT_ON_TICK');
+  });
+
+  it('rejects a size that could leave an unrepresentable partial-fill remainder', async () => {
+    const awkward = await signedOrderRequest({
+      priceRaw: 517_000n,
+      sizeRaw: 450_123n,
+      salt: 133n,
+    });
+    await expectReason(awkward.request, 'INVALID_SIZE');
+  });
+
   it('serves the authenticated maker orders and protects local withdrawal', async () => {
     const { request, account } = await signedOrderRequest({ salt: 14n });
     expect((await submit(request)).statusCode).toBe(200);

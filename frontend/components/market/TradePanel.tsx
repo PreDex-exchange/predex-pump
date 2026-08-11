@@ -270,7 +270,8 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           {buttonLabel}
         </Button>
         <p className={styles.reassure}>
-          Live Arc settlement · six-decimal ERC-20 USDC · no native value
+          Live Arc settlement · six-decimal ERC-20 USDC · no native value · future book tick{' '}
+          {formatUnits(BigInt(market.params.minimumTickSizeRaw), 6)} USDC
         </p>
 
         <div className={styles.position}>

@@ -60,6 +60,11 @@ import type {
   IngestOrderRequest,
   TransactionRequestDto,
 } from '@predex-pump/shared/rest';
+import {
+  assertAllowedMinimumTickSizeRaw,
+  isOrderSizeGranular,
+  isPriceOnTick,
+} from '@predex-pump/shared';
 
 import { ADDRESSES, ARC } from '@/lib/shared/addresses';
 
@@ -163,6 +168,7 @@ interface PlaceOrderInput {
   side: 'BID' | 'ASK';
   priceRaw: bigint;
   sizeRaw: bigint;
+  minimumTickSizeRaw: bigint;
   report: TxReporter;
 }
 
@@ -185,6 +191,7 @@ interface SignCtfExchangeOrderInput {
   side: 0 | 1;
   priceRaw: bigint;
   sizeRaw: bigint;
+  minimumTickSizeRaw: bigint;
   expiration: bigint;
   report: TxReporter;
 }
@@ -493,9 +500,17 @@ export async function signCtfExchangeOrderOnArc({
   side,
   priceRaw,
   sizeRaw,
+  minimumTickSizeRaw,
   expiration,
   report,
 }: SignCtfExchangeOrderInput): Promise<IngestOrderRequest> {
+  assertAllowedMinimumTickSizeRaw(minimumTickSizeRaw);
+  if (!isPriceOnTick(priceRaw, minimumTickSizeRaw)) {
+    throw new Error('Limit price must align to the current market tick before signing.');
+  }
+  if (!isOrderSizeGranular(sizeRaw)) {
+    throw new Error('Order size must align to the exchange size granularity before signing.');
+  }
   assertConnectedAccount(account);
   report({
     phase: 'checking',
@@ -849,13 +864,24 @@ async function readConditionState(conditionId: Hex) {
   }
 }
 
-function validateMiniClobOrderInput(priceRaw: bigint, sizeRaw: bigint) {
+function validateMiniClobOrderInput(
+  priceRaw: bigint,
+  sizeRaw: bigint,
+  minimumTickSizeRaw: bigint,
+) {
   if (priceRaw <= 0n || priceRaw > MINI_CLOB_PRICE_SCALE) {
     throw new Error(
       'Limit price must be greater than 0 and at most 1.000000 USDC per token.',
     );
   }
   if (sizeRaw <= 0n) throw new Error('Order size must be greater than zero.');
+  assertAllowedMinimumTickSizeRaw(minimumTickSizeRaw);
+  if (!isPriceOnTick(priceRaw, minimumTickSizeRaw)) {
+    throw new Error('Limit price must align to the current market tick.');
+  }
+  if (!isOrderSizeGranular(sizeRaw)) {
+    throw new Error('Order size must align to the exchange size granularity.');
+  }
 }
 
 function miniClobEventArgs(
@@ -915,9 +941,10 @@ export async function placeOrderOnArc({
   side,
   priceRaw,
   sizeRaw,
+  minimumTickSizeRaw,
   report,
 }: PlaceOrderInput) {
-  validateMiniClobOrderInput(priceRaw, sizeRaw);
+  validateMiniClobOrderInput(priceRaw, sizeRaw, minimumTickSizeRaw);
   assertConnectedAccount(account);
   report({
     phase: 'checking',

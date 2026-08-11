@@ -110,6 +110,7 @@ describe('REST shared contract', () => {
         depthFeeBps: 50,
         tradingWindowSeconds: 86400,
         minimumTimeOpenSeconds: 3600,
+        minimumTickSizeRaw: '1000',
       },
       createdAt: 1_700_000_100,
       tradingEndsAt: 1_700_086_500,
@@ -223,8 +224,10 @@ describe('REST shared contract', () => {
     const body = response.json<MarketBookResponse>();
     expect(body.marketId).toBe('1');
     expect(body.liveVenue).toBe('MINICLOB');
+    expect(body.minimumTickSizeRaw).toBe('1000');
     expect(body.yes).toMatchObject({
       marketId: '1',
+      minimumTickSizeRaw: '1000',
       outcome: 'YES',
       tokenId: '101',
       bids: [{ priceRaw: '600000', sizeRaw: '1250000', orderCount: 2 }],
@@ -250,6 +253,7 @@ describe('REST shared contract', () => {
     });
     expect(body.no).toEqual({
       marketId: '1',
+      minimumTickSizeRaw: '1000',
       outcome: 'NO',
       tokenId: '102',
       bids: [],

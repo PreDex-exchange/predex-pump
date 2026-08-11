@@ -3,7 +3,13 @@ import {
   createWriteClient,
   type PredexWriteClient,
 } from '@predex-pump/agent-sdk';
-import { ADDRESSES } from '@predex-pump/shared';
+import {
+  ADDRESSES,
+  assertAllowedMinimumTickSizeRaw,
+  isOrderSizeGranular,
+  isPriceOnTick,
+  leavesRepresentableRemainder,
+} from '@predex-pump/shared';
 import {
   collateralErc20Abi,
   miniClobFillPaymentRaw,
@@ -241,7 +247,13 @@ export class ArcTraderExecutor implements TraderExecutor {
     if (action.priceRaw <= 0n || action.priceRaw > 1_000_000n) {
       throw new Error('Exact quote price is outside the MiniCLOB range.');
     }
-    if (action.sizeRaw <= 0n) throw new Error('Exact quote size must be positive.');
+    assertAllowedMinimumTickSizeRaw(action.minimumTickSizeRaw);
+    if (!isPriceOnTick(action.priceRaw, action.minimumTickSizeRaw)) {
+      throw new Error('Exact quote price is not aligned to the market tick.');
+    }
+    if (!isOrderSizeGranular(action.sizeRaw)) {
+      throw new Error('Exact quote size is not aligned to the size quantum.');
+    }
     const marketId = requireUnsigned(action.marketId, 'marketId');
     const conditionId = requireHex(action.conditionId, 'conditionId');
     const tokenId = requireUnsigned(action.tokenId, 'tokenId');
@@ -387,6 +399,11 @@ export class ArcTraderExecutor implements TraderExecutor {
     if (action.fillSizeRaw > remainingRaw) {
       throw new Error(
         `Exact fill ${action.fillSizeRaw} exceeds fresh remaining ${remainingRaw}.`,
+      );
+    }
+    if (!leavesRepresentableRemainder(remainingRaw, action.fillSizeRaw)) {
+      throw new Error(
+        'Exact fill would leave a remainder outside the exchange size quantum.',
       );
     }
     if (action.fillSizeRaw < minimumFillRaw) {

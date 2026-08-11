@@ -2,6 +2,7 @@
 
 import type { Address, Market, RegistryConfig } from '@predex-pump/shared/domain';
 import type { MarketDetailResponse } from '@predex-pump/shared/rest';
+import { DEFAULT_MINIMUM_TICK_SIZE_RAW } from '@predex-pump/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -201,6 +202,7 @@ function buildPreviewMarket({
       depthFeeBps: 0,
       tradingWindowSeconds,
       minimumTimeOpenSeconds: 0,
+      minimumTickSizeRaw: DEFAULT_MINIMUM_TICK_SIZE_RAW.toString(),
     },
     createdAt: now,
     tradingEndsAt: now + tradingWindowSeconds,

@@ -23,6 +23,7 @@
     "indexer": "tsx src/indexer.ts",
     "indexer:once": "tsx src/indexer.ts --once",
     "operator": "tsx src/operator.ts",
+    "operator:set-tick": "tsx src/set-market-tick.ts",
     "summary": "tsx src/summary.ts",
     "dedup:backfill": "tsx src/dedup/backfill.ts",
     "bench:seed": "tsx bench/seed.ts",

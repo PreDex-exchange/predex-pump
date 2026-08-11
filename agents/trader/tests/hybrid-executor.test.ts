@@ -54,6 +54,7 @@ const ALL_REJECTIONS = [
   'MARKET_RESOLVED',
   'TOKEN_NOT_REGISTERED',
   'INVALID_PRICE',
+  'PRICE_NOT_ON_TICK',
   'INVALID_SIZE',
   'INVALID_FEE',
   'INVALID_TAKER',
@@ -194,8 +195,9 @@ function placeAction(overrides: Partial<HybridPlaceOrderAction> = {}): HybridPla
     complementTokenId: NO_TOKEN.toString(),
     outcome: 'YES',
     side: 'BID',
-    priceRaw: 570_001n,
-    sizeRaw: 2_500_001n,
+    priceRaw: 570_000n,
+    sizeRaw: 2_500_000n,
+    minimumTickSizeRaw: 1_000n,
     ...overrides,
   };
 }
@@ -326,7 +328,7 @@ describe('Hybrid ingest rejection policy', () => {
 });
 
 describe('Hybrid order construction and approvals', () => {
-  it('uses the P1 amount rounding in the signed wire order', async () => {
+  it('uses an exactly representable amount ratio in the signed wire order', async () => {
     const signer = account();
     const posted: IngestOrderRequest[] = [];
     const setup = executor(
@@ -344,10 +346,21 @@ describe('Hybrid order construction and approvals', () => {
     await setup.executor.placeOrder(placeAction());
 
     expect(posted[0]?.order).toMatchObject({
-      makerAmountRaw: '1425003',
-      takerAmountRaw: '2500001',
+      makerAmountRaw: '1425000',
+      takerAmountRaw: '2500000',
       side: Side.BUY,
     });
+  });
+
+  it('rejects an off-tick quote before reading chain state or signing', async () => {
+    const signer = account();
+    const setup = executor(signer);
+
+    await expect(
+      setup.executor.placeOrder(placeAction({ priceRaw: 570_001n })),
+    ).rejects.toThrow(/market tick/u);
+    expect(setup.chain.getBlock).not.toHaveBeenCalled();
+    expect(setup.rest.postOrder).not.toHaveBeenCalled();
   });
 
   it('does not propagate a transport exception containing the full signed POST body', async () => {
@@ -397,7 +410,7 @@ describe('Hybrid order construction and approvals', () => {
           return 10_000_000n;
         case 'allowance':
           allowanceReads += 1;
-          return allowanceReads === 1 ? 0n : 1_425_003n;
+          return allowanceReads === 1 ? 0n : 1_425_000n;
         default:
           throw new Error(`unexpected ${functionName}`);
       }
@@ -407,7 +420,7 @@ describe('Hybrid order construction and approvals', () => {
     await missing.executor.placeOrder(placeAction());
 
     expect(missing.writes.send).toHaveBeenCalledWith(
-      buildCtfExchangeCollateralApprovalTx({ amountRaw: 1_425_003n }),
+      buildCtfExchangeCollateralApprovalTx({ amountRaw: 1_425_000n }),
     );
     expect(missing.writes.send).toHaveBeenCalledOnce();
   });

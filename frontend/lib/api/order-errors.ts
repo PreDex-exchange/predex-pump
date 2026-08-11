@@ -17,8 +17,10 @@ export const ORDER_REJECTION_MESSAGES = {
     'This position token is not registered with the exchange. Refresh the market and wait for venue setup before trying again.',
   INVALID_PRICE:
     'The limit price is outside the supported range. Enter a price above 0 and no more than 1 USDC per token.',
+  PRICE_NOT_ON_TICK:
+    'The limit price is not aligned to this market’s current tick size. Refresh the market and use one of the displayed price increments before signing again.',
   INVALID_SIZE:
-    'The order size cannot be represented as a positive token amount. Increase or correct the size, then review it again.',
+    'The order size must be a positive multiple of 0.001 token. Correct the size, then review it again.',
   INVALID_FEE:
     'The signed fee does not match this venue’s fee policy. Refresh the page and create a new order with the current terms.',
   INVALID_TAKER:

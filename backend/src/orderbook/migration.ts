@@ -8,6 +8,13 @@ import {
   type SignedOrder,
 } from '@prisma/client';
 import {
+  ALLOWED_MINIMUM_TICK_SIZES_RAW,
+  ORDER_PRICE_SCALE_RAW,
+  assertAllowedMinimumTickSizeRaw,
+  floorOrderSizeToGranularity,
+  quantizePriceRaw,
+} from '@predex-pump/shared';
+import {
   CTF_EXCHANGE_PRICE_SCALE,
   Side,
   buildCtfExchangeApprovalForAllTx,
@@ -41,6 +48,8 @@ import { preflightSignedOrder } from './preflight.js';
 import { persistOrderValidationSnapshot } from './service.js';
 
 const CLAIM_LEASE_SECONDS = 120;
+const MAX_MIGRATION_PRICE_DEVIATION_RAW =
+  ALLOWED_MINIMUM_TICK_SIZES_RAW.at(-1)! - 1n;
 
 /**
  * Durable state machine (all replacement rows remain status=STAGED until the
@@ -135,8 +144,12 @@ function safeMessage(code: string): string {
     CANCEL_REVERTED: 'MiniCLOB seed cancellation transaction reverted',
     CANCEL_NOT_APPLIED: 'Confirmed MiniCLOB cancellation left the seed order open',
     INVALID_SEED: 'MiniCLOB seed state does not match the graduated market',
+    INVALID_TICK_SIZE: 'Market minimum tick size is outside the supported policy',
     MARKET_RESOLVED: 'Market resolved before its book migration completed',
     MISSING_RECOVERED_BALANCE: 'Recovered position-token balance is below the staged order size',
+    MIGRATION_PRICE_OUT_OF_RANGE: 'Tick quantization moved a replacement price outside the supported range',
+    MIGRATION_PRICE_DEVIATION: 'Tick quantization exceeded the bounded migration tolerance',
+    UNREPRESENTABLE_PRICE: 'Quantized replacement price was not exactly representable',
     TOKEN_NOT_REGISTERED: 'Market position tokens are not registered on CTFExchange',
     WRONG_NONCE: 'Operator nonce changed before migration publication',
   };
@@ -362,46 +375,70 @@ export class BookMigrationOperator {
     if (market.yesTokenId === null || market.noTokenId === null) {
       throw new MigrationInvariantError('INVALID_SEED', 'Market token binding is missing');
     }
+    const minimumTickSizeRaw = BigInt(market.minimumTickSizeRaw);
+    try {
+      assertAllowedMinimumTickSizeRaw(minimumTickSizeRaw);
+    } catch {
+      throw new MigrationInvariantError(
+        'INVALID_TICK_SIZE',
+        'Market minimum tick size is outside the supported policy',
+      );
+    }
+    const yesRealizedPriceRaw = quantizePriceRaw(
+      state.yesOrder.priceRaw,
+      minimumTickSizeRaw,
+      'UP',
+    );
+    const noRealizedPriceRaw = ORDER_PRICE_SCALE_RAW - yesRealizedPriceRaw;
+    if (
+      yesRealizedPriceRaw <= 0n ||
+      yesRealizedPriceRaw > ORDER_PRICE_SCALE_RAW ||
+      noRealizedPriceRaw <= 0n ||
+      noRealizedPriceRaw > ORDER_PRICE_SCALE_RAW
+    ) {
+      throw new MigrationInvariantError(
+        'MIGRATION_PRICE_OUT_OF_RANGE',
+        'Complementary tick quantization produced an invalid replacement price',
+      );
+    }
+    const yesPriceDeviationRaw =
+      yesRealizedPriceRaw - state.yesOrder.priceRaw;
+    const noPriceDeviationRaw =
+      noRealizedPriceRaw - state.noOrder.priceRaw;
+    if (
+      yesPriceDeviationRaw < 0n ||
+      yesPriceDeviationRaw >= minimumTickSizeRaw ||
+      yesPriceDeviationRaw > MAX_MIGRATION_PRICE_DEVIATION_RAW ||
+      noPriceDeviationRaw !== -yesPriceDeviationRaw
+    ) {
+      throw new MigrationInvariantError(
+        'MIGRATION_PRICE_DEVIATION',
+        'Replacement price exceeded the bounded one-tick migration tolerance',
+      );
+    }
+    const prices = {
+      YES: yesRealizedPriceRaw,
+      NO: noRealizedPriceRaw,
+    } as const;
     const replacements = await Promise.all(
       (['YES', 'NO'] as const).map(async (outcome) => {
         const seed = stateOrder(state, outcome);
-        const sizeRaw = remaining(seed);
+        const sizeRaw = floorOrderSizeToGranularity(remaining(seed));
         if (sizeRaw === 0n) return null;
         const salt = generateOrderSalt();
-        let low = 1n;
-        let high = seed.priceRaw;
-        // SELL collateral is rounded to whole raw units. Find the P1 builder
-        // input whose encoded ratio normalizes back to the exact seed price.
-        while (low < high) {
-          const candidatePrice = (low + high) / 2n;
-          const candidate = buildCtfExchangeOrder({
-            maker: this.account.address,
-            tokenId: seed.tokenId,
-            side: Side.SELL,
-            priceRaw: candidatePrice,
-            sizeRaw,
-            nonce: state.makerNonce,
-            salt,
-          });
-          if (ctfExchangeOrderTerms(candidate).priceRaw < seed.priceRaw) {
-            low = candidatePrice + 1n;
-          } else {
-            high = candidatePrice;
-          }
-        }
         const unsigned = buildCtfExchangeOrder({
           maker: this.account.address,
           tokenId: seed.tokenId,
           side: Side.SELL,
-          priceRaw: low,
+          priceRaw: prices[outcome],
           sizeRaw,
           nonce: state.makerNonce,
           salt,
         });
-        if (ctfExchangeOrderTerms(unsigned).priceRaw !== seed.priceRaw) {
+        if (ctfExchangeOrderTerms(unsigned).priceRaw !== prices[outcome]) {
           throw new MigrationInvariantError(
             'UNREPRESENTABLE_PRICE',
-            'Recovered size cannot encode the exact seed price',
+            'Granular replacement size cannot encode the quantized price exactly',
           );
         }
         const order = await signCtfExchangeOrder(this.account, unsigned);
@@ -451,6 +488,25 @@ export class BookMigrationOperator {
           noPriceRaw: state.noOrder.priceRaw.toString(),
           yesSnapshotRemainingRaw: remaining(state.yesOrder).toString(),
           noSnapshotRemainingRaw: remaining(state.noOrder).toString(),
+          minimumTickSizeRaw: minimumTickSizeRaw.toString(),
+          yesRealizedPriceRaw: yesRealizedPriceRaw.toString(),
+          noRealizedPriceRaw: noRealizedPriceRaw.toString(),
+          yesPriceDeviationRaw: yesPriceDeviationRaw.toString(),
+          noPriceDeviationRaw: noPriceDeviationRaw.toString(),
+          yesReplacementSizeRaw: floorOrderSizeToGranularity(
+            remaining(state.yesOrder),
+          ).toString(),
+          noReplacementSizeRaw: floorOrderSizeToGranularity(
+            remaining(state.noOrder),
+          ).toString(),
+          yesUnquotedRemainderRaw: (
+            remaining(state.yesOrder) -
+            floorOrderSizeToGranularity(remaining(state.yesOrder))
+          ).toString(),
+          noUnquotedRemainderRaw: (
+            remaining(state.noOrder) -
+            floorOrderSizeToGranularity(remaining(state.noOrder))
+          ).toString(),
           yesReplacementOrderHash: yesReplacement?.orderHash ?? null,
           noReplacementOrderHash: noReplacement?.orderHash ?? null,
           approvalStatus: state.ctfApprovedForAll
@@ -491,8 +547,24 @@ export class BookMigrationOperator {
       where: { orderHash: { in: hashes } },
     });
     const byHash = new Map(rows.map((row) => [row.orderHash, row]));
+    if (
+      migration.minimumTickSizeRaw === null ||
+      migration.yesRealizedPriceRaw === null ||
+      migration.noRealizedPriceRaw === null ||
+      migration.yesSnapshotRemainingRaw !== remaining(state.yesOrder).toString() ||
+      migration.noSnapshotRemainingRaw !== remaining(state.noOrder).toString()
+    ) {
+      return false;
+    }
     for (const outcome of ['YES', 'NO'] as const) {
-      const expectedSize = remaining(stateOrder(state, outcome));
+      const expectedSize = floorOrderSizeToGranularity(
+        remaining(stateOrder(state, outcome)),
+      );
+      const expectedPrice = BigInt(
+        outcome === 'YES'
+          ? migration.yesRealizedPriceRaw
+          : migration.noRealizedPriceRaw,
+      );
       const hash =
         outcome === 'YES'
           ? migration.yesReplacementOrderHash
@@ -509,7 +581,7 @@ export class BookMigrationOperator {
         row.origin !== 'BOOK_MIGRATION' ||
         row.outcome !== outcome ||
         BigInt(row.sizeRaw) !== expectedSize ||
-        BigInt(row.priceRaw) !== stateOrder(state, outcome).priceRaw ||
+        BigInt(row.priceRaw) !== expectedPrice ||
         BigInt(row.nonceRaw) !== state.makerNonce
       ) {
         return false;

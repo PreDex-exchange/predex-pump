@@ -71,6 +71,7 @@ export type MarketDtoRow = Pick<
   | 'depthFeeBps'
   | 'tradingWindowSeconds'
   | 'minimumTimeOpenSeconds'
+  | 'minimumTickSizeRaw'
   | 'createdAt'
   | 'tradingEndsAt'
   | 'graduatedAt'
@@ -183,6 +184,7 @@ export function toMarketDto(market: MarketDtoRow): Market {
       depthFeeBps: market.depthFeeBps,
       tradingWindowSeconds: market.tradingWindowSeconds,
       minimumTimeOpenSeconds: market.minimumTimeOpenSeconds,
+      minimumTickSizeRaw: market.minimumTickSizeRaw,
     },
     createdAt: market.createdAt,
     tradingEndsAt: market.tradingEndsAt,

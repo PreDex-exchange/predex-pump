@@ -8,6 +8,12 @@ import type {
   Position,
 } from '@predex-pump/shared/domain';
 import type { MarketBookResponse } from '@predex-pump/shared/rest';
+import {
+  isOrderSizeGranular,
+  isPriceOnTick,
+  leavesRepresentableRemainder,
+  quantizePriceRaw,
+} from '@predex-pump/shared';
 import { useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useAccount } from 'wagmi';
@@ -49,6 +55,17 @@ const PRICE_SCALE = 1_000_000n;
 function inputRaw(value: string) {
   const raw = parseUsdcInput(value);
   return raw === null ? null : BigInt(raw);
+}
+
+function snappedPriceInput(
+  priceRaw: bigint,
+  tickSizeRaw: bigint,
+  side: 'BID' | 'ASK',
+): string {
+  return formatUnits(
+    quantizePriceRaw(priceRaw, tickSizeRaw, side === 'BID' ? 'DOWN' : 'UP'),
+    6,
+  );
 }
 
 function orderRefundRaw(order: Order) {
@@ -147,10 +164,11 @@ function MiniClobOrderBookPanel({
   market,
   positions = [],
 }: OrderBookPanelProps) {
+  const minimumTickSizeRaw = BigInt(books.minimumTickSizeRaw);
   const [outcome, setOutcome] = useState<Outcome>('YES');
   const [orderSide, setOrderSide] = useState<'BID' | 'ASK'>('BID');
   const [price, setPrice] = useState(() =>
-    formatUnits(BigInt(market.yesPriceRaw), 6),
+    snappedPriceInput(BigInt(market.yesPriceRaw), minimumTickSizeRaw, 'BID'),
   );
   const [size, setSize] = useState('0.20');
   const [fillSize, setFillSize] = useState('');
@@ -174,8 +192,8 @@ function MiniClobOrderBookPanel({
     (position) => position.outcome === outcome,
   );
   const validPrice =
-    priceRaw !== null && priceRaw > 0n && priceRaw <= PRICE_SCALE;
-  const validSize = sizeRaw !== null && sizeRaw > 0n;
+    priceRaw !== null && isPriceOnTick(priceRaw, minimumTickSizeRaw);
+  const validSize = sizeRaw !== null && isOrderSizeGranular(sizeRaw);
   const placeEscrowRaw =
     validPrice && validSize
       ? orderSide === 'BID'
@@ -210,7 +228,10 @@ function MiniClobOrderBookPanel({
     action?.kind === 'fill' &&
     fillSizeRaw !== null &&
     fillSizeRaw > 0n &&
-    fillSizeRaw <= BigInt(action.order.remainingRaw);
+    leavesRepresentableRemainder(
+      BigInt(action.order.remainingRaw),
+      fillSizeRaw,
+    );
   const fillPaymentRaw =
     action?.kind === 'fill' && validFill && fillSizeRaw !== null
       ? miniClobFillPaymentRaw(
@@ -223,13 +244,14 @@ function MiniClobOrderBookPanel({
   function selectOutcome(nextOutcome: Outcome) {
     setOutcome(nextOutcome);
     setPrice(
-      formatUnits(
+      snappedPriceInput(
         BigInt(
           nextOutcome === 'YES'
             ? market.yesPriceRaw
             : market.noPriceRaw,
         ),
-        6,
+        minimumTickSizeRaw,
+        orderSide,
       ),
     );
     tx.reset();
@@ -264,6 +286,7 @@ function MiniClobOrderBookPanel({
           side: orderSide,
           priceRaw,
           sizeRaw,
+          minimumTickSizeRaw,
           report,
         }),
       );
@@ -447,6 +470,11 @@ function MiniClobOrderBookPanel({
               compact
               onChange={(side) => {
                 setOrderSide(side);
+                if (priceRaw !== null) {
+                  setPrice(
+                    snappedPriceInput(priceRaw, minimumTickSizeRaw, side),
+                  );
+                }
                 tx.reset();
               }}
               options={[
@@ -462,11 +490,30 @@ function MiniClobOrderBookPanel({
                   aria-invalid={!validPrice}
                   inputMode="decimal"
                   onChange={(event) => setPrice(event.target.value)}
+                  onBlur={() => {
+                    if (
+                      priceRaw !== null &&
+                      priceRaw >= 0n &&
+                      priceRaw <= PRICE_SCALE
+                    ) {
+                      setPrice(
+                        snappedPriceInput(
+                          priceRaw,
+                          minimumTickSizeRaw,
+                          orderSide,
+                        ),
+                      );
+                    }
+                  }}
+                  step={formatUnits(minimumTickSizeRaw, 6)}
                   value={price}
                 />
                 <b>USDC/token</b>
               </span>
             </label>
+            <p className={styles.onchainNote}>
+              Price tick {formatUnits(minimumTickSizeRaw, 6)} USDC · size step 0.001 token
+            </p>
             <label className={styles.field}>
               <span>Size</span>
               <span className={styles.input}>

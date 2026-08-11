@@ -53,6 +53,8 @@ export interface MarketDetailResponse {
 // GET /markets/:id/book  → both outcomes of the graduated book (empty until graduation)
 export interface MarketBookResponse {
   marketId: string;
+  /** Effective per-market price quantum applied to newly accepted orders. */
+  minimumTickSizeRaw: Raw;
   /** Exactly one venue is actionable; P4 will move this from MiniCLOB to Hybrid. */
   liveVenue: LiveBookVenue;
   yes: OrderBook;
@@ -72,6 +74,7 @@ export type OrderIngestRejectionCode =
   | 'EXPIRED'
   | 'INVALID_SIZE'
   | 'INVALID_PRICE'
+  | 'PRICE_NOT_ON_TICK'
   | 'INVALID_FEE'
   | 'INVALID_TAKER'
   | 'MARKET_NOT_FOUND'

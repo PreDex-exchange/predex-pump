@@ -21,6 +21,11 @@ import type {
   TruthSignalResponse,
   WithdrawOrderResponse,
 } from '@predex-pump/shared';
+import {
+  fillSizePreservingRepresentableRemainder,
+  floorOrderSizeToGranularity,
+  quantizePriceRaw,
+} from '@predex-pump/shared';
 
 import type { TraderLogger } from './logger.js';
 
@@ -56,6 +61,7 @@ export interface PlaceOrderAction {
   side: 'BID' | 'ASK';
   priceRaw: bigint;
   sizeRaw: bigint;
+  minimumTickSizeRaw: bigint;
 }
 
 export interface FillOrderAction {
@@ -329,10 +335,17 @@ export class TraderAgent {
   private readonly sessionPotentialYesIncreaseRaw = new Map<string, bigint>();
   private readonly pendingPlacedOrderIds = new Set<string>();
   private readonly confirmedClosedOrderIds = new Set<string>();
+  private readonly quoteSizeRaw: bigint;
+  private readonly takeSizeRaw: bigint;
 
   constructor(private readonly options: TraderAgentOptions) {
     if (!options.dryRun && options.executor === undefined) {
       throw new Error('A trader executor is required when dry-run is disabled.');
+    }
+    this.quoteSizeRaw = floorOrderSizeToGranularity(options.quoteSizeRaw);
+    this.takeSizeRaw = floorOrderSizeToGranularity(options.takeSizeRaw);
+    if (this.quoteSizeRaw === 0n || this.takeSizeRaw === 0n) {
+      throw new Error('Trader quote and take sizes must reach the 1000-raw size quantum.');
     }
   }
 
@@ -556,6 +569,15 @@ export class TraderAgent {
     risk: CycleRisk,
     inventory: InventoryState,
   ): Promise<boolean> {
+    if (fillSizeRaw <= 0n) {
+      this.refuse(
+        snapshot.market.id,
+        'FILL',
+        'no fill at or below the configured take size can leave a representable remainder',
+        { side: order.side, orderId: order.orderId },
+      );
+      return false;
+    }
     if (BigInt(order.remainingRaw) < fillSizeRaw) {
       this.refuse(
         snapshot.market.id,
@@ -753,7 +775,7 @@ export class TraderAgent {
           side,
           fairValueYesRaw: fairValueYesRaw.toString(),
           priceRaw: priceRaw.toString(),
-          sizeRaw: this.options.quoteSizeRaw.toString(),
+          sizeRaw: this.quoteSizeRaw.toString(),
         },
       );
       return false;
@@ -768,13 +790,13 @@ export class TraderAgent {
           side,
           fairValueYesRaw: fairValueYesRaw.toString(),
           priceRaw: priceRaw.toString(),
-          sizeRaw: this.options.quoteSizeRaw.toString(),
+          sizeRaw: this.quoteSizeRaw.toString(),
         },
       );
       return false;
     }
     if (side === 'BID') {
-      const after = inventory.projectedYesRaw + this.options.quoteSizeRaw;
+      const after = inventory.projectedYesRaw + this.quoteSizeRaw;
       if (after > this.options.maxInventoryPerSideRaw) {
         this.refuse(
           snapshot.market.id,
@@ -785,22 +807,22 @@ export class TraderAgent {
             side,
             fairValueYesRaw: fairValueYesRaw.toString(),
             priceRaw: priceRaw.toString(),
-            sizeRaw: this.options.quoteSizeRaw.toString(),
+            sizeRaw: this.quoteSizeRaw.toString(),
           },
         );
         return false;
       }
-    } else if (inventory.availableYesRaw < this.options.quoteSizeRaw) {
+    } else if (inventory.availableYesRaw < this.quoteSizeRaw) {
       this.refuse(
         snapshot.market.id,
         'PLACE',
-        `available YES inventory ${inventory.availableYesRaw} is below exact quote size ${this.options.quoteSizeRaw}`,
+        `available YES inventory ${inventory.availableYesRaw} is below exact quote size ${this.quoteSizeRaw}`,
         {
           venue: snapshot.book.liveVenue,
           side,
           fairValueYesRaw: fairValueYesRaw.toString(),
           priceRaw: priceRaw.toString(),
-          sizeRaw: this.options.quoteSizeRaw.toString(),
+          sizeRaw: this.quoteSizeRaw.toString(),
         },
       );
       return false;
@@ -810,7 +832,7 @@ export class TraderAgent {
       snapshot.book.liveVenue,
       side,
       priceRaw,
-      this.options.quoteSizeRaw,
+      this.quoteSizeRaw,
     );
     const capRefusal = this.capRefusal(notionalRaw, risk);
     if (capRefusal !== null) {
@@ -819,7 +841,7 @@ export class TraderAgent {
         side,
         fairValueYesRaw: fairValueYesRaw.toString(),
         priceRaw: priceRaw.toString(),
-        sizeRaw: this.options.quoteSizeRaw.toString(),
+        sizeRaw: this.quoteSizeRaw.toString(),
         notionalRaw: notionalRaw.toString(),
       });
       return false;
@@ -835,7 +857,7 @@ export class TraderAgent {
         side,
         fairValueYesRaw: fairValueYesRaw.toString(),
         priceRaw: priceRaw.toString(),
-        sizeRaw: this.options.quoteSizeRaw.toString(),
+        sizeRaw: this.quoteSizeRaw.toString(),
         notionalRaw: notionalRaw.toString(),
         sessionSpendRaw: (risk.spendRaw + notionalRaw).toString(),
         message: 'fair value → quote exact configured size → no broadcast',
@@ -850,7 +872,8 @@ export class TraderAgent {
             outcome: 'YES',
             side,
             priceRaw,
-            sizeRaw: this.options.quoteSizeRaw,
+            sizeRaw: this.quoteSizeRaw,
+            minimumTickSizeRaw: BigInt(snapshot.book.minimumTickSizeRaw),
           });
           if (result === undefined) {
             throw new Error('MINICLOB trader executor was unavailable');
@@ -867,7 +890,7 @@ export class TraderAgent {
             orderId: result.orderId,
             fairValueYesRaw: fairValueYesRaw.toString(),
             priceRaw: priceRaw.toString(),
-            sizeRaw: this.options.quoteSizeRaw.toString(),
+            sizeRaw: this.quoteSizeRaw.toString(),
             notionalRaw: notionalRaw.toString(),
             sessionSpendRaw: (risk.spendRaw + notionalRaw).toString(),
             txHash: result.txHash,
@@ -882,7 +905,8 @@ export class TraderAgent {
             outcome: 'YES',
             side,
             priceRaw,
-            sizeRaw: this.options.quoteSizeRaw,
+            sizeRaw: this.quoteSizeRaw,
+            minimumTickSizeRaw: BigInt(snapshot.book.minimumTickSizeRaw),
           });
           if (result === undefined) {
             throw new Error('HYBRID trader executor was unavailable');
@@ -915,7 +939,7 @@ export class TraderAgent {
             orderId: result.orderHash,
             fairValueYesRaw: fairValueYesRaw.toString(),
             priceRaw: priceRaw.toString(),
-            sizeRaw: this.options.quoteSizeRaw.toString(),
+            sizeRaw: this.quoteSizeRaw.toString(),
             notionalRaw: notionalRaw.toString(),
             sessionSpendRaw: (risk.spendRaw + notionalRaw).toString(),
             message:
@@ -958,13 +982,13 @@ export class TraderAgent {
 
     risk.spendRaw += notionalRaw;
     risk.inFlight += 1;
-    if (side === 'BID') inventory.projectedYesRaw += this.options.quoteSizeRaw;
-    else inventory.availableYesRaw -= this.options.quoteSizeRaw;
+    if (side === 'BID') inventory.projectedYesRaw += this.quoteSizeRaw;
+    else inventory.availableYesRaw -= this.quoteSizeRaw;
     if (side === 'BID' && !this.options.dryRun) {
       this.sessionPotentialYesIncreaseRaw.set(
         snapshot.market.id,
         (this.sessionPotentialYesIncreaseRaw.get(snapshot.market.id) ?? 0n) +
-          this.options.quoteSizeRaw,
+          this.quoteSizeRaw,
       );
     }
     return true;
@@ -1146,8 +1170,28 @@ export class TraderAgent {
       }
 
       const fair = BigInt(signal.fairValueYesRaw);
-      const bidPrice = fair - this.options.quoteHalfSpreadRaw;
-      const askPrice = fair + this.options.quoteHalfSpreadRaw;
+      const rawBidPrice = fair - this.options.quoteHalfSpreadRaw;
+      const rawAskPrice = fair + this.options.quoteHalfSpreadRaw;
+      if (rawBidPrice <= 0n || rawAskPrice > PRICE_SCALE) {
+        this.refuse(
+          market.id,
+          'PLACE',
+          `configured half-spread produces out-of-range exact quotes ${rawBidPrice}/${rawAskPrice}; no clamp`,
+          { fairValueYesRaw: fair.toString() },
+        );
+        continue;
+      }
+      const minimumTickSizeRaw = BigInt(book.minimumTickSizeRaw);
+      const bidPrice = quantizePriceRaw(
+        rawBidPrice,
+        minimumTickSizeRaw,
+        'DOWN',
+      );
+      const askPrice = quantizePriceRaw(
+        rawAskPrice,
+        minimumTickSizeRaw,
+        'UP',
+      );
       this.options.logger.write({
         level: 'info',
         event: 'market-read',
@@ -1166,7 +1210,7 @@ export class TraderAgent {
         this.refuse(
           market.id,
           'PLACE',
-          `configured half-spread produces out-of-range exact quotes ${bidPrice}/${askPrice}; no clamp`,
+          `market tick ${minimumTickSizeRaw} moves quotes outside the supported range ${bidPrice}/${askPrice}; no clamp`,
           { fairValueYesRaw: fair.toString() },
         );
         continue;
@@ -1212,7 +1256,10 @@ export class TraderAgent {
         await this.executeFill(
           snapshot,
           externalAsk,
-          this.options.takeSizeRaw,
+          fillSizePreservingRepresentableRemainder(
+            BigInt(externalAsk.remainingRaw),
+            this.takeSizeRaw,
+          ),
           fair,
           risk,
           inventory,
@@ -1244,7 +1291,10 @@ export class TraderAgent {
         await this.executeFill(
           snapshot,
           externalBid,
-          this.options.takeSizeRaw,
+          fillSizePreservingRepresentableRemainder(
+            BigInt(externalBid.remainingRaw),
+            this.takeSizeRaw,
+          ),
           fair,
           risk,
           inventory,

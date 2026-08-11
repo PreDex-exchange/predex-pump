@@ -75,6 +75,7 @@ const MARKET_SELECT = {
   depthFeeBps: true,
   tradingWindowSeconds: true,
   minimumTimeOpenSeconds: true,
+  minimumTickSizeRaw: true,
   createdAt: true,
   tradingEndsAt: true,
   graduatedAt: true,
@@ -304,6 +305,7 @@ function buildLevels(orders: readonly LevelOrder[], side: 'BID' | 'ASK') {
 
 function buildOrderBook(
   marketId: string,
+  minimumTickSizeRaw: string,
   outcome: 'YES' | 'NO',
   tokenId: string,
   rows: readonly OrderDtoRow[],
@@ -333,6 +335,7 @@ function buildOrderBook(
   const asks = buildLevels([...orders, ...offchainOrders], 'ASK');
   return {
     marketId,
+    minimumTickSizeRaw,
     outcome,
     tokenId,
     bids,
@@ -356,6 +359,7 @@ export async function getMarketBook(
       id: true,
       yesTokenId: true,
       noTokenId: true,
+      minimumTickSizeRaw: true,
       bookMigration: { select: { status: true, cancelledAt: true } },
     },
   });
@@ -387,9 +391,11 @@ export async function getMarketBook(
         ];
   return {
     marketId,
+    minimumTickSizeRaw: market.minimumTickSizeRaw,
     liveVenue,
     yes: buildOrderBook(
       marketId,
+      market.minimumTickSizeRaw,
       'YES',
       market.yesTokenId ?? '',
       liveMiniClobOrders,
@@ -397,6 +403,7 @@ export async function getMarketBook(
     ),
     no: buildOrderBook(
       marketId,
+      market.minimumTickSizeRaw,
       'NO',
       market.noTokenId ?? '',
       liveMiniClobOrders,
@@ -415,6 +422,7 @@ export async function getOrderBook(
       id: true,
       yesTokenId: true,
       noTokenId: true,
+      minimumTickSizeRaw: true,
       bookMigration: { select: { status: true, cancelledAt: true } },
     },
   });
@@ -441,6 +449,7 @@ export async function getOrderBook(
     : [];
   return buildOrderBook(
     market.id,
+    market.minimumTickSizeRaw,
     outcome,
     tokenId,
     hybrid ? [] : orders,

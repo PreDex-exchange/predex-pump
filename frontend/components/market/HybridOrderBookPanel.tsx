@@ -14,6 +14,12 @@ import type {
   WithdrawOrderResponse,
 } from '@predex-pump/shared/rest';
 import {
+  isOrderSizeGranular,
+  isPriceOnTick,
+  leavesRepresentableRemainder,
+  quantizePriceRaw,
+} from '@predex-pump/shared';
+import {
   ctfExchangeCollateralAmountForFill,
   ctfExchangeOrderFromWire,
 } from '@predex-pump/shared/tx';
@@ -80,6 +86,17 @@ const APPROVAL_INDEX_GRACE_SECONDS = 120;
 function rawInput(value: string): bigint | null {
   const parsed = parseUsdcInput(value);
   return parsed === null ? null : BigInt(parsed);
+}
+
+function snappedPriceInput(
+  priceRaw: bigint,
+  tickSizeRaw: bigint,
+  side: OrderSide,
+): string {
+  return formatUnits(
+    quantizePriceRaw(priceRaw, tickSizeRaw, side === 'BID' ? 'DOWN' : 'UP'),
+    6,
+  );
 }
 
 function utcInputValue(timestamp: number): string {
@@ -220,11 +237,12 @@ export function HybridOrderBookPanel({
   const myOrders = useMyOrders(address, authenticated);
   const approvalTx = useTxFlow();
   const actionTx = useTxFlow();
+  const minimumTickSizeRaw = BigInt(books.minimumTickSizeRaw);
 
   const [outcome, setOutcome] = useState<Outcome>('YES');
   const [orderSide, setOrderSide] = useState<OrderSide>('BID');
   const [price, setPrice] = useState(() =>
-    formatUnits(BigInt(market.yesPriceRaw), 6),
+    snappedPriceInput(BigInt(market.yesPriceRaw), minimumTickSizeRaw, 'BID'),
   );
   const [size, setSize] = useState('0.20');
   const [expiry, setExpiry] = useState(() =>
@@ -261,6 +279,10 @@ export function HybridOrderBookPanel({
   );
   const priceRaw = rawInput(price);
   const sizeRaw = rawInput(size);
+  const priceOnTick =
+    priceRaw !== null && isPriceOnTick(priceRaw, minimumTickSizeRaw);
+  const sizeIsGranular =
+    sizeRaw !== null && isOrderSizeGranular(sizeRaw);
   const expiration = parseUtcInput(expiry);
   const validExpiration =
     expiration !== null && expiration > nowSeconds;
@@ -269,9 +291,8 @@ export function HybridOrderBookPanel({
       priceRaw === null ||
       sizeRaw === null ||
       expiration === null ||
-      priceRaw <= 0n ||
-      priceRaw > 1_000_000n ||
-      sizeRaw <= 0n
+      !priceOnTick ||
+      !sizeIsGranular
     ) {
       return null;
     }
@@ -280,12 +301,21 @@ export function HybridOrderBookPanel({
         side: orderSide,
         priceRaw,
         sizeRaw,
+        minimumTickSizeRaw,
         expiration,
       });
     } catch {
       return null;
     }
-  }, [expiration, orderSide, priceRaw, sizeRaw]);
+  }, [
+    expiration,
+    minimumTickSizeRaw,
+    orderSide,
+    priceOnTick,
+    priceRaw,
+    sizeIsGranular,
+    sizeRaw,
+  ]);
   const effectiveApprovals = useMemo(
     () =>
       approvalStateWithConfirmed(
@@ -326,7 +356,10 @@ export function HybridOrderBookPanel({
     fillTarget !== null &&
     fillSizeRaw !== null &&
     fillSizeRaw > 0n &&
-    fillSizeRaw <= BigInt(fillTarget.remainingRaw);
+    leavesRepresentableRemainder(
+      BigInt(fillTarget.remainingRaw),
+      fillSizeRaw,
+    );
   const fillIsOwnOrder =
     fillTarget !== null &&
     address !== undefined &&
@@ -435,6 +468,7 @@ export function HybridOrderBookPanel({
         side: commitment.exchangeSide,
         priceRaw: commitment.priceRaw,
         sizeRaw: commitment.sizeRaw,
+        minimumTickSizeRaw,
         expiration: BigInt(commitment.expiration),
         report,
       });
@@ -595,13 +629,14 @@ export function HybridOrderBookPanel({
             onChange={(nextOutcome) => {
               setOutcome(nextOutcome);
               setPrice(
-                formatUnits(
+                snappedPriceInput(
                   BigInt(
                     nextOutcome === 'YES'
                       ? market.yesPriceRaw
                       : market.noPriceRaw,
                   ),
-                  6,
+                  minimumTickSizeRaw,
+                  orderSide,
                 ),
               );
               actionTx.reset();
@@ -662,6 +697,11 @@ export function HybridOrderBookPanel({
               compact
               onChange={(side) => {
                 setOrderSide(side);
+                if (priceRaw !== null) {
+                  setPrice(
+                    snappedPriceInput(priceRaw, minimumTickSizeRaw, side),
+                  );
+                }
                 actionTx.reset();
               }}
               options={[
@@ -675,12 +715,26 @@ export function HybridOrderBookPanel({
               <span className={styles.input}>
                 <input
                   aria-invalid={
-                    priceRaw === null ||
-                    priceRaw <= 0n ||
-                    priceRaw > 1_000_000n
+                    !priceOnTick
                   }
                   inputMode="decimal"
                   onChange={(event) => setPrice(event.target.value)}
+                  onBlur={() => {
+                    if (
+                      priceRaw !== null &&
+                      priceRaw >= 0n &&
+                      priceRaw <= 1_000_000n
+                    ) {
+                      setPrice(
+                        snappedPriceInput(
+                          priceRaw,
+                          minimumTickSizeRaw,
+                          orderSide,
+                        ),
+                      );
+                    }
+                  }}
+                  step={formatUnits(minimumTickSizeRaw, 6)}
                   value={price}
                 />
                 <b>USDC/token</b>
@@ -690,7 +744,7 @@ export function HybridOrderBookPanel({
               <span>Size</span>
               <span className={styles.input}>
                 <input
-                  aria-invalid={sizeRaw === null || sizeRaw <= 0n}
+                  aria-invalid={!sizeIsGranular}
                   inputMode="decimal"
                   onChange={(event) => setSize(event.target.value)}
                   value={size}
@@ -698,6 +752,9 @@ export function HybridOrderBookPanel({
                 <b>{outcome}</b>
               </span>
             </label>
+            <p className={styles.bindingNote}>
+              Price tick {formatUnits(minimumTickSizeRaw, 6)} USDC · size step 0.001 token
+            </p>
             <label className={styles.field}>
               <span>Expiry (UTC)</span>
               <span className={styles.input}>

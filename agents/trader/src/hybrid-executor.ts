@@ -8,6 +8,10 @@ import {
 } from '@predex-pump/agent-sdk';
 import {
   ADDRESSES,
+  assertAllowedMinimumTickSizeRaw,
+  isOrderSizeGranular,
+  isPriceOnTick,
+  leavesRepresentableRemainder,
   type IngestOrderRequest,
   type MakerOrdersResponse,
   type OffchainOrder,
@@ -108,9 +112,13 @@ export const ORDER_INGEST_REJECTION_POLICY = {
     classification: 'permanent',
     reason: 'the signed price is outside the exchange range',
   },
+  PRICE_NOT_ON_TICK: {
+    classification: 'permanent',
+    reason: "the signed price was not aligned to the market's current tick size",
+  },
   INVALID_SIZE: {
     classification: 'permanent',
-    reason: 'the signed amounts do not represent a positive token size',
+    reason: 'the signed size is not a positive multiple of the exchange size quantum',
   },
   INVALID_FEE: {
     classification: 'permanent',
@@ -560,6 +568,13 @@ export class ArcHybridTraderExecutor implements HybridTraderExecutor {
   private async buildSignedOrder(
     action: HybridPlaceOrderAction,
   ): Promise<IngestOrderRequest> {
+    assertAllowedMinimumTickSizeRaw(action.minimumTickSizeRaw);
+    if (!isPriceOnTick(action.priceRaw, action.minimumTickSizeRaw)) {
+      throw new Error('Hybrid quote price is not aligned to the market tick.');
+    }
+    if (!isOrderSizeGranular(action.sizeRaw)) {
+      throw new Error('Hybrid quote size is not aligned to the size quantum.');
+    }
     for (let approvalPass = 0; approvalPass < 2; approvalPass += 1) {
       const fresh = await this.readPlaceState(action);
       const unsigned = buildCtfExchangeOrder({
@@ -597,6 +612,7 @@ export class ArcHybridTraderExecutor implements HybridTraderExecutor {
       action.side,
       action.priceRaw.toString(),
       action.sizeRaw.toString(),
+      action.minimumTickSizeRaw.toString(),
     ].join(':');
   }
 
@@ -713,6 +729,16 @@ export class ArcHybridTraderExecutor implements HybridTraderExecutor {
       action.fillSizeRaw > BigInt(dto.remainingRaw)
     ) {
       throw new Error('Exact Hybrid fill exceeds the indexed remaining size.');
+    }
+    if (
+      !leavesRepresentableRemainder(
+        BigInt(dto.remainingRaw),
+        action.fillSizeRaw,
+      )
+    ) {
+      throw new Error(
+        'Exact Hybrid fill would leave a remainder outside the exchange size quantum.',
+      );
     }
     return order;
   }

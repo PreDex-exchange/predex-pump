@@ -75,6 +75,7 @@ function market(
       depthFeeBps: 50,
       tradingWindowSeconds: 3600,
       minimumTimeOpenSeconds: 60,
+      minimumTickSizeRaw: '1000',
     },
     createdAt: 100,
     tradingEndsAt: 200,
@@ -129,9 +130,11 @@ function book(
     }));
   return {
     marketId: marketValue.id,
+    minimumTickSizeRaw: marketValue.params.minimumTickSizeRaw,
     liveVenue: 'MINICLOB',
     yes: {
       marketId: marketValue.id,
+      minimumTickSizeRaw: marketValue.params.minimumTickSizeRaw,
       outcome: 'YES',
       tokenId: marketValue.yesTokenId,
       bids: yesBids,
@@ -143,6 +146,7 @@ function book(
     },
     no: {
       marketId: marketValue.id,
+      minimumTickSizeRaw: marketValue.params.minimumTickSizeRaw,
       outcome: 'NO',
       tokenId: marketValue.noTokenId,
       bids: [],
@@ -436,6 +440,37 @@ describe('TraderAgent', () => {
     expect(actionExecutor.placeOrder).not.toHaveBeenCalled();
     expect(actionExecutor.fillOrder).not.toHaveBeenCalled();
     expect(actionExecutor.cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it('snaps bids down and asks up to the market tick and floors awkward quote sizes', async () => {
+    const marketValue = market('1', {
+      params: {
+        ...market().params,
+        minimumTickSizeRaw: '10000',
+      },
+    });
+    const { agent, logger } = createAgent({
+      dataClient: dataClient({
+        markets: [marketValue],
+        books: new Map([['1', book(marketValue)]]),
+      }),
+      readSignal: vi.fn(async ({ marketId }) => ({
+        signal: signal(marketId, '603321'),
+        paymentSpendRaw: 0n,
+      })),
+      quoteSizeRaw: 100_123n,
+    });
+
+    await agent.runCycle();
+
+    expect(
+      logger.entries
+        .filter(({ event, action }) => event === 'dry-run' && action === 'PLACE')
+        .map(({ side, priceRaw, sizeRaw }) => ({ side, priceRaw, sizeRaw })),
+    ).toEqual([
+      { side: 'BID', priceRaw: '580000', sizeRaw: '100000' },
+      { side: 'ASK', priceRaw: '630000', sizeRaw: '100000' },
+    ]);
   });
 
   it('refuses inventory-increasing actions at the per-side inventory cap', async () => {

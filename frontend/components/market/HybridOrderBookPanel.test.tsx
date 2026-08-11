@@ -171,6 +171,7 @@ const market: Market = {
     depthFeeBps: 50,
     tradingWindowSeconds: 86400,
     minimumTimeOpenSeconds: 3600,
+    minimumTickSizeRaw: '1000',
   },
   createdAt: 1_900_000_000,
   tradingEndsAt: 2_000_000_000,
@@ -238,8 +239,10 @@ function books(order: OffchainOrder): MarketBookResponse {
   return {
     marketId: '1',
     liveVenue: 'HYBRID',
+    minimumTickSizeRaw: '1000',
     yes: {
       marketId: '1',
+      minimumTickSizeRaw: '1000',
       outcome: 'YES',
       tokenId: '101',
       bids: [],
@@ -251,6 +254,7 @@ function books(order: OffchainOrder): MarketBookResponse {
     },
     no: {
       marketId: '1',
+      minimumTickSizeRaw: '1000',
       outcome: 'NO',
       tokenId: '102',
       bids: [],
@@ -430,9 +434,34 @@ describe('Hybrid human trading surface', () => {
       screen.getByRole('button', { name: 'Sign & post binding order' }),
     );
     await waitFor(() => expect(mocks.signOrder).toHaveBeenCalledOnce());
+    expect(mocks.signOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        minimumTickSizeRaw: 1_000n,
+        priceRaw: 600_000n,
+        sizeRaw: 200_000n,
+      }),
+    );
     expect(mocks.postOrder).toHaveBeenCalledOnce();
     expect(mocks.approveCollateral).not.toHaveBeenCalled();
     expect(mocks.approveTokens).not.toHaveBeenCalled();
+  });
+
+  it('snaps bids down and asks up to the effective market tick', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'bc'));
+    response.minimumTickSizeRaw = '10000';
+    response.yes.minimumTickSizeRaw = '10000';
+    response.no.minimumTickSizeRaw = '10000';
+    renderPanel(response);
+
+    const price = screen.getByLabelText(/Limit price/u) as HTMLInputElement;
+    fireEvent.change(price, { target: { value: '0.604' } });
+    fireEvent.blur(price);
+    expect(price.value).toBe('0.6');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Sell · ASK' }));
+    fireEvent.change(price, { target: { value: '0.604' } });
+    fireEvent.blur(price);
+    expect(price.value).toBe('0.61');
   });
 
   it('keeps free withdrawal and gas cancellation as separate actions using API calldata', async () => {

@@ -49,6 +49,8 @@ model Market {
   depthFeeBps            Int    @default(0)
   tradingWindowSeconds   Int    @default(0)
   minimumTimeOpenSeconds Int    @default(0)
+  // Mutable off-chain matching policy; not an exchange-contract parameter.
+  minimumTickSizeRaw     String @default("1000")
 
   // Latest TradeState inventory/funding snapshot.
   qYesRaw             String @default("0")
@@ -243,6 +245,15 @@ model BookMigration {
   noPriceRaw              String?
   yesSnapshotRemainingRaw String?
   noSnapshotRemainingRaw  String?
+  minimumTickSizeRaw       String?
+  yesRealizedPriceRaw      String?
+  noRealizedPriceRaw       String?
+  yesPriceDeviationRaw     String?
+  noPriceDeviationRaw      String?
+  yesReplacementSizeRaw    String?
+  noReplacementSizeRaw     String?
+  yesUnquotedRemainderRaw  String?
+  noUnquotedRemainderRaw   String?
   yesRecoveredRaw         String?
   noRecoveredRaw          String?
   yesReplacementOrderHash String?

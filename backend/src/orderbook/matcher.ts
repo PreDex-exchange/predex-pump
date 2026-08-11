@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient, type SignedOrder } from '@prisma/client';
+import { ORDER_SIZE_GRANULARITY_RAW } from '@predex-pump/shared';
 import { encodePacked, keccak256 } from 'viem';
 
 import { findFillableSignedOrders } from './fillability.js';
@@ -28,6 +29,36 @@ function compareRaw(left: string, right: string): number {
 
 function orderPriority(left: SignedOrder, right: SignedOrder): number {
   return left.createdAt - right.createdAt || left.orderHash.localeCompare(right.orderHash);
+}
+
+/** Largest fill that closes an order or leaves both signed remainders granular. */
+export function representableMatchFillSize(
+  leftRemainingRaw: bigint,
+  rightRemainingRaw: bigint,
+): bigint {
+  if (leftRemainingRaw <= 0n || rightRemainingRaw <= 0n) return 0n;
+  const maximum =
+    leftRemainingRaw < rightRemainingRaw
+      ? leftRemainingRaw
+      : rightRemainingRaw;
+  const leftRemainder = leftRemainingRaw - maximum;
+  const rightRemainder = rightRemainingRaw - maximum;
+  if (
+    leftRemainder % ORDER_SIZE_GRANULARITY_RAW === 0n &&
+    rightRemainder % ORDER_SIZE_GRANULARITY_RAW === 0n
+  ) {
+    return maximum;
+  }
+  if (
+    leftRemainingRaw % ORDER_SIZE_GRANULARITY_RAW !==
+    rightRemainingRaw % ORDER_SIZE_GRANULARITY_RAW
+  ) {
+    return 0n;
+  }
+  const residue = leftRemainingRaw % ORDER_SIZE_GRANULARITY_RAW;
+  const candidate =
+    maximum - ((maximum - residue) % ORDER_SIZE_GRANULARITY_RAW);
+  return candidate > 0n ? candidate : 0n;
 }
 
 function deterministicMatchKey(
@@ -82,10 +113,11 @@ export function findCrossingCandidates(
     for (const bid of bids) {
       for (const ask of asks) {
         if (BigInt(bid.priceRaw) < BigInt(ask.priceRaw)) break;
-        const fillSize =
-          BigInt(bid.remainingRaw) < BigInt(ask.remainingRaw)
-            ? BigInt(bid.remainingRaw)
-            : BigInt(ask.remainingRaw);
+        const fillSize = representableMatchFillSize(
+          BigInt(bid.remainingRaw),
+          BigInt(ask.remainingRaw),
+        );
+        if (fillSize === 0n) continue;
         const takerOrder = orderPriority(bid, ask) > 0 ? bid : ask;
         const makerOrder = takerOrder.orderHash === bid.orderHash ? ask : bid;
         candidates.push({

@@ -1,5 +1,8 @@
 import type { Prisma, PrismaClient, SignedOrder } from '@prisma/client';
 import {
+  assertAllowedMinimumTickSizeRaw,
+  isOrderSizeGranular,
+  isPriceOnTick,
   OFFCHAIN_WITHDRAWAL_WARNING,
   type IngestOrderRequest,
   type IngestOrderResponse,
@@ -11,6 +14,7 @@ import {
   Side,
   SignatureType,
   buildCtfExchangeCancelOrderTx,
+  ctfExchangeOrderAmounts,
   ctfExchangeMakerAmountForFill,
   ctfExchangeOrderTerms,
   getCtfExchangeOrderTypedData,
@@ -211,6 +215,20 @@ export class OffchainOrderService {
       );
     }
 
+    // Tick policy is intentionally ingest-time only. An idempotent replay of a
+    // digest already accepted under an earlier market tick returns that same
+    // resting order without retroactively applying the current tick.
+    const existing = await this.prisma.signedOrder.findUnique({
+      where: { orderHash: computedHash },
+    });
+    if (existing !== null) {
+      const fillability =
+        (await fillabilityForOrders(this.prisma, [existing], this.now())).get(
+          existing.orderHash,
+        ) ?? { fillable: false, reason: 'INDEXED_STATE_UNAVAILABLE' };
+      return { order: toOffchainOrderDto(existing, fillability) };
+    }
+
     let terms: ReturnType<typeof ctfExchangeOrderTerms>;
     try {
       terms = ctfExchangeOrderTerms(order);
@@ -219,6 +237,12 @@ export class OffchainOrderService {
     }
     if (terms.priceRaw === 0n || terms.priceRaw > CTF_EXCHANGE_PRICE_SCALE) {
       reject('INVALID_PRICE', 'Order price must be greater than 0 and at most 1 USDC');
+    }
+    if (!isOrderSizeGranular(terms.sizeRaw)) {
+      reject(
+        'INVALID_SIZE',
+        'Order size must be a positive multiple of 1000 raw token units so partial-fill remainders stay exactly representable',
+      );
     }
     if (order.feeRateBps > MAX_FEE_RATE_BPS) {
       reject('INVALID_FEE', 'Order feeRateBps must not exceed 10000');
@@ -238,6 +262,28 @@ export class OffchainOrderService {
     }
     if (market.resolution !== null) {
       reject('MARKET_RESOLVED', `Market ${market.id} is already resolved`);
+    }
+    const minimumTickSizeRaw = BigInt(market.minimumTickSizeRaw);
+    assertAllowedMinimumTickSizeRaw(minimumTickSizeRaw);
+    if (!isPriceOnTick(terms.priceRaw, minimumTickSizeRaw)) {
+      reject(
+        'PRICE_NOT_ON_TICK',
+        `Order price ${terms.priceRaw} must be an exact multiple of market ${market.id} minimumTickSizeRaw ${minimumTickSizeRaw}`,
+      );
+    }
+    const canonicalAmounts = ctfExchangeOrderAmounts({
+      side: order.side,
+      priceRaw: terms.priceRaw,
+      sizeRaw: terms.sizeRaw,
+    });
+    if (
+      order.makerAmount !== canonicalAmounts.makerAmount ||
+      order.takerAmount !== canonicalAmounts.takerAmount
+    ) {
+      reject(
+        'INVALID_PRICE',
+        'Signed maker/taker amounts must exactly encode the declared price and size',
+      );
     }
 
     let chainState: FreshOrderChainState;

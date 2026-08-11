@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ServerEventBus } from '../src/events/bus.js';
 import {
   findCrossingCandidates,
+  representableMatchFillSize,
 } from '../src/orderbook/matcher.js';
 import {
   SettlementOperator,
@@ -115,6 +116,12 @@ describe('matcher and settlement operator', () => {
     await createOrder({ side: Side.BUY, priceRaw: 600_000n, salt: 303n });
     await createOrder({ side: Side.SELL, priceRaw: 650_000n, salt: 304n });
     expect(findCrossingCandidates(await testPrisma.signedOrder.findMany())).toEqual([]);
+  });
+
+  it('only creates partial fills whose replacement remainder stays representable', () => {
+    expect(representableMatchFillSize(450_000n, 123_000n)).toBe(123_000n);
+    expect(representableMatchFillSize(450_123n, 123_123n)).toBe(123_123n);
+    expect(representableMatchFillSize(450_123n, 123_000n)).toBe(0n);
   });
 
   it('does not settle signed orders before the market venue flips to HYBRID', async () => {
