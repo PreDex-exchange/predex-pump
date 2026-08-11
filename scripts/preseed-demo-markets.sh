@@ -40,6 +40,9 @@ QUOTE_BUY_SIG='quoteBuy(uint256,uint8,uint256,uint256,uint256)((uint256,uint256,
 CREATE_SIG='createMarket(bytes,uint256,uint256,uint256,bytes32)'
 
 SEND=0
+RUN_ID=''
+RUN_ID_SET=0
+QUESTION_TAG=''
 PRIVATE_KEY=''
 OPERATOR=''
 OPENING_FEE_RAW=$MAX_OPENING_FEE_RAW
@@ -56,25 +59,70 @@ RESOLUTION_MARKET_ID=''
 
 usage() {
   printf '%s\n' \
-    'Usage: scripts/preseed-demo-markets.sh [--dry-run | --send]' \
+    'Usage: scripts/preseed-demo-markets.sh [--dry-run | --send] [--run-id ID]' \
     '' \
     'Default: --dry-run (offline planning only; no RPC reads and no broadcasts).' \
-    '--send:   read PREDEX_PRIVATE_KEY at runtime and send direct transactions to Arc.'
+    '--send:   read PREDEX_PRIVATE_KEY at runtime and send direct transactions to Arc.' \
+    '--run-id: derive a distinct, repeatable market set for this operator-supplied ID.'
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) SEND=0 ;;
     --send) SEND=1 ;;
+    --run-id)
+      if [ "$#" -lt 2 ]; then
+        printf 'ERROR: --run-id requires a value.\n' >&2
+        usage >&2
+        exit 2
+      fi
+      if [ "$RUN_ID_SET" -eq 1 ]; then
+        printf 'ERROR: --run-id may only be supplied once.\n' >&2
+        exit 2
+      fi
+      RUN_ID=$2
+      RUN_ID_SET=1
+      shift
+      ;;
+    --run-id=*)
+      if [ "$RUN_ID_SET" -eq 1 ]; then
+        printf 'ERROR: --run-id may only be supplied once.\n' >&2
+        exit 2
+      fi
+      RUN_ID=${1#--run-id=}
+      RUN_ID_SET=1
+      ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'ERROR: unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
 
+if [ "$RUN_ID_SET" -eq 1 ]; then
+  if [ -z "$RUN_ID" ] || [ "${#RUN_ID}" -gt 64 ] || \
+     ! printf '%s\n' "$RUN_ID" | LC_ALL=C grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+    printf '%s\n' \
+      'ERROR: --run-id must be 1-64 ASCII letters, digits, dots, underscores, or hyphens and start with a letter or digit.' >&2
+    exit 2
+  fi
+fi
+
 if ! command -v "$CAST_BIN" >/dev/null 2>&1; then
   printf 'ERROR: cast is required (Foundry). CAST_BIN=%s\n' "$CAST_BIN" >&2
   exit 1
+fi
+
+if [ "$RUN_ID_SET" -eq 1 ]; then
+  RUN_ID_BYTES=$("$CAST_BIN" from-utf8 "$RUN_ID")
+  RUN_ID_DIGEST=$("$CAST_BIN" keccak "$RUN_ID_BYTES")
+  RUN_TAG=$(printf '%s' "${RUN_ID_DIGEST#0x}" | \
+    tr '[:upper:]' '[:lower:]' | \
+    tr '0123456789abcdef' 'abcdefghijklmnop')
+  QUESTION_TAG="[Predex demo seed run tag: $RUN_TAG]"
+  BOOTSTRAP_QUESTION="$BOOTSTRAP_QUESTION $QUESTION_TAG"
+  GRADUATED_QUESTION="$GRADUATED_QUESTION $QUESTION_TAG"
+  RESOLUTION_QUESTION="$RESOLUTION_QUESTION $QUESTION_TAG"
+  DEDUP_OPERATOR_QUESTION="$DEDUP_OPERATOR_QUESTION $QUESTION_TAG"
 fi
 
 lowercase() {
@@ -128,14 +176,34 @@ print_market_plan() {
   printf '  create calldata:%s\n' "$calldata"
   printf '  target actions: %s\n' "$actions"
   printf '  idempotency:    reuse the market with this metadataHash; never create twice\n'
+  if [ "$RUN_ID_SET" -eq 1 ]; then
+    printf '  expected:       create on first use of this run ID; reuse on repeats\n'
+  else
+    printf '  expected:       reuse the canonical market if present; otherwise create it\n'
+  fi
 }
 
 print_plan() {
+  local dedup_ancillary dedup_metadata
   if [ "$SEND" -eq 1 ]; then
     printf 'PREDEX D5a DEMO PRE-SEED — BROADCAST REQUESTED\n'
   else
     printf 'PREDEX D5a DEMO PRE-SEED — DRY RUN\n'
     printf 'No RPC reads. No cast send. No transaction can be broadcast.\n'
+  fi
+  printf '\nSeed identity\n'
+  if [ "$RUN_ID_SET" -eq 1 ]; then
+    printf '  Run ID:          %s\n' "$RUN_ID"
+    printf '  Question tag:    %s\n' "$QUESTION_TAG"
+    printf '%s\n' \
+      '  First use:       create markets with this run ID; the dedup market is created through the operator cue'
+    printf '%s\n' \
+      '  Repeat use:      reuse markets with these metadata hashes; never duplicate'
+  else
+    printf '  Run ID:          (none; canonical default market set)\n'
+    printf '  Question tag:    (none; canonical question text)\n'
+    printf '%s\n' \
+      '  Expected:        reuse canonical markets when present; create only missing markets'
   fi
   printf '\nDeployment (Arc testnet chainId %s)\n' "$ARC_CHAIN_ID"
   printf '  RPC:       %s\n' "$ARC_RPC_URL"
@@ -165,10 +233,20 @@ print_plan() {
     "$RESOLUTION_QUESTION" \
     'create; buy 0.25 YES for the operator; graduate; leave oracle unresolved'
 
+  dedup_ancillary=$(ancillary_for_question "$DEDUP_OPERATOR_QUESTION")
+  dedup_metadata=$(metadata_for_ancillary "$dedup_ancillary")
   printf '\nCreation-time dedup cue\n'
   printf '  Seeded: %s\n' "$BOOTSTRAP_QUESTION"
   printf '  Type exactly: %s\n' "$DEDUP_OPERATOR_QUESTION"
+  printf '  metadataHash:   %s\n' "$dedup_metadata"
   printf '  Expected cue: Manchester United / Man Utd alias + above / over paraphrase\n'
+  if [ "$RUN_ID_SET" -eq 1 ]; then
+    printf '%s\n' \
+      '  Expected action: create through the operator flow on first use; reuse on repeats'
+  else
+    printf '%s\n' \
+      '  Expected action: reuse the canonical dedup market if present; otherwise create it through the operator flow'
+  fi
 
   if [ "$SEND" -eq 0 ]; then
     printf '\nDRY RUN COMPLETE — nothing was broadcast.\n'
