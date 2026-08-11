@@ -88,6 +88,7 @@ export type OrderIngestRejectionCode =
   | 'MARKET_RESOLVED'
   | 'INSUFFICIENT_BALANCE'
   | 'MISSING_APPROVAL'
+  | 'ORDER_ALREADY_WITHDRAWN'
   | 'CHAIN_READ_FAILED';
 
 // POST /orders — the signed order is stored off-chain; there is no placement tx.

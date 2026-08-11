@@ -496,6 +496,7 @@ export function HybridOrderBookPanel({
       {
         checkingMessage: 'Preparing the signed off-chain order…',
         failureMessage: 'The signed order was not posted.',
+        failurePhase: 'rejected',
       },
     );
     if (!result) return;

@@ -222,6 +222,12 @@ export class OffchainOrderService {
       where: { orderHash: computedHash },
     });
     if (existing !== null) {
+      if (existing.status === 'WITHDRAWN' || existing.withdrawnAt !== null) {
+        reject(
+          'ORDER_ALREADY_WITHDRAWN',
+          'This signed order was already withdrawn from the operator book',
+        );
+      }
       const fillability =
         (await fillabilityForOrders(this.prisma, [existing], this.now())).get(
           existing.orderHash,

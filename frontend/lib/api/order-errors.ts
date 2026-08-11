@@ -11,6 +11,8 @@ export const ORDER_REJECTION_MESSAGES = {
     'The maker wallet no longer has enough of the asset offered by this order. Reduce the size or add funds or tokens, then sign again.',
   MISSING_APPROVAL:
     'The exchange is not currently allowed to move the maker asset. Refresh approval status, grant only the approval shown, then retry.',
+  ORDER_ALREADY_WITHDRAWN:
+    'This signed order was already withdrawn from the operator book. Build and sign a fresh order before adding liquidity again.',
   MARKET_RESOLVED:
     'This market has resolved, so it can no longer accept orders. Review the settlement controls instead of signing again.',
   TOKEN_NOT_REGISTERED:

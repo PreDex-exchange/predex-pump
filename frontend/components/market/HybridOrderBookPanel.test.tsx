@@ -422,8 +422,30 @@ describe('Hybrid human trading surface', () => {
     renderLivePanel(response);
 
     expect(screen.getByText('Live venue · On-chain MiniCLOB')).toBeTruthy();
-    expect(screen.getAllByText('0.910').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('0.910000').length).toBeGreaterThan(0);
     expect(screen.queryByText('Live venue · Hybrid CTF exchange')).toBeNull();
+  });
+
+  it('keeps executable MiniCLOB price precision across ladder, table, and modal', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'a4'));
+    response.liveVenue = 'MINICLOB';
+    response.yes.orders = [
+      {
+        ...miniOnlyOrder,
+        priceRaw: '543213',
+        sizeRaw: '750000',
+        remainingRaw: '750000',
+      },
+    ];
+    renderLivePanel(response);
+
+    expect(screen.getAllByText('0.543213')).toHaveLength(2);
+    expect(screen.getByText('0.407410')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }));
+    expect(
+      within(screen.getByRole('dialog')).getByText('0.543213 USDC/token'),
+    ).toBeTruthy();
   });
 
   it('reads indexed approval state and offers one explained exact-amount prompt', async () => {

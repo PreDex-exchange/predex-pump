@@ -99,4 +99,13 @@ describe('GatewayDepositPanel', () => {
     expect(screen.getByText(/This Gateway balance is empty/u)).toBeTruthy();
     expect(screen.getAllByText('0.00 USDC')).toHaveLength(2);
   });
+
+  it('does not round a sub-unit funding balance up to a whole USDC', () => {
+    mocks.gateway.data = { totalRaw: '999700', availableRaw: '999700' };
+    mocks.wallet.data = 999_700n;
+    render(<GatewayDepositPanel sessionAddress={mocks.address} />);
+
+    expect(screen.getAllByText('0.9997 USDC')).toHaveLength(3);
+    expect(screen.queryByText('1.00 USDC')).toBeNull();
+  });
 });

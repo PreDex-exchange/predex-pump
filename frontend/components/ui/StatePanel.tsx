@@ -20,9 +20,13 @@ export function StatePanel({
   showMascot = true,
 }: StatePanelProps) {
   return (
-    <div className={`${styles.panel} ${compact ? styles.compact : ''}`}>
+    <div
+      className={`${styles.panel} ${compact ? styles.compact : ''} ${
+        showMascot ? '' : styles.withoutMascot
+      }`}
+    >
       {showMascot && <HatchingChick className={styles.mascot} decorative />}
-      <div>
+      <div className={styles.content}>
         <h3>{title}</h3>
         <p>{message}</p>
         {actions && <div className={styles.actions}>{actions}</div>}

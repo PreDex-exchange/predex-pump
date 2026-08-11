@@ -7,17 +7,38 @@ import {
   useReadContract,
   useSwitchChain,
 } from 'wagmi';
+import type { ReactNode } from 'react';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
 import { collateralErc20Abi } from '@/lib/chain/contracts';
 import { formatUsdc, shortAddress } from '@/lib/format';
+import { publicWalletErrorMessage } from '@/lib/wallet-errors';
 
 import styles from './WalletBar.module.css';
 
 function formatWalletBalance(balance?: bigint) {
   if (balance === undefined) return '—';
   return formatUsdc(balance.toString(), 2);
+}
+
+function WalletControls({
+  children,
+  error,
+}: {
+  children: ReactNode;
+  error: string | null;
+}) {
+  return (
+    <div className={styles.bar}>
+      <div className={styles.group}>{children}</div>
+      {error && (
+        <p className={styles.feedback} role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function WalletBar() {
@@ -43,6 +64,19 @@ export function WalletBar() {
     isSignedIn &&
     Boolean(address) &&
     session.address.toLowerCase() === address?.toLowerCase();
+  const authFeedback = authError?.message ?? null;
+  const connectFeedback = connectError
+    ? publicWalletErrorMessage(
+        connectError,
+        'The wallet connection did not complete. Check the wallet and try again.',
+      )
+    : null;
+  const switchFeedback = switchError
+    ? publicWalletErrorMessage(
+        switchError,
+        'The network switch did not complete. Check the wallet and try again.',
+      )
+    : null;
 
   const authControl = isAuthLoading ? (
     <button className={`${styles.auth} ${styles.pending}`} disabled type="button">
@@ -52,7 +86,7 @@ export function WalletBar() {
     <button
       className={`${styles.auth} ${styles.signed}`}
       onClick={() => void signOut()}
-      title={authError?.message ?? 'Signed in. Click to sign out.'}
+      title="Signed in. Click to sign out."
       type="button"
     >
       <span aria-hidden="true">✓</span>
@@ -74,10 +108,9 @@ export function WalletBar() {
       disabled={!address || isSigningIn}
       onClick={() => void signIn()}
       title={
-        authError?.message ??
-        (isSignedIn
+        isSignedIn
           ? `The saved session belongs to ${session.address}. Sign in with this wallet to replace it.`
-          : 'Sign in with Ethereum to save profile features')
+          : 'Sign in with Ethereum to save profile features'
       }
       type="button"
     >
@@ -99,7 +132,7 @@ export function WalletBar() {
   if (!isConnected || !address) {
     const connector = connectors[0];
     return (
-      <div className={styles.group}>
+      <WalletControls error={authFeedback ?? connectFeedback}>
         <span className={styles.network}>
           <span className={styles.dot} aria-hidden="true" />
           Arc
@@ -108,19 +141,19 @@ export function WalletBar() {
           className={styles.wallet}
           disabled={!connector || isConnecting}
           onClick={() => connector && connect({ connector })}
-          title={connectError?.message ?? 'Connect an injected wallet'}
+          title="Connect an injected wallet"
           type="button"
         >
           {isConnecting ? 'Connecting…' : connector ? 'Connect wallet' : 'No wallet found'}
         </button>
         {authControl}
-      </div>
+      </WalletControls>
     );
   }
 
   if (isWrongNetwork) {
     return (
-      <div className={styles.group}>
+      <WalletControls error={authFeedback ?? switchFeedback}>
         <span className={`${styles.network} ${styles.wrong}`}>
           <span className={styles.dot} aria-hidden="true" />
           Wrong network
@@ -129,18 +162,18 @@ export function WalletBar() {
           className={`${styles.wallet} ${styles.switch}`}
           disabled={isSwitching}
           onClick={() => switchChain({ chainId: arcTestnet.id })}
-          title={switchError?.message ?? `Add or switch to chain ${arcTestnet.id}`}
+          title={`Add or switch to chain ${arcTestnet.id}`}
           type="button"
         >
           {isSwitching ? 'Switching…' : 'Switch to Arc'}
         </button>
         {authControl}
-      </div>
+      </WalletControls>
     );
   }
 
   return (
-    <div className={styles.group}>
+    <WalletControls error={authFeedback}>
       <span className={styles.network}>
         <span className={styles.dot} aria-hidden="true" />
         Arc
@@ -157,6 +190,6 @@ export function WalletBar() {
         </span>
       </button>
       {authControl}
-    </div>
+    </WalletControls>
   );
 }

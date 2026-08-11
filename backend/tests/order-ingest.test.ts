@@ -253,5 +253,6 @@ describe('POST /orders validation', () => {
       signedOrderMayRemainValidOnchain: true,
       order: { status: 'WITHDRAWN' },
     });
+    await expectReason(request, 'ORDER_ALREADY_WITHDRAWN');
   });
 });
