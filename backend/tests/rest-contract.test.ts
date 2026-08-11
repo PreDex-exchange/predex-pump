@@ -574,6 +574,47 @@ describe('REST shared contract', () => {
       indexerStatus: 'healthy',
       lastSuccessfulPollAt: expect.any(String),
       secondsSinceLastSuccessfulPoll: expect.any(Number),
+      historyGaps: [],
+    });
+  });
+
+  it('GET /health surfaces the durable indexer history-gap audit', async () => {
+    const recordedAt = new Date('2026-08-11T12:00:00.000Z');
+    await testPrisma.indexerGap.create({
+      data: {
+        chainId: 5_042_002,
+        skippedFromBlock: 11,
+        skippedToBlock: 99,
+        skippedBlockCount: 89,
+        cursorBefore: 10,
+        cursorAfter: 99,
+        headBlock: 100,
+        startPolicy: 'auto',
+        reason: 'threshold_exceeded',
+        maxBackfillBlocks: 50,
+        recordedAt,
+      },
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/health' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<HealthResponse>()).toMatchObject({
+      ok: true,
+      indexerStatus: 'degraded',
+      historyGaps: [
+        {
+          skippedFromBlock: 11,
+          skippedToBlock: 99,
+          skippedBlockCount: 89,
+          cursorBefore: 10,
+          cursorAfter: 99,
+          headBlock: 100,
+          startPolicy: 'auto',
+          reason: 'threshold_exceeded',
+          maxBackfillBlocks: 50,
+          recordedAt: recordedAt.toISOString(),
+        },
+      ],
     });
   });
 

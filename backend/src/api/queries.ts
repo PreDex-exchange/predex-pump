@@ -5,6 +5,7 @@ import type {
   ConfigResponse,
   ExchangeApprovalStateResponse,
   HealthResponse,
+  IndexerHistoryGap,
   ListMarketsResponse,
   Market,
   MarketBookResponse,
@@ -720,10 +721,25 @@ export async function getHealth(
   stallAfterMs = DEFAULT_INDEXER_STALL_MS,
   now = new Date(),
 ): Promise<HealthResponse> {
-  const [state, subscription] = await Promise.all([
+  const [state, subscription, gaps] = await Promise.all([
     prisma.indexerState.findUnique({ where: { id: 1 } }),
     prisma.indexerSubscriptionState.findUnique({ where: { id: 1 } }),
+    prisma.indexerGap.findMany({
+      orderBy: [{ recordedAt: 'desc' }, { id: 'desc' }],
+    }),
   ]);
+  const historyGaps: IndexerHistoryGap[] = gaps.map((gap) => ({
+    skippedFromBlock: gap.skippedFromBlock,
+    skippedToBlock: gap.skippedToBlock,
+    skippedBlockCount: gap.skippedBlockCount,
+    cursorBefore: gap.cursorBefore,
+    cursorAfter: gap.cursorAfter,
+    headBlock: gap.headBlock,
+    startPolicy: gap.startPolicy as IndexerHistoryGap['startPolicy'],
+    reason: gap.reason as IndexerHistoryGap['reason'],
+    maxBackfillBlocks: gap.maxBackfillBlocks,
+    recordedAt: gap.recordedAt.toISOString(),
+  }));
   if (state === null) {
     return {
       ok: false,
@@ -734,6 +750,7 @@ export async function getHealth(
       indexerStatus: 'stalled',
       lastSuccessfulPollAt: null,
       secondsSinceLastSuccessfulPoll: null,
+      historyGaps,
     };
   }
   const lastSuccessfulLivenessAt =
@@ -753,7 +770,8 @@ export async function getHealth(
     millisecondsSinceLastSuccessfulPoll > stallAfterMs;
   const indexerStatus = stalled
     ? 'stalled'
-    : state.consecutiveRpcFailures > 0 ||
+    : historyGaps.length > 0 ||
+        state.consecutiveRpcFailures > 0 ||
         subscription?.status !== 'connected'
       ? 'degraded'
       : 'healthy';
@@ -770,6 +788,7 @@ export async function getHealth(
     indexerStatus,
     lastSuccessfulPollAt: lastSuccessfulLivenessAt?.toISOString() ?? null,
     secondsSinceLastSuccessfulPoll,
+    historyGaps,
   };
 }
 

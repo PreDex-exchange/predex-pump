@@ -23,6 +23,7 @@ const healthy: HealthResponse = {
   indexerStatus: 'healthy',
   lastSuccessfulPollAt: '2026-07-31T00:00:00.000Z',
   secondsSinceLastSuccessfulPoll: 1,
+  historyGaps: [],
 };
 
 describe('IndexerLagIndicator liveness', () => {
@@ -40,5 +41,32 @@ describe('IndexerLagIndicator liveness', () => {
     state.health = healthy;
     const { container } = render(<IndexerLagIndicator />);
     expect(container.innerHTML).toBe('');
+  });
+
+  it('prominently surfaces an audited history gap even when caught up', () => {
+    state.health = {
+      ...healthy,
+      indexerStatus: 'degraded',
+      historyGaps: [
+        {
+          skippedFromBlock: 101,
+          skippedToBlock: 109,
+          skippedBlockCount: 9,
+          cursorBefore: 100,
+          cursorAfter: 109,
+          headBlock: 110,
+          startPolicy: 'auto',
+          reason: 'threshold_exceeded',
+          maxBackfillBlocks: 5,
+          recordedAt: '2026-08-11T12:00:00.000Z',
+        },
+      ],
+    };
+
+    const status = render(<IndexerLagIndicator />).getByRole('status');
+    expect(status.textContent).toContain('Indexer history gap (9 blocks)');
+    expect(status.getAttribute('title')).toContain(
+      'History skipped blocks 101-109',
+    );
   });
 });

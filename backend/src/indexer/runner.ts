@@ -1,5 +1,5 @@
 import { ADDRESSES, ARC } from '@predex-pump/shared';
-import type { PrismaClient } from '@prisma/client';
+import type { IndexerState, PrismaClient } from '@prisma/client';
 import {
   createPublicClient,
   decodeEventLog,
@@ -11,7 +11,7 @@ import {
   type PublicClient,
 } from 'viem';
 
-import type { RuntimeConfig } from '../config.js';
+import type { IndexerStartPolicy, RuntimeConfig } from '../config.js';
 import { ARC_CHAIN } from '../chain.js';
 import { parseMarketPhase } from '../dedup/indexer.js';
 import type { MarketDedupIndexer } from '../dedup/types.js';
@@ -41,6 +41,8 @@ import type { DecodedEvent, EventArgs } from './types.js';
 export interface IndexerOptions {
   once: boolean;
   replayFrom?: number;
+  /** Overrides INDEXER_START_POLICY for this process invocation. */
+  startPolicy?: IndexerStartPolicy;
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>;
   marketDedupIndexer?: MarketDedupIndexer;
   client?: PublicClient;
@@ -248,7 +250,7 @@ export async function applyDecodedEvents(
         data: {
           // Explicit replay never moves the durable resume cursor backwards.
           lastBlock: Math.max(state.lastBlock, toBlock),
-          headBlock,
+          headBlock: Math.max(state.headBlock, headBlock),
           lastSuccessfulPollAt: successfulPollAt,
           consecutiveRpcFailures: 0,
         },
@@ -388,6 +390,44 @@ function logRpcRecovery(operation: string, failures: number): void {
   }
 }
 
+function validateArcHead(value: unknown): number {
+  if (typeof value !== 'bigint') {
+    throw new Error(
+      `Invalid Arc head: expected a bigint, received ${String(value)}`,
+    );
+  }
+  if (value <= 0n) {
+    throw new Error(
+      `Invalid Arc head: block number must be positive, received ${value}`,
+    );
+  }
+  try {
+    return toDbInt(value, 'headBlock');
+  } catch {
+    throw new Error(
+      `Invalid Arc head: block number ${value} is outside the supported Postgres Int range`,
+    );
+  }
+}
+
+function assertHeadGuards(
+  state: { lastBlock: number; headBlock: number },
+  head: number,
+): void {
+  // Keep this guard distinct: it detects a cursor/database mismatch rather
+  // than treating the RPC value as permission to move the cursor backwards.
+  if (state.lastBlock > head) {
+    throw new Error(
+      `Cursor guard: database lastBlock=${state.lastBlock} is ahead of Arc head=${head}`,
+    );
+  }
+  if (state.headBlock > head) {
+    throw new Error(
+      `Head guard: Arc head=${head} is behind last accepted head=${state.headBlock}`,
+    );
+  }
+}
+
 async function pollHead(
   prisma: PrismaClient,
   client: PublicClient,
@@ -399,13 +439,17 @@ async function pollHead(
   const result = await requestRpcWithRetry(
     prisma,
     'getBlockNumber',
-    () => client.getBlockNumber(),
+    async () => validateArcHead(await client.getBlockNumber()),
     signal,
     wait,
     random,
   );
   if (result === undefined) return undefined;
-  const head = toDbInt(result.value, 'headBlock');
+  const head = result.value;
+  const state = await prisma.indexerState.findUniqueOrThrow({
+    where: { id: 1 },
+  });
+  assertHeadGuards(state, head);
   await prisma.indexerState.update({
     where: { id: 1 },
     data: {
@@ -416,6 +460,110 @@ async function pollHead(
   });
   logRpcRecovery('getBlockNumber', result.failures);
   return head;
+}
+
+type StartupDecisionReason =
+  | 'already-at-head'
+  | 'explicit-replay'
+  | 'operator-resume'
+  | 'operator_override'
+  | 'threshold_exceeded'
+  | 'within-threshold';
+
+interface StartupDecision {
+  state: IndexerState;
+  decision: 'head' | 'resume';
+  reason: StartupDecisionReason;
+}
+
+async function decideStartupPosition(
+  prisma: PrismaClient,
+  config: RuntimeConfig,
+  startPolicy: IndexerStartPolicy,
+  head: number,
+  replaying: boolean,
+  now: () => Date,
+): Promise<StartupDecision> {
+  const state = await prisma.indexerState.findUniqueOrThrow({
+    where: { id: 1 },
+  });
+  assertHeadGuards(state, head);
+
+  const gapBlocks = head - state.lastBlock;
+  const shouldStartAtHead =
+    !replaying &&
+    (startPolicy === 'head' ||
+      (startPolicy === 'auto' && gapBlocks > config.indexerMaxBackfillBlocks));
+  if (!shouldStartAtHead) {
+    return {
+      state,
+      decision: 'resume',
+      reason: replaying
+        ? 'explicit-replay'
+        : startPolicy === 'resume'
+          ? 'operator-resume'
+          : 'within-threshold',
+    };
+  }
+
+  // Fetch the current head itself. Only the preceding unindexed blocks are
+  // intentionally skipped, so the audit range ends at head - 1.
+  const cursorAfter = head - 1;
+  if (cursorAfter <= state.lastBlock) {
+    return { state, decision: 'head', reason: 'already-at-head' };
+  }
+
+  const reason =
+    startPolicy === 'head' ? 'operator_override' : 'threshold_exceeded';
+  const skippedFromBlock = state.lastBlock + 1;
+  const skippedToBlock = cursorAfter;
+  const skippedBlockCount = skippedToBlock - skippedFromBlock + 1;
+  const advancedState = await prisma.$transaction(
+    async (tx) => {
+      const current = await tx.indexerState.findUniqueOrThrow({
+        where: { id: 1 },
+      });
+      assertHeadGuards(current, head);
+      if (current.lastBlock !== state.lastBlock) {
+        throw new Error(
+          `Indexer cursor changed during startup: expected ${state.lastBlock}, received ${current.lastBlock}`,
+        );
+      }
+
+      await tx.indexerGap.create({
+        data: {
+          chainId: current.chainId,
+          skippedFromBlock,
+          skippedToBlock,
+          skippedBlockCount,
+          cursorBefore: current.lastBlock,
+          cursorAfter,
+          headBlock: head,
+          startPolicy,
+          reason,
+          maxBackfillBlocks: config.indexerMaxBackfillBlocks,
+          recordedAt: now(),
+        },
+      });
+      return tx.indexerState.update({
+        where: { id: 1 },
+        data: { lastBlock: cursorAfter },
+      });
+    },
+    {
+      maxWait: 30_000,
+      timeout: 30_000,
+      isolationLevel: 'Serializable',
+    },
+  );
+
+  console.error(
+    `[indexer] HISTORY GAP RECORDED skipped=${skippedFromBlock}-${skippedToBlock} ` +
+      `blocks=${skippedBlockCount} cursorBefore=${state.lastBlock} ` +
+      `cursorAfter=${cursorAfter} head=${head} startPolicy=${startPolicy} ` +
+      `reason=${reason} maxBackfillBlocks=${config.indexerMaxBackfillBlocks}`,
+  );
+  return { state: advancedState, decision: 'head', reason };
 }
 
 type SubscriptionStatus =
@@ -559,12 +707,17 @@ export async function runIndexer(
       now,
     );
     if (head === undefined) return;
-    let state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
-    if (state.lastBlock > head) {
-      throw new Error(
-        `Cursor guard: database lastBlock=${state.lastBlock} is ahead of Arc head=${head}`,
-      );
-    }
+    const startPolicy = options.startPolicy ?? config.indexerStartPolicy;
+    const replayingAtStartup = options.replayFrom !== undefined;
+    const startup = await decideStartupPosition(
+      prisma,
+      config,
+      startPolicy,
+      head,
+      replayingAtStartup,
+      now,
+    );
+    let state = startup.state;
 
     if (
       options.replayFrom !== undefined &&
@@ -575,11 +728,15 @@ export async function runIndexer(
       );
     }
 
-    let nextBlock = options.replayFrom ?? Math.max(config.deployBlock, state.lastBlock + 1);
-    let replaying = options.replayFrom !== undefined;
+    let nextBlock =
+      options.replayFrom ?? Math.max(config.deployBlock, state.lastBlock + 1);
+    let replaying = replayingAtStartup;
     console.info(
       `[indexer] chain=${ARC.chainId} registry=${ADDRESSES.registry.toLowerCase()} ` +
-        `cursor=${state.lastBlock} head=${head} start=${nextBlock}` +
+        `cursor=${state.lastBlock} head=${head} start=${nextBlock} ` +
+        `startPolicy=${startPolicy} ` +
+        `maxBackfillBlocks=${config.indexerMaxBackfillBlocks} ` +
+        `decision=${startup.decision} reason=${startup.reason}` +
         (replaying ? ' replay=true' : ''),
     );
 

@@ -253,6 +253,19 @@ export type ActivityResponse = Page<ActivityEvent>;
 // GET /health → indexer liveness so the frontend can show chain-lag
 export type IndexerStatus = 'healthy' | 'degraded' | 'stalled';
 
+export interface IndexerHistoryGap {
+  skippedFromBlock: number;
+  skippedToBlock: number;
+  skippedBlockCount: number;
+  cursorBefore: number;
+  cursorAfter: number;
+  headBlock: number;
+  startPolicy: 'auto' | 'head';
+  reason: 'threshold_exceeded' | 'operator_override';
+  maxBackfillBlocks: number;
+  recordedAt: string;
+}
+
 export interface HealthResponse {
   ok: boolean;
   chainId: number;
@@ -262,6 +275,8 @@ export interface HealthResponse {
   indexerStatus: IndexerStatus;
   lastSuccessfulPollAt: string | null;
   secondsSinceLastSuccessfulPoll: number | null;
+  /** Append-only audit history of blocks intentionally omitted at startup. */
+  historyGaps: IndexerHistoryGap[];
 }
 
 // POST /markets/dedup-check

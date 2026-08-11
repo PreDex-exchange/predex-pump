@@ -563,6 +563,25 @@ model IndexerState {
   updatedAt              DateTime  @updatedAt
 }
 
+// Append-only audit trail for startup cursor advances that intentionally skip
+// unindexed history. The cursor update and this record are one transaction.
+model IndexerGap {
+  id                Int      @id @default(autoincrement())
+  chainId           Int
+  skippedFromBlock  Int
+  skippedToBlock    Int
+  skippedBlockCount Int
+  cursorBefore      Int
+  cursorAfter       Int
+  headBlock         Int
+  startPolicy       String
+  reason            String
+  maxBackfillBlocks Int
+  recordedAt        DateTime @default(now())
+
+  @@index([recordedAt(sort: Desc), id(sort: Desc)])
+}
+
 // Kept separate from IndexerState so high-frequency subscription liveness
 // never contends with the serializable cursor/event transaction.
 model IndexerSubscriptionState {
