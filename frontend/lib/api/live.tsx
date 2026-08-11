@@ -51,9 +51,18 @@ export function BackendLiveSync() {
           queryClient.setQueryData<MarketDetailResponse | null>(
             detailKey,
             (current) => ({
-              market,
+              market: {
+                ...market,
+                resolution:
+                  market.resolution ?? current?.resolution ?? null,
+              },
               recentTrades: current?.recentTrades ?? [],
-              resolution: current?.resolution ?? null,
+              resolution:
+                market.resolution ?? current?.resolution ?? null,
+              settlementEvents: current?.settlementEvents ?? {
+                protocolSweepCompleted: false,
+                protocolSweptRaw: '0',
+              },
             }),
           );
           void queryClient.invalidateQueries({

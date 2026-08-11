@@ -116,6 +116,16 @@ describe('REST shared contract', () => {
       tradingEndsAt: 1_700_086_500,
       graduatedAt: null,
       resolvedAt: 1_700_010_000,
+      resolution: {
+        marketId: '2',
+        conditionId: `0x${'2'.repeat(64)}`,
+        outcome: 'YES',
+        payoutYes: 1,
+        payoutNo: 0,
+        denominator: 1,
+        resolvedAt: 1_700_010_000,
+        observedAt: 1_700_010_100,
+      },
     });
     expect(first.nextCursor).toEqual(expect.any(String));
 
@@ -134,6 +144,34 @@ describe('REST shared contract', () => {
     expect(filtered.json<ListMarketsResponse>().items.map((market) => market.id)).toEqual([
       '1',
     ]);
+  });
+
+  it('allows browser mutation preflights without widening origin policy', async () => {
+    for (const [method, url] of [
+      ['PATCH', '/account/profile'],
+      ['PUT', '/account/watchlist/1'],
+      ['DELETE', `/orders/0x${'1'.repeat(64)}`],
+    ] as const) {
+      const response = await app.inject({
+        method: 'OPTIONS',
+        url,
+        headers: {
+          origin: 'http://localhost:3000',
+          'access-control-request-method': method,
+        },
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(response.headers['access-control-allow-origin']).toBe(
+        'http://localhost:3000',
+      );
+      expect(response.headers['access-control-allow-credentials']).toBe('true');
+      expect(
+        response.headers['access-control-allow-methods']
+          ?.split(',')
+          .map((allowed) => allowed.trim()),
+      ).toEqual(['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE']);
+    }
   });
 
   it('POST /markets/dedup-check implements the shared advisory contract', async () => {
@@ -204,6 +242,10 @@ describe('REST shared contract', () => {
       },
     ]);
     expect(body.resolution).toBeNull();
+    expect(body.settlementEvents).toEqual({
+      protocolSweepCompleted: false,
+      protocolSweptRaw: '0',
+    });
 
     const resolved = await app.inject({ method: 'GET', url: '/markets/2' });
     expect(resolved.json<MarketDetailResponse>().resolution).toEqual({
@@ -215,6 +257,65 @@ describe('REST shared contract', () => {
       denominator: 1,
       resolvedAt: 1_700_010_000,
       observedAt: 1_700_010_100,
+    });
+    expect(resolved.json<MarketDetailResponse>().market.resolution).toEqual(
+      resolved.json<MarketDetailResponse>().resolution,
+    );
+  });
+
+  it('serves payout finality without fabricating an observed lifecycle phase', async () => {
+    await testPrisma.market.update({
+      where: { id: '1' },
+      data: { resolvedAt: 1_700_020_000 },
+    });
+    await testPrisma.resolution.create({
+      data: {
+        marketId: '1',
+        conditionId: MARKET_ONE_CONDITION,
+        outcome: 'YES',
+        payoutYes: 1,
+        payoutNo: 0,
+        denominator: 1,
+        resolvedAt: 1_700_020_000,
+        observedAt: null,
+        txHash: `0x${'7'.repeat(64)}`,
+        logIndex: 1,
+      },
+    });
+    await testPrisma.activityEvent.create({
+      data: {
+        id: `0x${'8'.repeat(64)}:2`,
+        type: 'ProtocolFeeSwept',
+        eventName: 'ProtocolFeeSwept',
+        source: 'LMSR',
+        marketId: '1',
+        account: null,
+        outcome: null,
+        side: null,
+        amountRaw: '125000',
+        priceRaw: null,
+        txHash: `0x${'8'.repeat(64)}`,
+        logIndex: 2,
+        blockNumber: 53_500_000,
+        ts: 1_700_030_000,
+        data: {
+          marketId: '1',
+          amountRaw: '125000',
+          cumulativeSweptRaw: '125000',
+          closeoutComplete: true,
+        },
+      },
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/markets/1' });
+    const body = response.json<MarketDetailResponse>();
+    expect(body.market.phase).toBe('Graduated');
+    expect(body.market.resolvedAt).toBe(1_700_020_000);
+    expect(body.resolution?.outcome).toBe('YES');
+    expect(body.market.resolution).toEqual(body.resolution);
+    expect(body.settlementEvents).toEqual({
+      protocolSweepCompleted: true,
+      protocolSweptRaw: '125000',
     });
   });
 

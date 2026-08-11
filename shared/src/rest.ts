@@ -48,6 +48,11 @@ export interface MarketDetailResponse {
   market: Market;
   recentTrades: Trade[];
   resolution: Resolution | null;
+  settlementEvents: {
+    /** Indexed from ProtocolFeeSwept events; avoids browser-wide log scans. */
+    protocolSweepCompleted: boolean;
+    protocolSweptRaw: Raw;
+  };
 }
 
 // GET /markets/:id/book  → both outcomes of the graduated book (empty until graduation)

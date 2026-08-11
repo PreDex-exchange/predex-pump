@@ -1,15 +1,15 @@
 'use client';
 
-import type { ResolutionOutcome } from '@predex-pump/shared/domain';
+import type {
+  Market,
+  ResolutionOutcome,
+} from '@predex-pump/shared/domain';
 import { useQuery } from '@tanstack/react-query';
 import type { Address, Hex } from 'viem';
 
 import { ADDRESSES } from '@/lib/shared/addresses';
 
-import {
-  arcPublicClient,
-  readSettlementEventState,
-} from './client';
+import { ARC_READ_CACHE_MS, arcPublicClient } from './client';
 import {
   committeeOracleAbi,
   conditionalTokensAbi,
@@ -33,16 +33,6 @@ type Lifecycle = readonly [
   number,
   number,
   number,
-];
-
-type Binding = readonly [
-  Address,
-  Address,
-  Address,
-  Hex,
-  Hex,
-  bigint,
-  bigint,
 ];
 
 type TerminalAccounting = readonly [
@@ -90,6 +80,16 @@ export interface SettlementStatus {
   closedOutAt: number;
 }
 
+export interface IndexedSettlementEvents {
+  protocolSweepCompleted: boolean;
+  protocolSweptRaw: string;
+}
+
+const EMPTY_SETTLEMENT_EVENTS: IndexedSettlementEvents = {
+  protocolSweepCompleted: false,
+  protocolSweptRaw: '0',
+};
+
 function payoutOutcome(
   payoutYes: bigint,
   payoutNo: bigint,
@@ -100,49 +100,23 @@ function payoutOutcome(
   return payoutYes > payoutNo ? 'YES' : 'NO';
 }
 
-async function readSettlementStatus(
-  marketId: bigint,
+export async function readSettlementStatus(
+  market: Market,
   account?: Address,
+  settlementEvents: IndexedSettlementEvents = EMPTY_SETTLEMENT_EVENTS,
+  client: Pick<typeof arcPublicClient, 'getBlock' | 'readContract'> =
+    arcPublicClient,
 ): Promise<SettlementStatus> {
-  const [lifecycle, binding, tradingEndsAtRaw, block, ammState, terminal, events] =
-    await Promise.all([
-      arcPublicClient.readContract({
-        address: ADDRESSES.registry,
-        abi: incubatorRegistryAbi,
-        functionName: 'marketLifecycle',
-        args: [marketId],
-      }) as Promise<Lifecycle>,
-      arcPublicClient.readContract({
-        address: ADDRESSES.registry,
-        abi: incubatorRegistryAbi,
-        functionName: 'tokenBinding',
-        args: [marketId],
-      }) as Promise<Binding>,
-      arcPublicClient.readContract({
-        address: ADDRESSES.registry,
-        abi: incubatorRegistryAbi,
-        functionName: 'marketTradingEndsAt',
-        args: [marketId],
-      }) as Promise<bigint>,
-      arcPublicClient.getBlock(),
-      arcPublicClient.readContract({
-        address: ADDRESSES.lmsr,
-        abi: incubatorLmsrAbi,
-        functionName: 'ammState',
-        args: [marketId],
-      }) as Promise<AmmState>,
-      arcPublicClient.readContract({
-        address: ADDRESSES.lmsr,
-        abi: incubatorLmsrAbi,
-        functionName: 'terminalAccounting',
-        args: [marketId],
-      }) as Promise<TerminalAccounting>,
-      readSettlementEventState(marketId),
-    ]);
-
-  const questionId = binding[3];
-  const conditionId = binding[4];
+  const marketId = BigInt(market.id);
+  const questionId = market.questionId as Hex;
+  const conditionId = market.conditionId as Hex;
+  const yesTokenId = BigInt(market.yesTokenId);
+  const noTokenId = BigInt(market.noTokenId);
   const [
+    lifecycle,
+    block,
+    ammState,
+    terminal,
     oracleResolved,
     questionThreshold,
     snapshotMember,
@@ -154,69 +128,88 @@ async function readSettlementStatus(
     creatorFundingSharesRaw,
     totalFundingSharesRaw,
   ] = await Promise.all([
-    arcPublicClient.readContract({
+    client.readContract({
+      address: ADDRESSES.registry,
+      abi: incubatorRegistryAbi,
+      functionName: 'marketLifecycle',
+      args: [marketId],
+    }) as Promise<Lifecycle>,
+    client.getBlock(),
+    client.readContract({
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'ammState',
+      args: [marketId],
+    }) as Promise<AmmState>,
+    client.readContract({
+      address: ADDRESSES.lmsr,
+      abi: incubatorLmsrAbi,
+      functionName: 'terminalAccounting',
+      args: [marketId],
+    }) as Promise<TerminalAccounting>,
+    client.readContract({
       address: ADDRESSES.oracle,
       abi: committeeOracleAbi,
       functionName: 'isResolved',
       args: [questionId],
     }) as Promise<boolean>,
-    arcPublicClient.readContract({
+    client.readContract({
       address: ADDRESSES.oracle,
       abi: committeeOracleAbi,
       functionName: 'questionThreshold',
       args: [questionId],
     }) as Promise<bigint>,
     account
-      ? (arcPublicClient.readContract({
+      ? (client.readContract({
           address: ADDRESSES.oracle,
           abi: committeeOracleAbi,
           functionName: 'isSnapshotMember',
           args: [questionId, account],
         }) as Promise<boolean>)
       : Promise.resolve(false),
-    arcPublicClient.readContract({
+    client.readContract({
       address: ADDRESSES.ctf,
       abi: conditionalTokensAbi,
       functionName: 'payoutNumerators',
       args: [conditionId, 0n],
     }) as Promise<bigint>,
-    arcPublicClient.readContract({
+    client.readContract({
       address: ADDRESSES.ctf,
       abi: conditionalTokensAbi,
       functionName: 'payoutNumerators',
       args: [conditionId, 1n],
     }) as Promise<bigint>,
-    arcPublicClient.readContract({
+    client.readContract({
       address: ADDRESSES.ctf,
       abi: conditionalTokensAbi,
       functionName: 'payoutDenominator',
       args: [conditionId],
     }) as Promise<bigint>,
     account
-      ? (arcPublicClient.readContract({
+      ? (client.readContract({
           address: ADDRESSES.ctf,
           abi: conditionalTokensAbi,
           functionName: 'balanceOf',
-          args: [account, binding[5]],
+          args: [account, yesTokenId],
         }) as Promise<bigint>)
       : Promise.resolve(0n),
     account
-      ? (arcPublicClient.readContract({
+      ? (client.readContract({
           address: ADDRESSES.ctf,
           abi: conditionalTokensAbi,
           functionName: 'balanceOf',
-          args: [account, binding[6]],
+          args: [account, noTokenId],
         }) as Promise<bigint>)
       : Promise.resolve(0n),
     account
-      ? (arcPublicClient.readContract({
+      ? (client.readContract({
           address: ADDRESSES.lmsr,
           abi: incubatorLmsrAbi,
           functionName: 'fundingShares',
           args: [marketId, account],
         }) as Promise<bigint>)
       : Promise.resolve(0n),
-    arcPublicClient.readContract({
+    client.readContract({
       address: ADDRESSES.lmsr,
       abi: incubatorLmsrAbi,
       functionName: 'totalFundingShares',
@@ -232,12 +225,12 @@ async function readSettlementStatus(
       ? (fundingResidualRaw * creatorFundingSharesRaw) /
         totalFundingSharesRaw
       : 0n;
-  const protocolSweepAvailableRaw = events.protocolSweepCompleted
+  const protocolSweepAvailableRaw = settlementEvents.protocolSweepCompleted
     ? 0n
     : ammState.protocolFeesAccruedRaw +
       (protocolPnlRaw - protocolPnlSweptRaw);
   const lifecycleState = Number(lifecycle[2]);
-  const tradingEndsAt = Number(tradingEndsAtRaw);
+  const tradingEndsAt = market.tradingEndsAt;
   const chainTimestamp = Number(block.timestamp);
 
   return {
@@ -274,18 +267,30 @@ async function readSettlementStatus(
     totalFundingSharesRaw,
     creatorResidualClaimableRaw,
     protocolSweepAvailableRaw,
-    protocolSweepCompleted: events.protocolSweepCompleted,
-    protocolSweptRaw: events.protocolSweptRaw,
+    protocolSweepCompleted: settlementEvents.protocolSweepCompleted,
+    protocolSweptRaw: BigInt(settlementEvents.protocolSweptRaw),
     closedOutAt: Number(terminal[8]),
   };
 }
 
-export function useSettlementStatus(marketId: string, account?: Address) {
+export function useSettlementStatus(
+  market: Market,
+  account?: Address,
+  settlementEvents: IndexedSettlementEvents = EMPTY_SETTLEMENT_EVENTS,
+) {
   return useQuery<SettlementStatus, Error>({
-    queryKey: ['settlement', marketId, account],
-    queryFn: () => readSettlementStatus(BigInt(marketId), account),
-    staleTime: 5_000,
-    refetchInterval: 15_000,
+    queryKey: [
+      'settlement',
+      market.id,
+      account,
+      settlementEvents.protocolSweepCompleted,
+      settlementEvents.protocolSweptRaw,
+    ],
+    queryFn: () => readSettlementStatus(market, account, settlementEvents),
+    staleTime: ARC_READ_CACHE_MS,
+    refetchInterval: ARC_READ_CACHE_MS,
     refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }

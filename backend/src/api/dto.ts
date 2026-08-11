@@ -76,7 +76,9 @@ export type MarketDtoRow = Pick<
   | 'tradingEndsAt'
   | 'graduatedAt'
   | 'resolvedAt'
->;
+> & {
+  resolution?: DbResolution | null;
+};
 
 export type TradeDtoRow = Pick<
   DbTrade,
@@ -155,6 +157,7 @@ function hash(value: string): Hash {
 }
 
 export function toMarketDto(market: MarketDtoRow): Market {
+  const resolution = market.resolution ?? null;
   return {
     id: market.id,
     creator: address(market.creator),
@@ -190,6 +193,8 @@ export function toMarketDto(market: MarketDtoRow): Market {
     tradingEndsAt: market.tradingEndsAt,
     graduatedAt: market.graduatedAt,
     resolvedAt: market.resolvedAt,
+    resolution:
+      resolution === null ? null : toResolutionDto(resolution),
   };
 }
 

@@ -49,6 +49,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   await app.register(cors, {
     origin: accountLayerConfig.webOrigin,
     credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE'],
   });
   await registerWebsocketRoute(app, options.eventBus);
   registerRestRoutes(

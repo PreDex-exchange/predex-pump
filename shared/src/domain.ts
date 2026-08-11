@@ -76,6 +76,12 @@ export interface Market {
   tradingEndsAt: number;
   graduatedAt: number | null;
   resolvedAt: number | null;
+  /**
+   * Indexed payout data when the oracle/CTF condition is final. This can be
+   * present before the incubator lifecycle advances to ResolvedObserved.
+   * Optional for compatibility with older snapshots and locally-built previews.
+   */
+  resolution?: Resolution | null;
 }
 
 export interface Trade {

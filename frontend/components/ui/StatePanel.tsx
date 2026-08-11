@@ -9,6 +9,7 @@ interface StatePanelProps {
   message: string;
   compact?: boolean;
   actions?: ReactNode;
+  showMascot?: boolean;
 }
 
 export function StatePanel({
@@ -16,10 +17,11 @@ export function StatePanel({
   message,
   compact = false,
   actions,
+  showMascot = true,
 }: StatePanelProps) {
   return (
     <div className={`${styles.panel} ${compact ? styles.compact : ''}`}>
-      <HatchingChick className={styles.mascot} decorative />
+      {showMascot && <HatchingChick className={styles.mascot} decorative />}
       <div>
         <h3>{title}</h3>
         <p>{message}</p>

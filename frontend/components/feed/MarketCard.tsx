@@ -12,6 +12,12 @@ import {
   graduationPercent,
   relativeTime,
 } from '@/lib/format';
+import {
+  displayMarketPhase,
+  isMarketSettled,
+  marketPriceRaw,
+  resolvedOutcome,
+} from '@/lib/market-state';
 
 import styles from './MarketCard.module.css';
 
@@ -34,6 +40,9 @@ function sparklinePoints(points: PricePoint[]) {
 }
 
 function phaseDataValue(market: Market) {
+  if (isMarketSettled(market)) {
+    return market.phase === 'ClosedOut' ? 'closed' : 'resolved';
+  }
   if (market.phase === 'Opened') return 'incubating';
   if (market.phase === 'Graduated') return 'graduated';
   if (market.phase === 'ClosedOut') return 'closed';
@@ -51,18 +60,16 @@ export function MarketCard({
 }: MarketCardProps) {
   const { data: priceHistory } = usePriceHistory(market.id);
   const graduation = graduationPercent(market);
-  const isSettled = market.phase === 'ResolvedObserved' || market.phase === 'ClosedOut';
-  const winner =
-    isSettled && market.yesPriceRaw === '1000000'
-      ? 'YES'
-      : isSettled && market.noPriceRaw === '1000000'
-        ? 'NO'
-        : null;
+  const isSettled = isMarketSettled(market);
+  const visiblePhase = displayMarketPhase(market);
+  const winner = resolvedOutcome(market);
+  const yesPriceRaw = marketPriceRaw(market, 'YES');
+  const noPriceRaw = marketPriceRaw(market, 'NO');
 
   const card = (
     <article className={styles.card} data-phase={phaseDataValue(market)}>
         <div className={styles.top}>
-          <PhaseBadge phase={market.phase} surface="feed" />
+          <PhaseBadge phase={visiblePhase} surface="feed" />
           <span className={styles.time}>{relativeTime(market.createdAt)}</span>
         </div>
         <h2>{market.question}</h2>
@@ -70,13 +77,13 @@ export function MarketCard({
           <div className={`${styles.price} ${styles.yes} ${winner === 'YES' ? styles.winner : ''}`}>
             <span className={styles.priceLabel}>YES</span>
             <NumberDisplay className={styles.priceValue} size="price">
-              {formatPrice(market.yesPriceRaw)}
+              {formatPrice(yesPriceRaw)}
             </NumberDisplay>
           </div>
           <div className={`${styles.price} ${styles.no} ${winner === 'NO' ? styles.winner : ''}`}>
             <span className={styles.priceLabel}>NO</span>
             <NumberDisplay className={styles.priceValue} size="price">
-              {formatPrice(market.noPriceRaw)}
+              {formatPrice(noPriceRaw)}
             </NumberDisplay>
           </div>
         </div>
@@ -93,7 +100,7 @@ export function MarketCard({
             <span aria-hidden="true" />
             <span className="numeric">${formatUsdc(market.volumeRaw, 0)} vol</span>
           </span>
-          {market.phase === 'Opened' && (
+          {market.phase === 'Opened' && !isSettled && (
             <div className={styles.graduation}>
               <span className={styles.graduationLabel}>Graduation</span>
               <div
@@ -111,7 +118,7 @@ export function MarketCard({
               </NumberDisplay>
             </div>
           )}
-          {market.phase === 'Graduated' && (
+          {market.phase === 'Graduated' && !isSettled && (
             <span className={styles.bookLive}>
               <span aria-hidden="true" />
               Order book live
@@ -120,7 +127,11 @@ export function MarketCard({
           {isSettled && (
             <span className={styles.resolvedTag}>
               <span aria-hidden="true">✓</span>
-              {market.phase === 'ClosedOut' ? 'Closed out' : `Resolved · ${winner ?? 'Invalid'}`}
+              {market.phase === 'ClosedOut'
+                ? 'Closed out'
+                : winner
+                  ? `Resolved · ${winner === 'INVALID' ? 'Invalid' : winner}`
+                  : 'Resolved'}
             </span>
           )}
         </div>
@@ -130,7 +141,7 @@ export function MarketCard({
   if (href === null) {
     return (
       <div
-        aria-label={`${market.question}, ${market.phase} preview`}
+        aria-label={`${market.question}, ${visiblePhase} preview`}
         className={`${styles.link} ${styles.preview}`}
         role="region"
       >
@@ -141,7 +152,7 @@ export function MarketCard({
 
   return (
     <Link
-      aria-label={`${market.question}, ${market.phase}`}
+      aria-label={`${market.question}, ${visiblePhase}`}
       className={styles.link}
       href={href}
     >

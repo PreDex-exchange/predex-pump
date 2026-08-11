@@ -176,7 +176,7 @@ function MiniClobOrderBookPanel({
   const [completion, setCompletion] = useState<string | null>(null);
   const { address, chainId, isConnected } = useAccount();
   const tx = useTxFlow();
-  const settlement = useSettlementStatus(market.id, address);
+  const settlement = useSettlementStatus(market, address);
   const sourceBook = outcome === 'YES' ? books.yes : books.no;
   const book = useMemo(
     () => orderBookForVenue(sourceBook, 'MINICLOB'),

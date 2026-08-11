@@ -23,7 +23,10 @@ import {
   sweepProtocolAfterCloseoutOnArc,
   type ResolutionChoice,
 } from '@/lib/chain/transactions';
-import { useSettlementStatus } from '@/lib/chain/useSettlementStatus';
+import {
+  type IndexedSettlementEvents,
+  useSettlementStatus,
+} from '@/lib/chain/useSettlementStatus';
 import { useTxFlow } from '@/lib/chain/useTxFlow';
 import {
   formatDateTime,
@@ -126,13 +129,22 @@ function ConnectionButton({
   );
 }
 
-export function SettlementPanel({ market }: { market: Market }) {
+export function SettlementPanel({
+  market,
+  settlementEvents = {
+    protocolSweepCompleted: false,
+    protocolSweptRaw: '0',
+  },
+}: {
+  market: Market;
+  settlementEvents?: IndexedSettlementEvents;
+}) {
   const [selectedOutcome, setSelectedOutcome] =
     useState<ResolutionChoice>('YES');
   const [action, setAction] = useState<SettlementAction | null>(null);
   const { address, chainId, isConnected } = useAccount();
   const config = useConfig();
-  const status = useSettlementStatus(market.id, address);
+  const status = useSettlementStatus(market, address, settlementEvents);
   const settlement = status.data;
   const tx = useTxFlow();
   const wrongNetwork = isConnected && chainId !== arcTestnet.id;
@@ -287,11 +299,19 @@ export function SettlementPanel({ market }: { market: Market }) {
       <aside className={styles.sticky}>
         <Card className={styles.card}>
           <h2>Settlement</h2>
-          <p className={styles.readState}>
+          <p
+            className={styles.readState}
+            role={status.error ? 'alert' : 'status'}
+          >
             {status.error
-              ? `Settlement read failed: ${status.error.message}`
+              ? 'Live settlement data is temporarily unavailable. No settlement action is shown until the Arc read succeeds.'
               : 'Reading live lifecycle, oracle, CTF, and LMSR state…'}
           </p>
+          {status.error && (
+            <Button onClick={() => void status.refetch()} size="small" variant="neutral">
+              Try the live read again
+            </Button>
+          )}
         </Card>
       </aside>
     );
@@ -422,7 +442,7 @@ export function SettlementPanel({ market }: { market: Market }) {
                   {!isConnected
                     ? 'Connect the committee wallet to reveal resolve controls.'
                     : config.error
-                      ? `Committee read failed: ${config.error.message}`
+                      ? 'Committee configuration is temporarily unavailable.'
                       : 'The connected wallet is not a current committee signer.'}
                 </span>
               </div>
@@ -452,81 +472,82 @@ export function SettlementPanel({ market }: { market: Market }) {
           </section>
         )}
 
+        {live.payoutDenominator > 0n && (
+          <section className={styles.section}>
+            <h3>Wallet positions</h3>
+            <div className={styles.positionTableWrap}>
+              <table className={styles.positionTable}>
+                <thead>
+                  <tr>
+                    <th>Token</th>
+                    <th>Held</th>
+                    <th>Redeemable</th>
+                    <th aria-label="Action" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {(['YES', 'NO'] as const).map((outcome) => {
+                    const held =
+                      outcome === 'YES'
+                        ? live.yesBalanceRaw
+                        : live.noBalanceRaw;
+                    const redeemable =
+                      outcome === 'YES'
+                        ? live.yesRedeemableRaw
+                        : live.noRedeemableRaw;
+                    return (
+                      <tr key={outcome}>
+                        <th>{outcome}</th>
+                        <td className="numeric">
+                          {formatRaw(held.toString(), {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                        <td className="numeric">
+                          {formatUsdc(redeemable.toString())}
+                        </td>
+                        <td>
+                          <Button
+                            className={styles.inlineMoneyButton}
+                            disabled={
+                              !isConnected ||
+                              wrongNetwork ||
+                              redeemable === 0n
+                            }
+                            onClick={() =>
+                              openAction({ kind: 'redeem', outcome })
+                            }
+                            size="small"
+                            variant={outcome === 'YES' ? 'mint' : 'sky'}
+                          >
+                            Redeem
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
         {live.lifecycleState === 4 && (
-          <>
-            <section className={styles.section}>
-              <h3>Wallet positions</h3>
-              <div className={styles.positionTableWrap}>
-                <table className={styles.positionTable}>
-                  <thead>
-                    <tr>
-                      <th>Token</th>
-                      <th>Held</th>
-                      <th>Redeemable</th>
-                      <th aria-label="Action" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(['YES', 'NO'] as const).map((outcome) => {
-                      const held =
-                        outcome === 'YES'
-                          ? live.yesBalanceRaw
-                          : live.noBalanceRaw;
-                      const redeemable =
-                        outcome === 'YES'
-                          ? live.yesRedeemableRaw
-                          : live.noRedeemableRaw;
-                      return (
-                        <tr key={outcome}>
-                          <th>{outcome}</th>
-                          <td className="numeric">
-                            {formatRaw(held.toString(), {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </td>
-                          <td className="numeric">
-                            {formatUsdc(redeemable.toString())}
-                          </td>
-                          <td>
-                            <Button
-                              className={styles.inlineMoneyButton}
-                              disabled={
-                                !isConnected ||
-                                wrongNetwork ||
-                                redeemable === 0n
-                              }
-                              onClick={() =>
-                                openAction({ kind: 'redeem', outcome })
-                              }
-                              size="small"
-                              variant={outcome === 'YES' ? 'mint' : 'sky'}
-                            >
-                              Redeem
-                            </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-            <section className={styles.section}>
-              <ConnectionButton
-                connected={isConnected}
-                onClick={() => openAction({ kind: 'closeout' })}
-                variant="neutral"
-                wrongNetwork={wrongNetwork}
-              >
-                Close out market
-              </ConnectionButton>
-              <p className={styles.readState}>
-                Closeout finalizes LMSR accounting. Check redeemable positions
-                first.
-              </p>
-            </section>
-          </>
+          <section className={styles.section}>
+            <ConnectionButton
+              connected={isConnected}
+              onClick={() => openAction({ kind: 'closeout' })}
+              variant="neutral"
+              wrongNetwork={wrongNetwork}
+            >
+              Close out market
+            </ConnectionButton>
+            <p className={styles.readState}>
+              Closeout finalizes LMSR accounting. Check redeemable positions
+              first.
+            </p>
+          </section>
         )}
 
         {live.lifecycleState === 5 && (

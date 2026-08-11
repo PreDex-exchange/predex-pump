@@ -68,7 +68,7 @@ import {
 
 import { ADDRESSES, ARC } from '@/lib/shared/addresses';
 
-import { arcPublicClient, readSettlementEventState } from './client';
+import { arcPublicClient } from './client';
 import { wagmiConfig } from './config';
 import {
   committeeOracleAbi,
@@ -1665,7 +1665,7 @@ export async function observeResolutionOnArc({
     {
       awaiting: 'Confirm IncubatorLMSR.observeResolution in the injected wallet.',
       pending: 'Resolution observation is pending on Arc…',
-      confirmed: 'Resolution observed. Eligible CTF positions can now be redeemed.',
+      confirmed: 'Resolution observed. The incubator lifecycle is now ready for closeout.',
     },
     report,
   );
@@ -1683,16 +1683,8 @@ export async function redeemOnArc({
     phase: 'checking',
     message: `Refreshing the ${outcome} CTF balance and payout vector…`,
   });
-  const [lifecycle, binding] = await Promise.all([
-    readLifecycle(marketId),
-    readTokenBinding(marketId),
-  ]);
+  const binding = await readTokenBinding(marketId);
   assertDeploymentBinding(binding);
-  if (Number(lifecycle[2]) !== 4) {
-    throw new Error(
-      'Redemption is available in the ResolvedObserved phase before closeout.',
-    );
-  }
 
   const outcomeIndex = outcome === 'YES' ? 0n : 1n;
   const tokenId = outcome === 'YES' ? binding[5] : binding[6];
@@ -1851,7 +1843,7 @@ export async function sweepProtocolAfterCloseoutOnArc({
     message: 'Refreshing closeout protocol fees and PnL before the sweep…',
   });
   await assertCreatorAtCloseout(account, marketId);
-  const [ammState, terminal, events] = await Promise.all([
+  const [ammState, terminal] = await Promise.all([
     arcPublicClient.readContract({
       address: ADDRESSES.lmsr,
       abi: incubatorLmsrAbi,
@@ -1866,12 +1858,8 @@ export async function sweepProtocolAfterCloseoutOnArc({
     }) as Promise<
       readonly [bigint, bigint, bigint, bigint, ...unknown[]]
     >,
-    readSettlementEventState(marketId, { fresh: true }),
   ]);
   if (!ammState.closedOut) throw new Error('The LMSR is not closed out.');
-  if (events.protocolSweepCompleted) {
-    throw new Error('The closeout protocol sweep has already completed.');
-  }
   const protocolPnlAvailableRaw = terminal[2] - terminal[3];
   if (
     ammState.protocolFeesAccruedRaw === 0n &&

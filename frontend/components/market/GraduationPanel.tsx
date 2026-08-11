@@ -109,7 +109,7 @@ export function GraduationPanel({ market }: { market: Market }) {
           <div className={styles.action}>
             <span>
               {status.error
-                ? `Eligibility read failed: ${status.error.message}`
+                ? 'Live graduation eligibility is temporarily unavailable.'
                 : qualified
                   ? 'Live graduationStatus: qualified'
                   : timeGateBoundary

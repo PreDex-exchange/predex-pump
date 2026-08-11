@@ -129,7 +129,13 @@ async function request<T>(
         : { body: JSON.stringify(options.body) }),
     });
   } catch {
-    throw new Error(`The indexed API at ${backendApiUrl} could not be reached.`);
+    const method = options.method ?? 'GET';
+    if (method === 'GET') {
+      throw new Error(`The indexed API at ${backendApiUrl} could not be reached.`);
+    }
+    throw new Error(
+      `The indexed API did not complete the ${method} request. The browser may have blocked this method, or the connection may have failed.`,
+    );
   }
 
   if (response.status === 404 && options.notFoundAsNull) {

@@ -329,16 +329,27 @@
 }
 
 .orderTable {
+  container-type: inline-size;
+  width: 100%;
+  min-width: 0;
   margin-top: var(--space-3);
-  overflow-x: auto;
+  overflow: hidden;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-input);
 }
 
 .orderRow {
   display: grid;
-  min-width: 930px;
-  grid-template-columns: 108px 60px 1fr 1fr 180px 105px 84px;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns:
+    minmax(64px, 88px)
+    44px
+    minmax(54px, 0.7fr)
+    minmax(64px, 0.9fr)
+    minmax(116px, 1.35fr)
+    minmax(64px, 0.8fr)
+    68px;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -358,8 +369,12 @@
 }
 
 .orderRow code {
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .orderHead {
@@ -371,7 +386,7 @@
 }
 
 .orderEmpty {
-  min-width: 930px;
+  min-width: 0;
   padding: var(--space-4);
   color: var(--muted);
   font-size: 0.76rem;
@@ -540,5 +555,47 @@
   .columns span:last-child,
   .level span:last-child {
     display: none;
+  }
+}
+
+@container (max-width: 620px) {
+  .orderHead {
+    display: none;
+  }
+
+  .orderRow {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--space-2) var(--space-4);
+    padding: var(--space-3);
+  }
+
+  .orderRow > [data-label] {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+    overflow-wrap: anywhere;
+    text-align: right;
+    white-space: normal;
+  }
+
+  .orderRow > [data-label]::before {
+    flex: none;
+    color: var(--muted);
+    content: attr(data-label);
+    font-size: var(--text-micro);
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .orderRow > [data-label='Expiry'],
+  .orderRow > [data-label='Maker'],
+  .rowAction {
+    grid-column: 1 / -1;
+  }
+
+  .rowAction {
+    width: 100%;
   }
 }
