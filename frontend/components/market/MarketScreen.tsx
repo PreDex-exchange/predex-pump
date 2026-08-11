@@ -23,6 +23,10 @@ import {
   relativeTime,
   shortAddress,
 } from '@/lib/format';
+import {
+  displayMarketPhase,
+  isMarketSettled,
+} from '@/lib/market-state';
 
 import { GraduationPanel } from './GraduationPanel';
 import { LifecycleStepper } from './LifecycleStepper';
@@ -99,6 +103,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
       <main className={styles.state}>
         <StatePanel
           message="Loading the indexed market snapshot and recent activity."
+          showMascot={false}
           title="Checking this egg…"
         />
       </main>
@@ -110,6 +115,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
       <main className={styles.state}>
         <StatePanel
           message="The indexed market snapshot could not load. Return to the feed and retry."
+          showMascot={false}
           title="This market would not open"
         />
       </main>
@@ -121,6 +127,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
       <main className={styles.state}>
         <StatePanel
           message="No MarketCreated event with that ID was found in the live deployment."
+          showMascot={false}
           title="No egg with that number"
         />
         <Link className={styles.backLink} href="/">
@@ -130,18 +137,17 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     );
   }
 
-  const { market, recentTrades, resolution } = detail;
+  const { market, recentTrades, resolution, settlementEvents } = detail;
   const positions = account?.positions.filter(
     (item) => item.marketId === market.id,
   );
-  const isIncubating = market.phase === 'Opened';
-  const isGraduated = market.phase === 'Graduated';
-  const isObserved =
-    market.phase === 'ResolvedObserved' || market.phase === 'ClosedOut';
+  const isSettled = isMarketSettled(market, resolution);
+  const isIncubating = market.phase === 'Opened' && !isSettled;
+  const isGraduated = market.phase === 'Graduated' && !isSettled;
+  const visiblePhase = displayMarketPhase(market, resolution);
   const settlementReady =
     isGraduated ||
-    isObserved ||
-    resolution !== null ||
+    isSettled ||
     clockSeconds >= market.tradingEndsAt;
   const isWatchlisted =
     accountProfile?.watchlist.some((item) => item.id === market.id) ?? false;
@@ -204,7 +210,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <div className={styles.headerRow}>
           <div>
             <div className={styles.metaRow}>
-              <PhaseBadge phase={market.phase} />
+              <PhaseBadge phase={visiblePhase} />
               <span>
                 by <code className="mono">{shortAddress(market.creator, 4, 3)}</code>
               </span>
@@ -239,13 +245,17 @@ export function MarketScreen({ marketId }: { marketId: string }) {
 
       <LifecycleStepper
         graduated={market.graduatedAt !== null}
-        phase={market.phase}
+        phase={visiblePhase}
       />
 
       {isIncubating && !settlementReady && (
         <div className={styles.grid}>
           <div className={styles.stack}>
-            <PriceOverview market={market} points={priceHistory?.points ?? []} />
+            <PriceOverview
+              market={market}
+              points={priceHistory?.points ?? []}
+              resolution={resolution}
+            />
             <GraduationPanel market={market} />
             <RecentTrades trades={recentTrades} />
           </div>
@@ -254,7 +264,10 @@ export function MarketScreen({ marketId }: { marketId: string }) {
               market={market}
               positions={positions}
             />
-            <SettlementPanel market={market} />
+            <SettlementPanel
+              market={market}
+              settlementEvents={settlementEvents}
+            />
           </div>
         </div>
       )}
@@ -262,32 +275,48 @@ export function MarketScreen({ marketId }: { marketId: string }) {
       {isGraduated && (
         <div className={styles.grid}>
           <div className={styles.stack}>
-            <PriceOverview market={market} points={priceHistory?.points ?? []} />
+            <PriceOverview
+              market={market}
+              points={priceHistory?.points ?? []}
+              resolution={resolution}
+            />
             {orderBookSurface}
             <RecentTrades trades={recentTrades} />
           </div>
-          <SettlementPanel market={market} />
+          <SettlementPanel
+            market={market}
+            settlementEvents={settlementEvents}
+          />
         </div>
       )}
 
       {isIncubating && settlementReady && (
         <div className={styles.grid}>
           <div className={styles.stack}>
-            <PriceOverview market={market} points={priceHistory?.points ?? []} />
+            <PriceOverview
+              market={market}
+              points={priceHistory?.points ?? []}
+              resolution={resolution}
+            />
             <RecentTrades trades={recentTrades} />
           </div>
-          <SettlementPanel market={market} />
+          <SettlementPanel
+            market={market}
+            settlementEvents={settlementEvents}
+          />
         </div>
       )}
 
-      {isObserved && (
+      {isSettled && (
         <div className={styles.grid}>
           <div className={styles.stack}>
             <ResolvedOutcomePanel market={market} resolution={resolution} />
-            {market.bookAddress && orderBookSurface}
             <RecentTrades trades={recentTrades} />
           </div>
-          <SettlementPanel market={market} />
+          <SettlementPanel
+            market={market}
+            settlementEvents={settlementEvents}
+          />
         </div>
       )}
     </main>

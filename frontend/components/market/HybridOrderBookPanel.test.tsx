@@ -183,6 +183,7 @@ function offchainOrder(
   maker: `0x${string}`,
   hashByte: string,
   status: OffchainOrder['status'] = 'OPEN',
+  expiration = 2_000_000_000n,
 ): OffchainOrder {
   const signed = buildCtfExchangeOrder({
     maker,
@@ -191,7 +192,7 @@ function offchainOrder(
     priceRaw: 650_000n,
     sizeRaw: 1_000_000n,
     salt: BigInt(`0x${hashByte.repeat(4)}`),
-    expiration: 2_000_000_000n,
+    expiration,
   });
   return {
     orderHash: `0x${hashByte.repeat(32)}`,
@@ -267,7 +268,10 @@ function books(order: OffchainOrder): MarketBookResponse {
   };
 }
 
-function renderPanel(bookResponse: MarketBookResponse) {
+function renderPanel(
+  bookResponse: MarketBookResponse,
+  marketSnapshot: Market = market,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -277,7 +281,7 @@ function renderPanel(bookResponse: MarketBookResponse) {
     </QueryClientProvider>
   );
   return render(
-    <HybridOrderBookPanel books={bookResponse} market={market} />,
+    <HybridOrderBookPanel books={bookResponse} market={marketSnapshot} />,
     { wrapper },
   );
 }
@@ -330,9 +334,57 @@ beforeEach(() => {
   mocks.submitCancel.mockResolvedValue({});
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('Hybrid human trading surface', () => {
+  it('defaults and clamps expiry into the future after the trading window ended', () => {
+    const nowSeconds = 1_786_406_400;
+    vi.spyOn(Date, 'now').mockReturnValue(nowSeconds * 1_000);
+    renderPanel(
+      books(offchainOrder(OTHER_MAKER, 'a1')),
+      {
+        ...market,
+        tradingEndsAt: nowSeconds - 86_400,
+      },
+    );
+
+    const expiry = screen.getByLabelText(/Expiry \(UTC\)/u) as HTMLInputElement;
+    expect(Date.parse(`${expiry.value}:00Z`) / 1_000).toBeGreaterThan(
+      nowSeconds,
+    );
+    expect(expiry.getAttribute('aria-invalid')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Review binding order' })).toBeTruthy();
+
+    fireEvent.change(expiry, { target: { value: '2020-01-01T00:00' } });
+    expect(expiry.getAttribute('aria-invalid')).toBe('true');
+    fireEvent.blur(expiry);
+
+    expect(Date.parse(`${expiry.value}:00Z`) / 1_000).toBeGreaterThan(
+      nowSeconds,
+    );
+    expect(expiry.getAttribute('aria-invalid')).toBe('false');
+  });
+
+  it('renders zero as good-till-cancelled and real expiry as a UTC date', () => {
+    const noExpiry = offchainOrder(OTHER_MAKER, 'a2', 'OPEN', 0n);
+    const datedExpiry = offchainOrder(
+      `0x${'45'.repeat(20)}`,
+      'a3',
+      'OPEN',
+      2_000_000_000n,
+    );
+    const response = books(noExpiry);
+    response.yes.offchainOrders = [noExpiry, datedExpiry];
+    renderPanel(response);
+
+    expect(screen.getByText('No expiry · good till cancelled')).toBeTruthy();
+    expect(screen.getByText(/2033/u)).toBeTruthy();
+    expect(screen.queryByText(/1970/u)).toBeNull();
+  });
+
   it('renders explicit empty and loading states for live book data', () => {
     mocks.approvals.isLoading = true;
     mocks.myOrders.isLoading = true;

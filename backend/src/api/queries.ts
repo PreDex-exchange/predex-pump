@@ -205,9 +205,20 @@ export async function listMarkets(
         `);
   const hasNextPage = rows.length > input.limit;
   const pageRows = rows.slice(0, input.limit);
+  const resolutions = await prisma.resolution.findMany({
+    where: { marketId: { in: pageRows.map((row) => row.id) } },
+  });
+  const resolutionByMarket = new Map(
+    resolutions.map((resolution) => [resolution.marketId, resolution]),
+  );
   const last = pageRows.at(-1);
   return {
-    items: pageRows.map(toMarketDto),
+    items: pageRows.map((market) =>
+      toMarketDto({
+        ...market,
+        resolution: resolutionByMarket.get(market.id) ?? null,
+      }),
+    ),
     nextCursor:
       hasNextPage && last !== undefined
         ? encodeMarketCursor({ createdAt: last.createdAt, id: last.id })
@@ -221,7 +232,7 @@ export async function getMarketDto(
 ): Promise<ReturnType<typeof toMarketDto> | null> {
   const market = await prisma.market.findUnique({
     where: { id: marketId },
-    select: MARKET_SELECT,
+    select: { ...MARKET_SELECT, resolution: true },
   });
   return market === null ? null : toMarketDto(market);
 }
@@ -234,7 +245,7 @@ export async function getMarketsByIds(
   if (marketIds.length === 0) return [];
   const rows = await prisma.market.findMany({
     where: { id: { in: [...new Set(marketIds)] } },
-    select: MARKET_SELECT,
+    select: { ...MARKET_SELECT, resolution: true },
   });
   const byId = new Map(rows.map((row) => [row.id, toMarketDto(row)]));
   return marketIds.flatMap((id) => {
@@ -247,7 +258,7 @@ export async function getMarketDetail(
   prisma: PrismaClient,
   marketId: string,
 ): Promise<MarketDetailResponse | null> {
-  const [market, trades] = await Promise.all([
+  const [market, trades, settlementEvents] = await Promise.all([
     prisma.market.findUnique({
       where: { id: marketId },
       select: { ...MARKET_SELECT, resolution: true },
@@ -258,12 +269,41 @@ export async function getMarketDetail(
       orderBy: [{ blockNumber: 'desc' }, { logIndex: 'desc' }],
       take: 50,
     }),
+    prisma.activityEvent.findMany({
+      where: {
+        marketId,
+        source: 'LMSR',
+        eventName: 'ProtocolFeeSwept',
+      },
+      select: { data: true },
+    }),
   ]);
   if (market === null) return null;
+  let protocolSweepCompleted = false;
+  let protocolSweptRaw = 0n;
+  for (const event of settlementEvents) {
+    if (
+      typeof event.data !== 'object' ||
+      event.data === null ||
+      Array.isArray(event.data)
+    ) {
+      continue;
+    }
+    const amountRaw = event.data.amountRaw;
+    if (typeof amountRaw === 'string' && /^\d+$/u.test(amountRaw)) {
+      protocolSweptRaw += BigInt(amountRaw);
+    }
+    protocolSweepCompleted =
+      protocolSweepCompleted || event.data.closeoutComplete === true;
+  }
   return {
     market: toMarketDto(market),
     recentTrades: trades.map(toTradeDto),
     resolution: market.resolution === null ? null : toResolutionDto(market.resolution),
+    settlementEvents: {
+      protocolSweepCompleted,
+      protocolSweptRaw: protocolSweptRaw.toString(),
+    },
   };
 }
 

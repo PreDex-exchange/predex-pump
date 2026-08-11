@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 
 import { StatePanel } from '@/components/ui/StatePanel';
 import { useActivity, useMarkets } from '@/lib/api/hooks';
+import { isMarketSettled } from '@/lib/market-state';
 
 import { ActivityList } from './ActivityList';
 import { Hero } from './Hero';
@@ -21,11 +22,12 @@ const FILTERS: { value: FeedFilter; label: string }[] = [
   { value: 'resolved', label: 'Resolved' },
 ];
 
-function matchesFilter(market: Market, filter: FeedFilter) {
+export function matchesFilter(market: Market, filter: FeedFilter) {
   if (filter === 'all') return true;
+  if (filter === 'resolved') return isMarketSettled(market);
+  if (isMarketSettled(market)) return false;
   if (filter === 'incubating') return market.phase === 'Opened';
-  if (filter === 'graduated') return market.phase === 'Graduated';
-  return market.phase === 'ResolvedObserved' || market.phase === 'ClosedOut';
+  return market.phase === 'Graduated';
 }
 
 export function FeedScreen() {

@@ -28,6 +28,10 @@ import {
   phaseLabel,
   shortAddress,
 } from '@/lib/format';
+import {
+  isMarketSettled,
+  positionCurrentValueRaw,
+} from '@/lib/market-state';
 
 import styles from './PortfolioScreen.module.css';
 
@@ -39,10 +43,6 @@ interface PositionRow {
   averageCostRaw: string;
   currentValueRaw: string;
   estimatedPnlRaw: string;
-}
-
-function rawProduct(leftRaw: string, rightRaw: string) {
-  return ((BigInt(leftRaw) * BigInt(rightRaw)) / RAW_SCALE).toString();
 }
 
 function averageCostRaw(position: Position) {
@@ -106,16 +106,12 @@ export function PortfolioScreen() {
 
     return (account?.positions ?? []).map((position) => {
       const market = marketById.get(position.marketId);
-      const markRaw =
-        position.outcome === 'YES'
-          ? market?.yesPriceRaw ?? '0'
-          : market?.noPriceRaw ?? '0';
 
       return {
         position,
         market,
         averageCostRaw: averageCostRaw(position),
-        currentValueRaw: rawProduct(position.qtyRaw, markRaw),
+        currentValueRaw: positionCurrentValueRaw(position, market),
         estimatedPnlRaw: (
           BigInt(position.realizedPnlRaw) +
           BigInt(position.unrealizedPnlRaw)
@@ -138,7 +134,8 @@ export function PortfolioScreen() {
   ).size;
   const redeemableRows = positionRows.filter(
     (row) =>
-      row.market?.phase === 'ResolvedObserved' &&
+      row.market !== undefined &&
+      isMarketSettled(row.market) &&
       BigInt(row.position.qtyRaw) > 0n &&
       BigInt(row.currentValueRaw) > 0n,
   );
@@ -168,7 +165,7 @@ export function PortfolioScreen() {
         <h1>Your positions, held calmly.</h1>
         <p>
           Quantities are indexed from CTF transfers and marked against indexed
-          marginal or resolved prices. Cost basis and PnL are estimates from
+          marginal prices or final payouts. Cost basis and PnL are estimates from
           trade history.
         </p>
       </div>
@@ -206,6 +203,7 @@ export function PortfolioScreen() {
               ? 'The wallet connection was not completed. Try again, or explore the live market feed.'
               : 'Connect a wallet to load its indexed outcome-token positions and Arc activity.'
           }
+          showMascot={false}
           title="Connect to open your portfolio"
         />
       </main>
@@ -218,6 +216,7 @@ export function PortfolioScreen() {
         {header}
         <StatePanel
           message="Loading indexed positions and marking them against current prices."
+          showMascot={false}
           title="Counting your positions…"
         />
       </main>
@@ -241,6 +240,7 @@ export function PortfolioScreen() {
             </Button>
           }
           message="The indexed account snapshot could not load. Retry the backend reads."
+          showMascot={false}
           title="This portfolio would not open"
         />
       </main>
@@ -263,6 +263,7 @@ export function PortfolioScreen() {
             </>
           }
           message="This account holds no outcome tokens for markets in the live deployment."
+          showMascot={false}
           title="No positions in this nest yet"
         />
       </main>
@@ -279,7 +280,7 @@ export function PortfolioScreen() {
           <NumberDisplay size="hero">
             {formatUsdc(totalPositionValueRaw)} <small>USDC</small>
           </NumberDisplay>
-          <small>At current indexed prices</small>
+          <small>At indexed prices or final payouts</small>
         </Card>
         <Card className={styles.summaryCard} quiet>
           <span>Estimated PnL</span>
@@ -316,8 +317,9 @@ export function PortfolioScreen() {
             </h2>
             <p>
               {redeemableRows.length}{' '}
-              {redeemableRows.length === 1 ? 'market has' : 'markets have'} an observed
-              resolution.
+              {redeemableRows.length === 1
+                ? 'market has a final payout.'
+                : 'markets have final payouts.'}
             </p>
           </div>
           <Link
@@ -372,7 +374,13 @@ export function PortfolioScreen() {
                         {row.market?.question ?? `Market #${row.position.marketId}`}
                       </strong>
                       <span>
-                        {row.market ? phaseLabel(row.market.phase) : 'Market unavailable'}{' '}
+                        {row.market
+                          ? isMarketSettled(row.market)
+                            ? row.market.phase === 'ClosedOut'
+                              ? 'Closed out'
+                              : 'Resolved'
+                            : phaseLabel(row.market.phase)
+                          : 'Market unavailable'}{' '}
                         <span aria-hidden="true">→</span>
                       </span>
                     </Link>

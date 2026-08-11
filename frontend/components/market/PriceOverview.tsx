@@ -1,12 +1,17 @@
 'use client';
 
-import type { Market, PricePoint } from '@predex-pump/shared/domain';
+import type {
+  Market,
+  PricePoint,
+  Resolution,
+} from '@predex-pump/shared/domain';
 import { useId, useMemo, useState } from 'react';
 
 import { Card } from '@/components/ui/Card';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { Tabs } from '@/components/ui/Tabs';
 import { formatImpliedPercent, formatPrice } from '@/lib/format';
+import { isMarketSettled, marketPriceRaw } from '@/lib/market-state';
 
 import styles from './PriceOverview.module.css';
 
@@ -36,30 +41,43 @@ function chartPaths(points: PricePoint[], currentYesPriceRaw: string) {
   };
 }
 
-export function PriceOverview({ market, points }: { market: Market; points: PricePoint[] }) {
+export function PriceOverview({
+  market,
+  points,
+  resolution,
+}: {
+  market: Market;
+  points: PricePoint[];
+  resolution?: Resolution | null;
+}) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1d');
   const gradientId = useId().replaceAll(':', '');
+  const settled = isMarketSettled(market, resolution);
+  const yesPriceRaw = marketPriceRaw(market, 'YES', resolution);
+  const noPriceRaw = marketPriceRaw(market, 'NO', resolution);
   const visiblePoints = useMemo(() => {
     const count = timeframe === '1h' ? 3 : timeframe === '1d' ? 7 : points.length;
     return points.slice(-count);
   }, [points, timeframe]);
-  const paths = chartPaths(visiblePoints, market.yesPriceRaw);
+  const paths = chartPaths(visiblePoints, yesPriceRaw);
 
   return (
     <Card>
       <div className={styles.prices}>
         <div className={`${styles.price} ${styles.yes}`}>
           <span>YES</span>
-          <NumberDisplay size="price">{formatPrice(market.yesPriceRaw)}</NumberDisplay>
+          <NumberDisplay size="price">{formatPrice(yesPriceRaw)}</NumberDisplay>
           <small className="numeric">
-            {formatImpliedPercent(market.yesPriceRaw)}% implied · live marginal
+            {formatImpliedPercent(yesPriceRaw)}%{' '}
+            {settled ? 'payout · final' : 'implied · live marginal'}
           </small>
         </div>
         <div className={`${styles.price} ${styles.no}`}>
           <span>NO</span>
-          <NumberDisplay size="price">{formatPrice(market.noPriceRaw)}</NumberDisplay>
+          <NumberDisplay size="price">{formatPrice(noPriceRaw)}</NumberDisplay>
           <small className="numeric">
-            {formatImpliedPercent(market.noPriceRaw)}% implied · live marginal
+            {formatImpliedPercent(noPriceRaw)}%{' '}
+            {settled ? 'payout · final' : 'implied · live marginal'}
           </small>
         </div>
       </div>

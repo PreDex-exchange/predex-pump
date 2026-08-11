@@ -469,6 +469,10 @@ export function CreateScreen() {
           market: { ...previewMarket, id: result.marketId },
           recentTrades: [],
           resolution: null,
+          settlementEvents: {
+            protocolSweepCompleted: false,
+            protocolSweptRaw: '0',
+          },
         },
       );
       router.push(`/market/${result.marketId}`);

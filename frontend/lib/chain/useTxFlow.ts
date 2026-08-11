@@ -13,14 +13,24 @@ const INITIAL_STATE: TxProgress = {
   message: 'Ready.',
 };
 
+export interface TxFlowOptions {
+  checkingMessage?: string;
+  failureMessage?: string;
+}
+
 export function useTxFlow() {
   const [state, setState] = useState<TxProgress>(INITIAL_STATE);
 
   const execute = useCallback(
-    async <T,>(operation: (report: TxReporter) => Promise<T>) => {
+    async <T,>(
+      operation: (report: TxReporter) => Promise<T>,
+      options: TxFlowOptions = {},
+    ) => {
       setState({
         phase: 'checking',
-        message: 'Reading transaction-critical state from Arc…',
+        message:
+          options.checkingMessage ??
+          'Reading transaction-critical state from Arc…',
       });
       try {
         return await operation(setState);
@@ -28,7 +38,8 @@ export function useTxFlow() {
         const message = chainErrorMessage(error);
         setState((current) => ({
           phase: 'reverted',
-          message: 'The transaction did not complete.',
+          message:
+            options.failureMessage ?? 'The transaction did not complete.',
           hash: current.hash,
           error: message,
         }));

@@ -82,6 +82,8 @@ interface OptimisticCollateralApproval extends OptimisticCtfApproval {
 }
 
 const APPROVAL_INDEX_GRACE_SECONDS = 120;
+const DEFAULT_ORDER_EXPIRY_SECONDS = 24 * 60 * 60;
+const MINIMUM_ORDER_EXPIRY_SECONDS = 60;
 
 function rawInput(value: string): bigint | null {
   const parsed = parseUsdcInput(value);
@@ -99,7 +101,7 @@ function snappedPriceInput(
   );
 }
 
-function utcInputValue(timestamp: number): string {
+export function utcInputValue(timestamp: number): string {
   return new Date(timestamp * 1_000).toISOString().slice(0, 16);
 }
 
@@ -109,7 +111,15 @@ function parseUtcInput(value: string): number | null {
   return Math.floor(milliseconds / 1_000);
 }
 
-function formatUtcExpiry(timestamp: number): string {
+export function defaultOrderExpiryTimestamp(
+  tradingEndsAt: number,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): number {
+  return Math.max(tradingEndsAt, nowSeconds + DEFAULT_ORDER_EXPIRY_SECONDS);
+}
+
+export function formatUtcExpiry(timestamp: number): string {
+  if (timestamp === 0) return 'No expiry · good till cancelled';
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
@@ -246,7 +256,7 @@ export function HybridOrderBookPanel({
   );
   const [size, setSize] = useState('0.20');
   const [expiry, setExpiry] = useState(() =>
-    utcInputValue(market.tradingEndsAt),
+    utcInputValue(defaultOrderExpiryTimestamp(market.tradingEndsAt)),
   );
   const [reviewOpen, setReviewOpen] = useState(false);
   const [fillTarget, setFillTarget] = useState<OffchainOrder | null>(null);
@@ -263,7 +273,9 @@ export function HybridOrderBookPanel({
   const [cancelled, setCancelled] = useState(() => new Set<string>());
   const [orderActionBusy, setOrderActionBusy] = useState<string | null>(null);
   const [orderActionError, setOrderActionError] = useState<string | null>(null);
-  const [nowSeconds, setNowSeconds] = useState(Number.MAX_SAFE_INTEGER);
+  const [nowSeconds, setNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1_000),
+  );
   useEffect(() => {
     const update = () => setNowSeconds(Math.floor(Date.now() / 1_000));
     update();
@@ -285,7 +297,8 @@ export function HybridOrderBookPanel({
     sizeRaw !== null && isOrderSizeGranular(sizeRaw);
   const expiration = parseUtcInput(expiry);
   const validExpiration =
-    expiration !== null && expiration > nowSeconds;
+    expiration !== null &&
+    expiration >= nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS;
   const commitment = useMemo(() => {
     if (
       priceRaw === null ||
@@ -461,24 +474,30 @@ export function HybridOrderBookPanel({
     }
     actionTx.reset();
     setCompletion(null);
-    const result = await actionTx.execute(async (report) => {
-      const request = await signCtfExchangeOrderOnArc({
-        account: address,
-        tokenId: BigInt(outcome === 'YES' ? market.yesTokenId : market.noTokenId),
-        side: commitment.exchangeSide,
-        priceRaw: commitment.priceRaw,
-        sizeRaw: commitment.sizeRaw,
-        minimumTickSizeRaw,
-        expiration: BigInt(commitment.expiration),
-        report,
-      });
-      const posted = await backendRestClient.postOrder(request);
-      report({
-        phase: 'confirmed',
-        message: 'The signed order is live in the Hybrid operator book.',
-      });
-      return posted;
-    });
+    const result = await actionTx.execute(
+      async (report) => {
+        const request = await signCtfExchangeOrderOnArc({
+          account: address,
+          tokenId: BigInt(outcome === 'YES' ? market.yesTokenId : market.noTokenId),
+          side: commitment.exchangeSide,
+          priceRaw: commitment.priceRaw,
+          sizeRaw: commitment.sizeRaw,
+          minimumTickSizeRaw,
+          expiration: BigInt(commitment.expiration),
+          report,
+        });
+        const posted = await backendRestClient.postOrder(request);
+        report({
+          phase: 'confirmed',
+          message: 'The signed order is live in the Hybrid operator book.',
+        });
+        return posted;
+      },
+      {
+        checkingMessage: 'Preparing the signed off-chain order…',
+        failureMessage: 'The signed order was not posted.',
+      },
+    );
     if (!result) return;
     setCompletion(`Signed order ${shortAddress(result.order.orderHash, 8, 6)} is live.`);
     myOrders.refetch();
@@ -760,7 +779,26 @@ export function HybridOrderBookPanel({
               <span className={styles.input}>
                 <input
                   aria-invalid={!validExpiration}
+                  min={utcInputValue(
+                    nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS,
+                  )}
                   onChange={(event) => setExpiry(event.target.value)}
+                  onBlur={() => {
+                    const parsed = parseUtcInput(expiry);
+                    if (
+                      parsed === null ||
+                      parsed < nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS
+                    ) {
+                      setExpiry(
+                        utcInputValue(
+                          defaultOrderExpiryTimestamp(
+                            market.tradingEndsAt,
+                            nowSeconds,
+                          ),
+                        ),
+                      );
+                    }
+                  }}
                   type="datetime-local"
                   value={expiry}
                 />
@@ -952,23 +990,23 @@ export function HybridOrderBookPanel({
                   order.maker.toLowerCase() === address?.toLowerCase();
                 return (
                   <div className={styles.orderRow} key={order.orderHash}>
-                    <code title={order.orderHash}>
+                    <code data-label="Order" title={order.orderHash}>
                       {shortAddress(order.orderHash, 5, 4)}
                     </code>
-                    <span>{order.side}</span>
-                    <span className="numeric">
+                    <span data-label="Side">{order.side}</span>
+                    <span className="numeric" data-label="Price">
                       {formatPrice(order.priceRaw, 6)}
                     </span>
-                    <span className="numeric">
+                    <span className="numeric" data-label="Remaining">
                       {formatRaw(order.remainingRaw, {
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 6,
                       })}
                     </span>
-                    <span className="numeric">
+                    <span className="numeric" data-label="Expiry">
                       {formatUtcExpiry(order.signedOrder.expiration)}
                     </span>
-                    <code title={order.maker}>
+                    <code data-label="Maker" title={order.maker}>
                       {shortAddress(order.maker, 4, 3)}
                     </code>
                     <button
@@ -1056,7 +1094,11 @@ export function HybridOrderBookPanel({
                         remaining @ {formatPrice(order.priceRaw, 6)}
                       </span>
                       <span className="numeric">
-                        Expires {formatUtcExpiry(order.signedOrder.expiration)}
+                        {order.signedOrder.expiration === 0
+                          ? formatUtcExpiry(0)
+                          : `Expires ${formatUtcExpiry(
+                              order.signedOrder.expiration,
+                            )}`}
                       </span>
                       {isWithdrawn && <b>Withdrawn from this book</b>}
                     </div>
