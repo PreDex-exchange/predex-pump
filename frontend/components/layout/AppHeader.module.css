@@ -61,6 +61,11 @@
   color: var(--ink);
 }
 
+.navLink.active:focus-visible {
+  outline: 4px solid rgb(62 143 224 / 32%);
+  outline-offset: 2px;
+}
+
 .actions {
   display: flex;
   align-items: center;

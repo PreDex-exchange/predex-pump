@@ -34,7 +34,11 @@ export function FeedScreen() {
   const [filter, setFilter] = useState<FeedFilter>('all');
   const [sort, setSort] = useState<FeedSort>('trending');
   const { data: marketPage, isLoading, error } = useMarkets();
-  const { data: activityPage } = useActivity({ limit: 5 });
+  const {
+    data: activityPage,
+    error: activityError,
+    isLoading: activityIsLoading,
+  } = useActivity({ limit: 5 });
 
   const markets = useMemo(() => {
     const filtered = (marketPage?.items ?? []).filter((market) => matchesFilter(market, filter));
@@ -52,16 +56,15 @@ export function FeedScreen() {
 
   return (
     <main>
-      <Hero markets={marketPage?.items ?? []} />
+      <Hero markets={error ? null : (marketPage?.items ?? null)} />
       <section className={styles.discovery} id="how-it-works">
-        <div aria-label="Filter markets" className={styles.filters} role="tablist">
+        <div aria-label="Filter markets" className={styles.filters} role="group">
           {FILTERS.map((item) => (
             <button
-              aria-selected={item.value === filter}
+              aria-pressed={item.value === filter}
               className={item.value === filter ? styles.active : ''}
               key={item.value}
               onClick={() => setFilter(item.value)}
-              role="tab"
               type="button"
             >
               {item.label}
@@ -107,7 +110,12 @@ export function FeedScreen() {
             </div>
           )}
         </section>
-        <ActivityList events={activityPage?.items ?? []} markets={marketPage?.items ?? []} />
+        <ActivityList
+          error={activityError}
+          events={activityPage?.items ?? []}
+          isLoading={activityIsLoading}
+          markets={marketPage?.items ?? []}
+        />
       </div>
     </main>
   );

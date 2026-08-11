@@ -1,6 +1,7 @@
 'use client';
 
 import type { Market, Outcome, Position } from '@predex-pump/shared/domain';
+import { isOrderSizeGranular } from '@predex-pump/shared';
 import { useMemo, useState } from 'react';
 import { formatUnits, parseUnits } from 'viem';
 import { useAccount } from 'wagmi';
@@ -21,6 +22,11 @@ import {
   formatSignedUsdc,
   formatUsdc,
 } from '@/lib/format';
+import {
+  ORDER_SIZE_STEP,
+  ORDER_SIZE_STEP_ERROR,
+  snappedOrderSizeInput,
+} from '@/lib/order-input';
 
 import styles from './TradePanel.module.css';
 
@@ -58,6 +64,13 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
   const tx = useTxFlow();
   const amountRaw = inputToRaw(amount);
   const amountValue = BigInt(amountRaw);
+  const amountIsGranular = isOrderSizeGranular(amountValue);
+  const sizeError =
+    amountValue <= 0n
+      ? 'Enter a trade size greater than zero'
+      : !amountIsGranular
+        ? ORDER_SIZE_STEP_ERROR
+        : null;
   const selectedPosition = positions.find(
     (position) => position.outcome === outcome,
   );
@@ -85,7 +98,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
     isConnected &&
     Boolean(address) &&
     !isWrongNetwork &&
-    amountValue > 0n &&
+    amountIsGranular &&
     Boolean(quote) &&
     !quoteError &&
     !insufficientTokens;
@@ -135,7 +148,9 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
     ? 'Connect wallet in the header'
     : isWrongNetwork
       ? 'Switch to Arc Testnet'
-      : insufficientTokens
+      : sizeError
+        ? sizeError
+        : insufficientTokens
         ? `Insufficient ${outcome} tokens`
         : quoteLoading
           ? 'Reading live quote…'
@@ -185,13 +200,30 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           <span>{mode === 'buy' ? 'Shares to buy' : 'Shares to sell'}</span>
           <span className={styles.input}>
             <input
+              aria-describedby={sizeError ? 'curve-trade-size-error' : undefined}
+              aria-invalid={sizeError !== null}
               inputMode="decimal"
               onChange={(event) => setAmount(event.target.value)}
+              onBlur={() => {
+                if (amountValue > 0n && !amountIsGranular) {
+                  setAmount(snappedOrderSizeInput(amountValue));
+                }
+              }}
+              step={ORDER_SIZE_STEP}
               value={amount}
             />
             <span>{outcome}</span>
           </span>
         </label>
+        {sizeError && (
+          <p
+            className={styles.sizeError}
+            id="curve-trade-size-error"
+            role="alert"
+          >
+            {sizeError}
+          </p>
+        )}
         <div className={styles.chips}>
           {[0.1, 0.5, 1].map((delta) => (
             <button key={delta} onClick={() => addAmount(delta)} type="button">
@@ -270,7 +302,8 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           {buttonLabel}
         </Button>
         <p className={styles.reassure}>
-          Live Arc settlement · six-decimal ERC-20 USDC · no native value · future book tick{' '}
+          Size step 0.001 token · off-step sizes round down on blur · future
+          book price tick{' '}
           {formatUnits(BigInt(market.params.minimumTickSizeRaw), 6)} USDC
         </p>
 

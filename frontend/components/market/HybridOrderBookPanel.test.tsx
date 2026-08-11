@@ -516,6 +516,50 @@ describe('Hybrid human trading surface', () => {
     expect(price.value).toBe('0.61');
   });
 
+  it('explains and visibly snaps an off-step Hybrid order size on blur', () => {
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'bd')));
+
+    const size = screen.getByLabelText(/^Size/u) as HTMLInputElement;
+    fireEvent.change(size, { target: { value: '0.2005' } });
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Size must use 0.001 token steps',
+    );
+    expect(
+      screen.getByRole('button', {
+        name: 'Size must use 0.001 token steps',
+      }),
+    ).toBeTruthy();
+
+    fireEvent.blur(size);
+
+    expect(size.value).toBe('0.2');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('explains and visibly snaps an off-step MiniCLOB order size on blur', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'be'));
+    response.liveVenue = 'MINICLOB';
+    renderLivePanel(response);
+
+    const size = screen.getByLabelText(/^Size/u) as HTMLInputElement;
+    fireEvent.change(size, { target: { value: '0.2005' } });
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Size must use 0.001 token steps',
+    );
+    expect(
+      screen.getByRole('button', {
+        name: 'Size must use 0.001 token steps',
+      }),
+    ).toBeTruthy();
+
+    fireEvent.blur(size);
+
+    expect(size.value).toBe('0.2');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('keeps free withdrawal and gas cancellation as separate actions using API calldata', async () => {
     const ownOpen = offchainOrder(mocks.address, 'cd');
     const ownWithdrawn = { ...ownOpen, status: 'WITHDRAWN' as const, fillable: false };

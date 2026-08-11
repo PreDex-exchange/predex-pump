@@ -8,13 +8,15 @@ import { formatUsdc } from '@/lib/format';
 
 import styles from './Hero.module.css';
 
-export function Hero({ markets }: { markets: Market[] }) {
-  const graduated = markets.filter(
-    (market) => market.phase !== 'Opened',
-  ).length;
-  const volumeRaw = markets
-    .reduce((total, market) => total + BigInt(market.volumeRaw), 0n)
-    .toString();
+export function Hero({ markets }: { markets: Market[] | null }) {
+  const graduated =
+    markets?.filter((market) => market.phase !== 'Opened').length ?? null;
+  const volumeRaw =
+    markets === null
+      ? null
+      : markets
+          .reduce((total, market) => total + BigInt(market.volumeRaw), 0n)
+          .toString();
 
   return (
     <section className={styles.hero}>
@@ -39,18 +41,18 @@ export function Hero({ markets }: { markets: Market[] }) {
         </div>
         <ul className={styles.stats} aria-label="Platform statistics">
           <li>
-            <NumberDisplay size="hero">{markets.length}</NumberDisplay>
+            <NumberDisplay size="hero">{markets?.length ?? '—'}</NumberDisplay>
             markets
           </li>
           <li>
             <NumberDisplay size="hero" tone="yes">
-              {graduated}
+              {graduated ?? '—'}
             </NumberDisplay>
             graduated
           </li>
           <li>
             <NumberDisplay size="hero" tone="no">
-              ${formatUsdc(volumeRaw, 0)}
+              {volumeRaw === null ? '—' : `$${formatUsdc(volumeRaw, 2)}`}
             </NumberDisplay>
             volume
           </li>

@@ -98,7 +98,7 @@ export function MarketCard({
         <div className={styles.foot}>
           <span className={styles.volume}>
             <span aria-hidden="true" />
-            <span className="numeric">${formatUsdc(market.volumeRaw, 0)} vol</span>
+            <span className="numeric">${formatUsdc(market.volumeRaw, 2)} vol</span>
           </span>
           {market.phase === 'Opened' && !isSettled && (
             <div className={styles.graduation}>

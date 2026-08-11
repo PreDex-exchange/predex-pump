@@ -295,6 +295,13 @@
   font-size: var(--text-micro);
 }
 
+.sizeError {
+  margin: 6px 0 0;
+  color: var(--error);
+  font-size: var(--text-micro);
+  font-weight: 900;
+}
+
 .approvalRow button {
   grid-column: 1 / -1;
 }

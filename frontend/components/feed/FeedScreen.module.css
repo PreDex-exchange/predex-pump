@@ -48,6 +48,11 @@
   color: #fff;
 }
 
+.filters button:focus-visible {
+  outline: 4px solid rgb(62 143 224 / 32%);
+  outline-offset: 2px;
+}
+
 .sort {
   display: flex;
   align-items: center;

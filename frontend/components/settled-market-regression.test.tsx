@@ -261,7 +261,7 @@ describe('Graduated snapshots with final payout data', () => {
       surface: 'resolved feed filter',
       renderSurface: () => {
         const rendered = renderWithQuery(<FeedScreen />);
-        fireEvent.click(screen.getByRole('tab', { name: 'Resolved' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Resolved' }));
         return rendered;
       },
       assertSettled: () => {

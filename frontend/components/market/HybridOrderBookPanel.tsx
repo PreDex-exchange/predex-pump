@@ -63,6 +63,11 @@ import {
   parseUsdcInput,
   shortAddress,
 } from '@/lib/format';
+import {
+  ORDER_SIZE_STEP,
+  ORDER_SIZE_STEP_ERROR,
+  snappedOrderSizeInput,
+} from '@/lib/order-input';
 
 import styles from './HybridOrderBookPanel.module.css';
 
@@ -295,6 +300,12 @@ export function HybridOrderBookPanel({
     priceRaw !== null && isPriceOnTick(priceRaw, minimumTickSizeRaw);
   const sizeIsGranular =
     sizeRaw !== null && isOrderSizeGranular(sizeRaw);
+  const sizeError =
+    sizeRaw === null || sizeRaw <= 0n
+      ? 'Enter an order size greater than zero'
+      : !sizeIsGranular
+        ? ORDER_SIZE_STEP_ERROR
+        : null;
   const expiration = parseUtcInput(expiry);
   const validExpiration =
     expiration !== null &&
@@ -621,10 +632,14 @@ export function HybridOrderBookPanel({
         ? 'Reading indexed approvals…'
         : approvals.error
           ? 'Approval state unavailable'
-          : !commitment
-            ? 'Enter a valid price and size'
+          : !priceOnTick
+            ? 'Enter a price on the shown tick'
+            : sizeError
+              ? sizeError
             : !validExpiration
               ? 'Choose a future expiry'
+              : !commitment
+                ? 'This order cannot be prepared'
               : !makerApprovalReady
                 ? orderSide === 'BID'
                   ? 'Approve exact collateral above'
@@ -763,16 +778,39 @@ export function HybridOrderBookPanel({
               <span>Size</span>
               <span className={styles.input}>
                 <input
-                  aria-invalid={!sizeIsGranular}
+                  aria-describedby={
+                    sizeError ? 'hybrid-order-size-error' : undefined
+                  }
+                  aria-invalid={sizeError !== null}
                   inputMode="decimal"
                   onChange={(event) => setSize(event.target.value)}
+                  onBlur={() => {
+                    if (
+                      sizeRaw !== null &&
+                      sizeRaw > 0n &&
+                      !sizeIsGranular
+                    ) {
+                      setSize(snappedOrderSizeInput(sizeRaw));
+                    }
+                  }}
+                  step={ORDER_SIZE_STEP}
                   value={size}
                 />
                 <b>{outcome}</b>
               </span>
             </label>
+            {sizeError && (
+              <p
+                className={styles.sizeError}
+                id="hybrid-order-size-error"
+                role="alert"
+              >
+                {sizeError}
+              </p>
+            )}
             <p className={styles.bindingNote}>
-              Price tick {formatUnits(minimumTickSizeRaw, 6)} USDC · size step 0.001 token
+              Price tick {formatUnits(minimumTickSizeRaw, 6)} USDC · size step
+              {' '}0.001 token · off-step sizes round down on blur
             </p>
             <label className={styles.field}>
               <span>Expiry (UTC)</span>

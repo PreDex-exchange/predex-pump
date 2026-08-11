@@ -253,6 +253,13 @@
   text-align: center;
 }
 
+.sizeError {
+  margin: 6px 0 0;
+  color: var(--error);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
 .resting {
   padding-top: var(--space-5);
   margin-top: var(--space-5);

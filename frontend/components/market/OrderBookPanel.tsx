@@ -41,6 +41,11 @@ import {
   shortAddress,
 } from '@/lib/format';
 import { orderBookForVenue } from '@/lib/exchange/hybrid';
+import {
+  ORDER_SIZE_STEP,
+  ORDER_SIZE_STEP_ERROR,
+  snappedOrderSizeInput,
+} from '@/lib/order-input';
 
 import { HybridOrderBookPanel } from './HybridOrderBookPanel';
 import styles from './OrderBookPanel.module.css';
@@ -194,6 +199,12 @@ function MiniClobOrderBookPanel({
   const validPrice =
     priceRaw !== null && isPriceOnTick(priceRaw, minimumTickSizeRaw);
   const validSize = sizeRaw !== null && isOrderSizeGranular(sizeRaw);
+  const sizeError =
+    sizeRaw === null || sizeRaw <= 0n
+      ? 'Enter an order size greater than zero'
+      : !validSize
+        ? ORDER_SIZE_STEP_ERROR
+        : null;
   const placeEscrowRaw =
     validPrice && validSize
       ? orderSide === 'BID'
@@ -372,8 +383,8 @@ function MiniClobOrderBookPanel({
             ? 'Market resolved'
             : !validPrice
               ? 'Enter a price from 0 to 1'
-              : !validSize
-                ? 'Enter an order size'
+              : sizeError
+                ? sizeError
                 : `Preview ${outcome} ${orderSide}`;
 
   const confirmDisabled =
@@ -518,14 +529,32 @@ function MiniClobOrderBookPanel({
               <span>Size</span>
               <span className={styles.input}>
                 <input
-                  aria-invalid={!validSize}
+                  aria-describedby={
+                    sizeError ? 'miniclob-order-size-error' : undefined
+                  }
+                  aria-invalid={sizeError !== null}
                   inputMode="decimal"
                   onChange={(event) => setSize(event.target.value)}
+                  onBlur={() => {
+                    if (sizeRaw !== null && sizeRaw > 0n && !validSize) {
+                      setSize(snappedOrderSizeInput(sizeRaw));
+                    }
+                  }}
+                  step={ORDER_SIZE_STEP}
                   value={size}
                 />
                 <b>{outcome}</b>
               </span>
             </label>
+            {sizeError && (
+              <p
+                className={styles.sizeError}
+                id="miniclob-order-size-error"
+                role="alert"
+              >
+                {sizeError}
+              </p>
+            )}
             <dl className={styles.ticketRows}>
               <div>
                 <dt>{orderSide === 'BID' ? 'USDC escrow' : `${outcome} escrow`}</dt>
@@ -561,7 +590,8 @@ function MiniClobOrderBookPanel({
               {placeButtonLabel}
             </Button>
             <p className={styles.onchainNote}>
-              Escrow and order state remain fully on-chain in MiniCLOB.
+              Off-step sizes round down when the field loses focus. Escrow and
+              order state remain fully on-chain in MiniCLOB.
             </p>
           </section>
         </div>

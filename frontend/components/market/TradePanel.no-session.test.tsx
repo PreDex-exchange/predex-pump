@@ -126,4 +126,26 @@ describe('wallet-only core trade path', () => {
       }),
     );
   });
+
+  it('explains and visibly snaps an off-step curve-trade size on blur', () => {
+    render(<TradePanel market={market} />);
+
+    const size = screen.getByLabelText(/Shares to buy/u) as HTMLInputElement;
+    fireEvent.change(size, { target: { value: '0.1005' } });
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Size must use 0.001 token steps',
+    );
+    expect(
+      screen.getByRole('button', {
+        name: 'Size must use 0.001 token steps',
+      }),
+    ).toBeTruthy();
+
+    fireEvent.blur(size);
+
+    expect(size.value).toBe('0.1');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Buy YES' })).toBeTruthy();
+  });
 });

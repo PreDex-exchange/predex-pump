@@ -91,6 +91,18 @@
   white-space: nowrap;
 }
 
+.value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+}
+
+.marketLink {
+  text-decoration: underline;
+  text-decoration-color: rgb(255 107 87 / 50%);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
 .time {
   flex: none;
   color: var(--ink-40);
@@ -103,6 +115,17 @@
   color: var(--muted);
   font-size: var(--text-small);
   text-align: center;
+}
+
+.error {
+  padding: 10px 12px;
+  margin: var(--space-4) 0;
+  border: 2px solid var(--error);
+  border-radius: var(--radius-input);
+  background: var(--error-soft);
+  color: var(--error);
+  font-size: var(--text-small);
+  font-weight: 800;
 }
 
 @media (max-width: 1040px) {

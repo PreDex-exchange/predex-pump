@@ -1,48 +1,20 @@
 import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
 
-import { formatPrice, formatRaw, relativeTime } from '@/lib/format';
+import { ActivityDescription } from '@/components/activity/ActivityDescription';
+import {
+  dedupeActivityEvents,
+  describeActivityEvent,
+} from '@/lib/activity';
 
 import styles from './ActivityList.module.css';
-
-function eventKind(event: ActivityEvent) {
-  if (event.type === 'MarketCreated') return { label: 'Created', tone: 'created' };
-  if (event.type === 'MarketGraduated' || event.type === 'BookSeeded') {
-    return { label: 'Graduated', tone: 'graduated' };
-  }
-  if (event.type === 'ResolutionObserved' || event.type === 'Closeout') {
-    return { label: 'Resolved', tone: 'resolved' };
-  }
-  if (event.type === 'Redeem') return { label: 'Redeemed', tone: 'resolved' };
-  if (event.type === 'OrderPlaced') return { label: 'Order', tone: 'filled' };
-  if (event.type === 'OrderCancelled') return { label: 'Cancelled', tone: 'created' };
-  return { label: event.type === 'OrderFilled' ? 'Filled' : 'Trade', tone: 'filled' };
-}
-
-function eventText(event: ActivityEvent, markets: Market[]) {
-  const market = markets.find((item) => item.id === event.marketId);
-  if (event.type === 'MarketCreated' || event.type === 'MarketGraduated' || event.type === 'BookSeeded') {
-    return market?.question ?? 'A market moved forward';
-  }
-  if (event.type === 'ResolutionObserved' || event.type === 'Closeout') {
-    return `${market?.question ?? 'Market'} · ${event.outcome ?? 'settled'}`;
-  }
-  if (event.type === 'Redeem' && event.amountRaw) {
-    return `${formatRaw(event.amountRaw, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    })} USDC · ${market?.question ?? 'resolved market'}`;
-  }
-  if (event.amountRaw && event.outcome && event.priceRaw) {
-    return `${formatRaw(event.amountRaw, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${event.outcome} @ ${formatPrice(event.priceRaw)}`;
-  }
-  return market?.question ?? 'On-chain activity';
-}
 
 interface ActivityListProps {
   events: ActivityEvent[];
   markets: Market[];
   title?: string;
   emptyMessage?: string;
+  error?: Error | null;
+  isLoading?: boolean;
   sticky?: boolean;
 }
 
@@ -51,27 +23,55 @@ export function ActivityList({
   markets,
   title = 'Activity',
   emptyMessage = 'Waiting for on-chain activity…',
+  error = null,
+  isLoading = false,
   sticky = true,
 }: ActivityListProps) {
+  const visibleEvents = dedupeActivityEvents(events);
+
   return (
     <aside className={`${styles.activity} ${sticky ? '' : styles.static}`}>
       <h2>
         <span aria-hidden="true" />
         {title}
       </h2>
-      {events.length === 0 ? (
+      {error && (
+        <p className={styles.error} role="alert">
+          The indexed history is unavailable. Refresh to retry.
+        </p>
+      )}
+      {!error && isLoading && visibleEvents.length === 0 && (
+        <p className={styles.empty} role="status">
+          Loading indexed activity…
+        </p>
+      )}
+      {!error && !isLoading && visibleEvents.length === 0 && (
         <p className={styles.empty}>{emptyMessage}</p>
-      ) : (
+      )}
+      {visibleEvents.length > 0 && (
         <ul>
-          {events.map((event) => {
-            const kind = eventKind(event);
+          {visibleEvents.map((event) => {
+            const description = describeActivityEvent(event, markets);
             return (
               <li key={event.id}>
-                <span className={`${styles.kind} ${styles[kind.tone]}`}>{kind.label}</span>
-                <span className={styles.text}>{eventText(event, markets)}</span>
-                <span className={styles.time}>
-                  {relativeTime(event.ts).replace(' ago', '')}
+                <span
+                  className={`${styles.kind} ${styles[description.tone]}`}
+                >
+                  {description.label}
                 </span>
+                <span className={styles.text}>
+                  <ActivityDescription
+                    description={description}
+                    marketClassName={styles.marketLink}
+                    valueClassName={styles.value}
+                  />
+                </span>
+                <time
+                  className={styles.time}
+                  dateTime={description.time.dateTime}
+                >
+                  {description.time.compact}
+                </time>
               </li>
             );
           })}

@@ -1,5 +1,5 @@
 import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ActivityScreen, parseAgentAddresses } from './ActivityScreen';
@@ -192,5 +192,80 @@ describe('ActivityScreen', () => {
     act(() => mocks.statusListener?.('live'));
     expect(screen.getByText('Live')).toBeTruthy();
     expect(mocks.refetch).toHaveBeenCalledOnce();
+  });
+
+  it('renders one graduation row for its same-transaction graduation logs', () => {
+    const txHash = `0x${'3'.repeat(64)}` as const;
+    mocks.activityData = {
+      items: [
+        {
+          id: `${txHash}:1`,
+          type: 'MarketGraduated',
+          marketId: market.id,
+          account: null,
+          txHash,
+          ts: 1_785_500_100,
+        },
+        {
+          id: `${txHash}:2`,
+          type: 'BookSeeded',
+          marketId: market.id,
+          account: null,
+          txHash,
+          ts: 1_785_500_100,
+        },
+        {
+          id: `${txHash}:3`,
+          type: 'BookSeeded',
+          marketId: market.id,
+          account: null,
+          txHash,
+          ts: 1_785_500_100,
+        },
+      ],
+      nextCursor: null,
+    };
+
+    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+
+    const tape = screen.getByLabelText('Live on-chain activity');
+    expect(within(tape).getAllByRole('listitem')).toHaveLength(1);
+    expect(tape.textContent).toContain('graduated');
+    expect(tape.textContent).not.toContain('seeded the first');
+    expect(tape.textContent).not.toMatch(/Protocol\s{2,}graduated/u);
+  });
+
+  it('renders the outcome for a cancellation without a price', () => {
+    mocks.activityData = {
+      items: [
+        {
+          id: `${TX_A}:8`,
+          type: 'OrderCancelled',
+          marketId: market.id,
+          account: HUMAN,
+          outcome: 'NO',
+          side: 'BID',
+          amountRaw: '250000',
+          txHash: TX_A,
+          ts: 1_785_500_100,
+        },
+      ],
+      nextCursor: null,
+    };
+
+    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+
+    expect(screen.getByLabelText('Live on-chain activity').textContent).toContain(
+      'cancelled a 0.25 NO bid',
+    );
+  });
+
+  it('does not expose environment configuration names in rendered copy', () => {
+    const { container } = render(
+      <ActivityScreen agentAddresses={new Set()} />,
+    );
+
+    expect(container.textContent).not.toContain('NEXT_PUBLIC_AGENT_ADDRESSES');
+    expect(container.textContent).toContain('Autonomous wallet labels');
   });
 });
