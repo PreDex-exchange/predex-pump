@@ -11,11 +11,36 @@ export const DEFAULT_INDEXER_POLL_MS = 30_000;
 export const DEFAULT_INDEXER_FALLBACK_POLL_MS = 10_000;
 export const DEFAULT_INDEXER_CHUNK_DELAY_MS = 200;
 export const DEFAULT_INDEXER_STALL_MS = 90_000;
+// At the default 2,000-block range this permits 50 chunks (hundreds of
+// eth_getLogs calls), but stays below the observed 165,527-block Arc gap that
+// could not make progress under sustained public-RPC rate limiting.
+export const DEFAULT_INDEXER_MAX_BACKFILL_BLOCKS = 100_000;
 export const DEFAULT_INDEXER_WS_COALESCE_MS = 250;
 export const DEFAULT_INDEXER_WS_STALL_MS = 15_000;
 export const DEFAULT_INDEXER_WS_HEARTBEAT_MS = 5_000;
 export const DEFAULT_INDEXER_WS_RECONNECT_BASE_MS = 1_000;
 export const DEFAULT_INDEXER_WS_RECONNECT_MAX_MS = 30_000;
+
+export type IndexerStartPolicy = 'auto' | 'head' | 'resume';
+
+/**
+ * Startup policy for an existing durable cursor:
+ * - auto: resume normally, but skip to the current head when the configured
+ *   maximum backfill is exceeded;
+ * - head: operator override that always skips to the current head;
+ * - resume: operator override that never skips, regardless of gap size.
+ */
+export function resolveIndexerStartPolicy(
+  configuredPolicy: string | undefined,
+): IndexerStartPolicy {
+  const policy = configuredPolicy?.trim().toLowerCase() || 'auto';
+  if (policy === 'auto' || policy === 'head' || policy === 'resume') {
+    return policy;
+  }
+  throw new Error(
+    `INDEXER_START_POLICY must be auto, head, or resume, received ${configuredPolicy}`,
+  );
+}
 
 function positiveInteger(name: string, fallback: number): number {
   const value = process.env[name];
@@ -79,6 +104,8 @@ export interface RuntimeConfig {
   fallbackPollMs: number;
   chunkDelayMs: number;
   indexerStallMs: number;
+  indexerStartPolicy: IndexerStartPolicy;
+  indexerMaxBackfillBlocks: number;
   webSocketCoalesceMs: number;
   webSocketStallMs: number;
   webSocketHeartbeatMs: number;
@@ -142,6 +169,13 @@ export function loadRuntimeConfig(): RuntimeConfig {
     indexerStallMs: positiveInteger(
       'INDEXER_STALL_MS',
       DEFAULT_INDEXER_STALL_MS,
+    ),
+    indexerStartPolicy: resolveIndexerStartPolicy(
+      process.env.INDEXER_START_POLICY,
+    ),
+    indexerMaxBackfillBlocks: nonNegativeInteger(
+      'INDEXER_MAX_BACKFILL_BLOCKS',
+      DEFAULT_INDEXER_MAX_BACKFILL_BLOCKS,
     ),
     webSocketCoalesceMs: positiveInteger(
       'INDEXER_WS_COALESCE_MS',

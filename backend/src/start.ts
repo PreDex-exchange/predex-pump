@@ -7,6 +7,7 @@ import { createDedupRuntime } from './dedup/runtime.js';
 import { ServerEventBus } from './events/bus.js';
 import { publishIndexedEvents } from './events/projector.js';
 import { terminateOnFatal } from './fatal.js';
+import { parseServerOptions, SERVER_HELP } from './indexer/cli.js';
 import { runIndexer } from './indexer/runner.js';
 import {
   createTruthPaymentGate,
@@ -14,6 +15,11 @@ import {
 } from './truth-payment/config.js';
 
 async function main(): Promise<void> {
+  const parsed = parseServerOptions(process.argv.slice(2));
+  if (parsed.help) {
+    console.info(SERVER_HELP);
+    return;
+  }
   const config = loadRuntimeConfig();
   const dedup = createDedupRuntime(config);
   const truthSeller = loadTruthSellerConfig();
@@ -39,6 +45,9 @@ async function main(): Promise<void> {
     );
     await runIndexer(prisma, config, {
       once: false,
+      ...(parsed.startPolicy === undefined
+        ? {}
+        : { startPolicy: parsed.startPolicy }),
       onEvents: (events) => publishIndexedEvents(prisma, eventBus, events),
       marketDedupIndexer: dedup.indexer,
     });

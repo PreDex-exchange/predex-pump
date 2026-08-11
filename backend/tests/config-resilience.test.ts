@@ -1,19 +1,26 @@
 import { ARC } from '@predex-pump/shared';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_INDEXER_CHUNK_DELAY_MS,
   DEFAULT_INDEXER_FALLBACK_POLL_MS,
+  DEFAULT_INDEXER_MAX_BACKFILL_BLOCKS,
   DEFAULT_INDEXER_POLL_MS,
   DEFAULT_INDEXER_STALL_MS,
   DEFAULT_INDEXER_WS_COALESCE_MS,
   DEFAULT_INDEXER_WS_HEARTBEAT_MS,
   DEFAULT_INDEXER_WS_STALL_MS,
+  loadRuntimeConfig,
   resolveRpcUrls,
+  resolveIndexerStartPolicy,
   resolveWebSocketRpcUrls,
 } from '../src/config.js';
 
 describe('indexer RPC configuration', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('uses only an explicitly configured ARC_RPC_URL', () => {
     expect(resolveRpcUrls(' https://private.example/rpc ')).toEqual([
       'https://private.example/rpc',
@@ -48,8 +55,28 @@ describe('indexer RPC configuration', () => {
     expect(DEFAULT_INDEXER_FALLBACK_POLL_MS).toBe(10_000);
     expect(DEFAULT_INDEXER_CHUNK_DELAY_MS).toBe(200);
     expect(DEFAULT_INDEXER_STALL_MS).toBe(90_000);
+    expect(DEFAULT_INDEXER_MAX_BACKFILL_BLOCKS).toBe(100_000);
     expect(DEFAULT_INDEXER_WS_COALESCE_MS).toBe(250);
     expect(DEFAULT_INDEXER_WS_HEARTBEAT_MS).toBe(5_000);
     expect(DEFAULT_INDEXER_WS_STALL_MS).toBe(15_000);
+  });
+
+  it('defaults the startup policy to auto and validates explicit overrides', () => {
+    expect(resolveIndexerStartPolicy(undefined)).toBe('auto');
+    expect(resolveIndexerStartPolicy('auto')).toBe('auto');
+    expect(resolveIndexerStartPolicy('head')).toBe('head');
+    expect(resolveIndexerStartPolicy('resume')).toBe('resume');
+    expect(() => resolveIndexerStartPolicy('silent-skip')).toThrow(
+      'INDEXER_START_POLICY must be auto, head, or resume',
+    );
+  });
+
+  it('loads the startup policy and backfill threshold from environment', () => {
+    vi.stubEnv('INDEXER_START_POLICY', 'head');
+    vi.stubEnv('INDEXER_MAX_BACKFILL_BLOCKS', '12345');
+    expect(loadRuntimeConfig()).toMatchObject({
+      indexerStartPolicy: 'head',
+      indexerMaxBackfillBlocks: 12_345,
+    });
   });
 });
