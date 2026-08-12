@@ -2,6 +2,7 @@ import type { MarketPhase } from '@predex-pump/shared';
 
 import type {
   IndexableMarket,
+  MarketIndexResult,
   MarketDedupIndexer,
   MarketIntelligenceProvider,
   MarketVectorStore,
@@ -12,6 +13,35 @@ import {
   deterministicFallbackFor,
   MarketIntelligenceProviderFailure,
 } from './provider.js';
+
+function indexResult(
+  configuredProvider: MarketIntelligenceProvider['mode'],
+  indexedProviders: readonly MarketIntelligenceProvider['mode'][],
+  failedProviders: readonly MarketIntelligenceProvider['mode'][],
+): MarketIndexResult {
+  return {
+    configuredProvider,
+    indexedProviders,
+    failedProviders,
+    degradedToFallback:
+      configuredProvider !== 'fallback' &&
+      !indexedProviders.includes(configuredProvider) &&
+      indexedProviders.includes('fallback'),
+  };
+}
+
+export class MarketIndexingFailure extends Error {
+  constructor(
+    readonly result: MarketIndexResult,
+    cause: unknown,
+  ) {
+    super(
+      `Market indexing failed for provider(s) ${result.failedProviders.join(', ')}`,
+      { cause },
+    );
+    this.name = 'MarketIndexingFailure';
+  }
+}
 
 export function parseMarketPhase(phase: string): MarketPhase {
   switch (phase) {
@@ -33,6 +63,9 @@ export class MarketVectorIndexer implements MarketDedupIndexer {
     private readonly vectorStore: MarketVectorStore,
     fallbackProvider = deterministicFallbackFor(provider),
   ) {
+    if (fallbackProvider?.mode === provider.mode) {
+      throw new Error('Market vector fallback provider must use a different mode');
+    }
     this.fallbackProvider = fallbackProvider;
   }
 
@@ -58,24 +91,50 @@ export class MarketVectorIndexer implements MarketDedupIndexer {
     });
   }
 
-  async indexMarket(market: IndexableMarket): Promise<void> {
+  async indexMarket(market: IndexableMarket): Promise<MarketIndexResult> {
+    const indexedProviders: MarketIntelligenceProvider['mode'][] = [];
+    const failedProviders: MarketIntelligenceProvider['mode'][] = [];
     try {
       await this.indexWithProvider(market, this.provider);
+      indexedProviders.push(this.provider.mode);
     } catch (error) {
+      failedProviders.push(this.provider.mode);
       if (
         !(error instanceof MarketIntelligenceProviderFailure) ||
         this.fallbackProvider === undefined
       ) {
-        throw error;
+        throw new MarketIndexingFailure(
+          indexResult(this.provider.mode, indexedProviders, failedProviders),
+          error,
+        );
       }
-      await this.indexWithProvider(market, this.fallbackProvider);
-      return;
+      try {
+        await this.indexWithProvider(market, this.fallbackProvider);
+        indexedProviders.push(this.fallbackProvider.mode);
+      } catch (fallbackError) {
+        failedProviders.push(this.fallbackProvider.mode);
+        throw new MarketIndexingFailure(
+          indexResult(this.provider.mode, indexedProviders, failedProviders),
+          fallbackError,
+        );
+      }
+      return indexResult(this.provider.mode, indexedProviders, failedProviders);
     }
 
     // Keep a deterministic embedding alongside a successful configured-provider
     // embedding so a later quota/auth/transport outage has a compatible index.
     if (this.fallbackProvider !== undefined) {
-      await this.indexWithProvider(market, this.fallbackProvider);
+      try {
+        await this.indexWithProvider(market, this.fallbackProvider);
+        indexedProviders.push(this.fallbackProvider.mode);
+      } catch (error) {
+        failedProviders.push(this.fallbackProvider.mode);
+        throw new MarketIndexingFailure(
+          indexResult(this.provider.mode, indexedProviders, failedProviders),
+          error,
+        );
+      }
     }
+    return indexResult(this.provider.mode, indexedProviders, failedProviders);
   }
 }

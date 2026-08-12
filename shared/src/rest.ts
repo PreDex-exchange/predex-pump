@@ -309,6 +309,27 @@ export interface IndexerHistoryGap {
   balanceReconciliationError: string | null;
 }
 
+export type DedupEmbeddingProvider = 'openai' | 'fallback';
+export type DedupIndexStatus = 'ready' | 'degraded' | 'unavailable';
+
+export interface DedupProviderIndexHealth {
+  indexedMarketCount: number | null;
+  missingMarketCount: number | null;
+  unexpectedMarketCount: number | null;
+  /** True when every canonical market has a vector in this provider space. */
+  complete: boolean;
+}
+
+export interface DedupIndexHealth {
+  status: DedupIndexStatus;
+  configuredProvider: DedupEmbeddingProvider;
+  /** Provider whose partition can safely answer queries, or null if none can. */
+  queryProvider: DedupEmbeddingProvider | null;
+  canonicalMarketCount: number | null;
+  providers: Record<DedupEmbeddingProvider, DedupProviderIndexHealth>;
+  error: string | null;
+}
+
 export interface HealthResponse {
   ok: boolean;
   chainId: number;
@@ -323,6 +344,8 @@ export interface HealthResponse {
   unreconciledBalanceGapCount: number;
   /** Current global registry/committee/type snapshot required by Create and settlement. */
   chainState: ChainStateHealth;
+  /** Provider-partition coverage for same-fact retrieval. */
+  dedupIndex: DedupIndexHealth;
   /** Append-only audit history of blocks intentionally omitted at startup. */
   historyGaps: IndexerHistoryGap[];
 }

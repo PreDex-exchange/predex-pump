@@ -5,7 +5,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import { loadAccountLayerConfig, type AccountLayerConfig } from '../account/config.js';
 import { AccountService, type SiweVerifier } from '../account/service.js';
 import { unavailableDedupResponse } from '../dedup/service.js';
-import type { DedupChecker } from '../dedup/types.js';
+import type { DedupChecker, DedupIndexHealthReader } from '../dedup/types.js';
 import type { ServerEventBus } from '../events/bus.js';
 import type { TruthPaymentGate } from '../truth-payment/types.js';
 import {
@@ -26,6 +26,7 @@ export interface BuildServerOptions {
   prisma: PrismaClient;
   eventBus: ServerEventBus;
   dedupChecker?: DedupChecker;
+  dedupIndexHealthReader?: DedupIndexHealthReader;
   indexerStallMs?: number;
   logger?: FastifyServerOptions['logger'];
   truthPaymentGate?: TruthPaymentGate;
@@ -58,6 +59,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     options.dedupChecker ?? { check: async () => unavailableDedupResponse() },
     options.indexerStallMs,
     options.truthPaymentGate,
+    options.dedupIndexHealthReader,
   );
   registerOrderRoutes(
     app,

@@ -1,4 +1,6 @@
 import type {
+  DedupEmbeddingProvider,
+  DedupIndexHealth,
   DedupCheckResponse,
   MarketFactFields,
   MarketPhase,
@@ -6,7 +8,7 @@ import type {
 
 export const MARKET_EMBEDDING_DIMENSIONS = 1_536;
 export const MARKET_COLLECTION = 'markets';
-export type EmbeddingProviderMode = 'openai' | 'fallback';
+export type EmbeddingProviderMode = DedupEmbeddingProvider;
 
 export interface MarketQuestionFact {
   question: string;
@@ -62,6 +64,9 @@ export interface MarketVectorMatch {
 
 export interface MarketVectorStore {
   upsertMarket(point: MarketVectorPoint): Promise<void>;
+  listMarketIds(
+    embeddingProvider: EmbeddingProviderMode,
+  ): Promise<readonly string[]>;
   searchMarkets(
     vector: readonly number[],
     limit: number,
@@ -82,13 +87,25 @@ export interface CanonicalMarket {
 
 /** Authoritative market records used to reject stale vector-store points. */
 export interface MarketCatalog {
+  listMarketIds(): Promise<readonly string[]>;
   findMarketsByIds(marketIds: readonly string[]): Promise<CanonicalMarket[]>;
 }
 
+export interface MarketIndexResult {
+  configuredProvider: EmbeddingProviderMode;
+  indexedProviders: readonly EmbeddingProviderMode[];
+  failedProviders: readonly EmbeddingProviderMode[];
+  degradedToFallback: boolean;
+}
+
 export interface MarketDedupIndexer {
-  indexMarket(market: IndexableMarket): Promise<void>;
+  indexMarket(market: IndexableMarket): Promise<MarketIndexResult>;
 }
 
 export interface DedupChecker {
   check(question: string): Promise<DedupCheckResponse>;
+}
+
+export interface DedupIndexHealthReader {
+  getHealth(): Promise<DedupIndexHealth>;
 }

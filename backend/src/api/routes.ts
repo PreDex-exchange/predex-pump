@@ -17,7 +17,8 @@ import {
 import type { FastifyInstance } from 'fastify';
 
 import { unavailableDedupResponse } from '../dedup/service.js';
-import type { DedupChecker } from '../dedup/types.js';
+import { unavailableDedupIndexHealth } from '../dedup/health.js';
+import type { DedupChecker, DedupIndexHealthReader } from '../dedup/types.js';
 import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
 import {
   encodePaymentHeader,
@@ -106,6 +107,7 @@ export function registerRestRoutes(
   dedupChecker: DedupChecker,
   indexerStallMs = DEFAULT_INDEXER_STALL_MS,
   truthPaymentGate?: TruthPaymentGate,
+  dedupIndexHealthReader?: DedupIndexHealthReader,
 ): void {
   const readConfig = createCachedConfigReader(prisma);
 
@@ -140,7 +142,7 @@ export function registerRestRoutes(
       try {
         return await dedupChecker.check(question);
       } catch (error) {
-        request.log.warn({ err: error }, 'Dedup check failed open');
+        request.log.warn({ err: error }, 'Dedup check unavailable after failure');
         return unavailableDedupResponse();
       }
     },
@@ -294,6 +296,15 @@ export function registerRestRoutes(
 
   app.get(
     routes.health(),
-    async (): Promise<HealthResponse> => getHealth(prisma, indexerStallMs),
+    async (): Promise<HealthResponse> => {
+      const dedupIndex =
+        dedupIndexHealthReader === undefined
+          ? unavailableDedupIndexHealth(
+              'fallback',
+              'Dedup index health reader is not configured',
+            )
+          : await dedupIndexHealthReader.getHealth();
+      return getHealth(prisma, indexerStallMs, new Date(), dedupIndex);
+    },
   );
 }

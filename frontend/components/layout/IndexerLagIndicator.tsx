@@ -13,6 +13,7 @@ export function IndexerLagIndicator() {
       data.lagBlocks <= 0 &&
       data.balancesReconciled &&
       data.chainState.ready &&
+      data.dedupIndex.status === 'ready' &&
       data.historyGaps.length === 0)
   ) {
     return null;
@@ -35,6 +36,13 @@ export function IndexerLagIndicator() {
     label = 'Balances unreconciled after indexer gap';
   } else if (latestGap !== undefined) {
     label = `Indexer history gap (${latestGap.skippedBlockCount.toLocaleString('en-US')} blocks)`;
+  } else if (data.dedupIndex.status === 'unavailable') {
+    label = 'Duplicate check unavailable';
+  } else if (data.dedupIndex.status === 'degraded') {
+    label =
+      data.dedupIndex.queryProvider === 'fallback'
+        ? 'Duplicate index using fallback'
+        : 'Duplicate index degraded';
   } else if (data.indexerStatus === 'degraded') {
     label = 'Indexer retrying';
   } else if (lagBlocks > 0) {
@@ -65,13 +73,22 @@ export function IndexerLagIndicator() {
         ? ''
         : `; invalid snapshots: ${data.chainState.issues.join(', ')}`) +
       (data.chainState.error === null ? '' : `; error: ${data.chainState.error}`);
+  const dedupProvider = data.dedupIndex.providers[data.dedupIndex.configuredProvider];
+  const dedupIndex =
+    data.dedupIndex.status === 'ready'
+      ? ''
+      : `. Duplicate index ${data.dedupIndex.status}; configured provider ${data.dedupIndex.configuredProvider}; ` +
+        `query provider ${data.dedupIndex.queryProvider ?? 'none'}; ` +
+        `indexed ${dedupProvider.indexedMarketCount ?? 'unknown'}, ` +
+        `missing ${dedupProvider.missingMarketCount ?? 'unknown'}` +
+        (data.dedupIndex.error === null ? '' : `; error: ${data.dedupIndex.error}`);
 
   return (
     <span
       aria-live="polite"
       className={styles.indicator}
       role="status"
-      title={`${lastPoll}. Indexed block ${data.indexedBlock.toLocaleString('en-US')} of ${data.headBlock.toLocaleString('en-US')}${historyGap}${balanceReconciliation}${chainState}`}
+      title={`${lastPoll}. Indexed block ${data.indexedBlock.toLocaleString('en-US')} of ${data.headBlock.toLocaleString('en-US')}${historyGap}${balanceReconciliation}${chainState}${dedupIndex}`}
     >
       <span aria-hidden="true" className={styles.dot} />
       {label}

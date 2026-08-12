@@ -42,6 +42,20 @@ class InMemoryMarketVectorStore implements MarketVectorStore {
     );
   }
 
+  async listMarketIds(
+    embeddingProvider: EmbeddingProviderMode,
+  ): Promise<string[]> {
+    return [
+      ...new Set(
+        [...this.points.values()]
+          .filter(
+            (point) => point.payload.embeddingProvider === embeddingProvider,
+          )
+          .map((point) => point.payload.marketId),
+      ),
+    ];
+  }
+
   async searchMarkets(
     vector: readonly number[],
     limit: number,
@@ -63,6 +77,10 @@ class InMemoryMarketCatalog implements MarketCatalog {
 
   constructor(markets: readonly CanonicalMarket[]) {
     this.markets = new Map(markets.map((market) => [market.marketId, market]));
+  }
+
+  async listMarketIds(): Promise<string[]> {
+    return [...this.markets.keys()];
   }
 
   async findMarketsByIds(marketIds: readonly string[]): Promise<CanonicalMarket[]> {
@@ -139,7 +157,14 @@ describe('retrieve-then-judge dedup service', () => {
       const question = 'Will BTC close above $70k Friday?';
       const fallback = new FallbackMarketIntelligenceProvider();
       const store = new InMemoryMarketVectorStore();
-      await new MarketVectorIndexer(fallback, store).indexMarket({
+      const seedProvider: MarketIntelligenceProvider = {
+        mode: 'openai',
+        embed: (value) => fallback.embed(value),
+        extractFields: (value) => fallback.extractFields(value),
+        judgeSameFact: (draft, candidate) =>
+          fallback.judgeSameFact(draft, candidate),
+      };
+      await new MarketVectorIndexer(seedProvider, store, fallback).indexMarket({
         marketId: '42',
         question,
         phase: 'Opened',
@@ -171,7 +196,7 @@ describe('retrieve-then-judge dedup service', () => {
     },
   );
 
-  it('does not treat a successful empty provider search as a failure', async () => {
+  it('allows an empty retrieval only when the canonical market catalog is empty', async () => {
     const provider: MarketIntelligenceProvider = {
       mode: 'openai',
       embed: async () => Array(1_536).fill(0),
@@ -189,6 +214,7 @@ describe('retrieve-then-judge dedup service', () => {
     const searchedModes: EmbeddingProviderMode[] = [];
     const emptyStore: MarketVectorStore = {
       upsertMarket: async () => undefined,
+      listMarketIds: async () => [],
       searchMarkets: async (_vector, _limit, mode) => {
         searchedModes.push(mode);
         return [];
@@ -209,6 +235,84 @@ describe('retrieve-then-judge dedup service', () => {
       candidates: [],
     });
     expect(searchedModes).toEqual(['openai']);
+  });
+
+  it('returns unavailable when the configured provider has zero indexed vectors for existing markets', async () => {
+    const provider = new FallbackMarketIntelligenceProvider();
+    const searchMarkets = vi.fn<MarketVectorStore['searchMarkets']>();
+    const emptyStore: MarketVectorStore = {
+      upsertMarket: async () => undefined,
+      listMarketIds: async () => [],
+      searchMarkets,
+    };
+
+    await expect(
+      new DedupService(
+        provider,
+        emptyStore,
+        catalogWithMarket('1', 'Will BTC close above $70k Friday?'),
+        5,
+      ).check('Will BTC close above $70k Friday?'),
+    ).resolves.toEqual(unavailableDedupResponse());
+    expect(searchMarkets).not.toHaveBeenCalled();
+  });
+
+  it('returns unavailable when a non-empty complete partition yields no usable retrieval', async () => {
+    const provider = new FallbackMarketIntelligenceProvider();
+    const inconsistentStore: MarketVectorStore = {
+      upsertMarket: async () => undefined,
+      listMarketIds: async (mode) => (mode === 'fallback' ? ['1'] : []),
+      searchMarkets: async () => [],
+    };
+
+    await expect(
+      new DedupService(
+        provider,
+        inconsistentStore,
+        catalogWithMarket('1', 'Will BTC close above $70k Friday?'),
+        5,
+      ).check('Will ETH close below $3k Friday?'),
+    ).resolves.toEqual(unavailableDedupResponse());
+  });
+
+  it('uses a complete fallback partition consistently when the configured partition is incomplete', async () => {
+    const fallback = new FallbackMarketIntelligenceProvider();
+    const store = new InMemoryMarketVectorStore();
+    const canonicalQuestion =
+      'Will Manchester United score above 70 Premier League goals in the 2026-27 season?';
+    const draftQuestion =
+      'Will Man Utd score over 70 goals in the 2026/27 Premier League season?';
+    await new MarketVectorIndexer(fallback, store).indexMarket({
+      marketId: '77',
+      question: canonicalQuestion,
+      phase: 'Opened',
+    });
+    const configuredEmbed = vi.fn(async () => Array(1_536).fill(0));
+    const configuredProvider: MarketIntelligenceProvider = {
+      mode: 'openai',
+      embed: configuredEmbed,
+      extractFields: (question) => fallback.extractFields(question),
+      judgeSameFact: (draft, candidate) =>
+        fallback.judgeSameFact(draft, candidate),
+    };
+    const service = new DedupService(
+      configuredProvider,
+      store,
+      catalogWithMarket('77', canonicalQuestion),
+      5,
+      fallback,
+    );
+
+    const verdicts = await Promise.all(
+      Array.from({ length: 25 }, () => service.check(draftQuestion)),
+    );
+    expect(new Set(verdicts.map((result) => JSON.stringify(result))).size).toBe(1);
+    expect(verdicts[0]).toMatchObject({
+      available: true,
+      isDuplicate: true,
+      canonicalMarketId: '77',
+    });
+    expect(configuredEmbed).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -325,6 +429,7 @@ describe('retrieve-then-judge dedup service', () => {
     let calls = 0;
     const alternatingStore: MarketVectorStore = {
       upsertMarket: async () => undefined,
+      listMarketIds: async (mode) => (mode === 'fallback' ? ['9'] : []),
       searchMarkets: async () => {
         calls += 1;
         return calls % 2 === 0 ? [semantic] : [deterministic];
@@ -354,6 +459,7 @@ describe('retrieve-then-judge dedup service', () => {
     const fields = await provider.extractFields(question);
     const staleStore: MarketVectorStore = {
       upsertMarket: async () => undefined,
+      listMarketIds: async (mode) => (mode === 'fallback' ? ['404'] : []),
       searchMarkets: async () => [
         {
           score: 0.999,
@@ -459,6 +565,7 @@ describe('retrieve-then-judge dedup service', () => {
     const candidateFields = await provider.extractFields(candidateQuestion);
     const highScoreStore: MarketVectorStore = {
       upsertMarket: async () => undefined,
+      listMarketIds: async (mode) => (mode === 'fallback' ? ['1'] : []),
       searchMarkets: async () => [
         {
           score: 0.999,
@@ -492,10 +599,11 @@ describe('retrieve-then-judge dedup service', () => {
     });
   });
 
-  it('fails open when Qdrant search is unavailable', async () => {
+  it('returns unavailable when Qdrant search is unavailable', async () => {
     const provider = new FallbackMarketIntelligenceProvider();
     const downStore: MarketVectorStore = {
       upsertMarket: async () => undefined,
+      listMarketIds: async () => [],
       searchMarkets: async () => {
         throw new Error('Qdrant is down');
       },
@@ -512,7 +620,7 @@ describe('retrieve-then-judge dedup service', () => {
     ).resolves.toEqual(unavailableDedupResponse());
   });
 
-  it('fails open when the provider judge becomes unavailable', async () => {
+  it('returns unavailable when the provider judge becomes unavailable', async () => {
     const fallback = new FallbackMarketIntelligenceProvider();
     const store = new InMemoryMarketVectorStore();
     await new MarketVectorIndexer(fallback, store).indexMarket({

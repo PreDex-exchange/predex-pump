@@ -292,11 +292,19 @@ export async function applyDecodedEvents(
           where: { id: marketId },
           select: { id: true, question: true, phase: true },
         });
-        await marketDedupIndexer.indexMarket({
+        const result = await marketDedupIndexer.indexMarket({
           marketId: market.id,
           question: market.question,
           phase: parseMarketPhase(market.phase),
         });
+        if (result.failedProviders.length > 0) {
+          console.warn(
+            `[dedup-index] market=${marketId} degraded ` +
+              `configured=${result.configuredProvider} ` +
+              `indexed=${result.indexedProviders.join(',') || 'none'} ` +
+              `providerFailures=${result.failedProviders.join(',')}`,
+          );
+        }
       } catch (error) {
         // This projection runs after commit and can never invalidate core indexing.
         console.warn(`[dedup-index] market=${marketId} best-effort sync failed`, error);

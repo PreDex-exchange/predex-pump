@@ -13,6 +13,9 @@ import {
 } from './types.js';
 
 type JsonRecord = Record<string, unknown>;
+type QdrantPointOffset = string | number;
+
+const SCROLL_PAGE_SIZE = 256;
 
 const MARKET_PHASES = new Set<MarketPhase>([
   'Opened',
@@ -206,6 +209,75 @@ export class QdrantMarketClient implements MarketVectorStore {
     await this.responseJson(response, 'market upsert');
   }
 
+  async listMarketIds(
+    embeddingProvider: EmbeddingProviderMode,
+  ): Promise<string[]> {
+    await this.ensureCollection();
+    const marketIds = new Set<string>();
+    const seenOffsets = new Set<string>();
+    let offset: QdrantPointOffset | undefined;
+
+    while (true) {
+      const response = await this.request(
+        `/collections/${MARKET_COLLECTION}/points/scroll`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            limit: SCROLL_PAGE_SIZE,
+            filter: {
+              must: [
+                {
+                  key: 'embeddingProvider',
+                  match: { value: embeddingProvider },
+                },
+              ],
+            },
+            with_payload: true,
+            with_vector: false,
+            ...(offset === undefined ? {} : { offset }),
+          }),
+        },
+      );
+      const body = await this.responseJson(response, 'market index scroll');
+      if (
+        !isRecord(body) ||
+        !isRecord(body.result) ||
+        !Array.isArray(body.result.points)
+      ) {
+        throw new Error('Qdrant market index scroll response omitted points');
+      }
+      for (const point of body.result.points) {
+        if (!isRecord(point) || !isRecord(point.payload)) {
+          throw new Error('Qdrant market index scroll point omitted its payload');
+        }
+        const payloadProvider = requiredString(
+          point.payload,
+          'embeddingProvider',
+        );
+        if (payloadProvider !== embeddingProvider) {
+          throw new Error(
+            `Qdrant market index scroll returned ${payloadProvider} payload for ${embeddingProvider} partition`,
+          );
+        }
+        marketIds.add(requiredString(point.payload, 'marketId'));
+      }
+
+      const nextOffset = body.result.next_page_offset;
+      if (nextOffset === null || nextOffset === undefined) break;
+      if (typeof nextOffset !== 'string' && typeof nextOffset !== 'number') {
+        throw new Error('Qdrant market index scroll returned an invalid offset');
+      }
+      const serializedOffset = `${typeof nextOffset}:${String(nextOffset)}`;
+      if (seenOffsets.has(serializedOffset)) {
+        throw new Error('Qdrant market index scroll repeated an offset');
+      }
+      seenOffsets.add(serializedOffset);
+      offset = nextOffset;
+    }
+
+    return [...marketIds].sort();
+  }
+
   async searchMarkets(
     vector: readonly number[],
     limit: number,
@@ -248,9 +320,15 @@ export class QdrantMarketClient implements MarketVectorStore {
       ) {
         throw new Error('Qdrant market search returned an invalid score');
       }
+      const payload = parsePayload(result.payload);
+      if (payload.embeddingProvider !== embeddingProvider) {
+        throw new Error(
+          `Qdrant market search returned ${payload.embeddingProvider} payload for ${embeddingProvider} vector space`,
+        );
+      }
       return {
         score: result.score,
-        payload: parsePayload(result.payload),
+        payload,
       };
     });
   }

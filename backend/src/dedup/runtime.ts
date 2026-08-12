@@ -1,10 +1,12 @@
 import type { RuntimeConfig } from '../config.js';
+import { DedupIndexInspector } from './health.js';
 import { MarketVectorIndexer } from './indexer.js';
 import { createMarketIntelligenceProvider } from './provider.js';
 import { QdrantMarketClient } from './qdrant-client.js';
 import { DedupService } from './service.js';
 import type {
   DedupChecker,
+  DedupIndexHealthReader,
   MarketCatalog,
   MarketDedupIndexer,
   MarketIntelligenceProvider,
@@ -16,6 +18,7 @@ export interface DedupRuntime {
   vectorStore: MarketVectorStore;
   checker: DedupChecker;
   indexer: MarketDedupIndexer;
+  indexHealth: DedupIndexHealthReader;
 }
 
 export function createDedupRuntime(
@@ -30,6 +33,11 @@ export function createDedupRuntime(
     url: config.qdrantUrl,
     timeoutMs: config.dedupTimeoutMs,
   });
+  const indexHealth = new DedupIndexInspector(
+    provider.mode,
+    vectorStore,
+    marketCatalog,
+  );
   return {
     provider,
     vectorStore,
@@ -38,7 +46,10 @@ export function createDedupRuntime(
       vectorStore,
       marketCatalog,
       config.dedupTopK,
+      undefined,
+      indexHealth,
     ),
     indexer: new MarketVectorIndexer(provider, vectorStore),
+    indexHealth,
   };
 }

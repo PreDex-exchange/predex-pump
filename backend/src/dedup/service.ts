@@ -1,8 +1,10 @@
 import type {
   DedupCandidate,
   DedupCheckResponse,
+  DedupIndexHealth,
 } from '@predex-pump/shared';
 
+import { DedupIndexInspector } from './health.js';
 import {
   compareMarketQuestionFacts,
   groundMarketQuestion,
@@ -44,6 +46,13 @@ class MarketCatalogFailure extends Error {
   constructor(cause: unknown) {
     super('Canonical market lookup failed', { cause });
     this.name = 'MarketCatalogFailure';
+  }
+}
+
+class MarketVectorIndexUnavailable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MarketVectorIndexUnavailable';
   }
 }
 
@@ -98,6 +107,7 @@ export class DedupService implements DedupChecker {
   private readonly vectorStore: MarketVectorStore;
   private readonly marketCatalog: MarketCatalog;
   private readonly topK: number;
+  private readonly indexInspector: DedupIndexInspector;
 
   constructor(
     provider: MarketIntelligenceProvider,
@@ -105,6 +115,11 @@ export class DedupService implements DedupChecker {
     marketCatalog: MarketCatalog,
     topK: number,
     fallbackProvider = deterministicFallbackFor(provider),
+    indexInspector = new DedupIndexInspector(
+      provider.mode,
+      vectorStore,
+      marketCatalog,
+    ),
   ) {
     if (!Number.isSafeInteger(topK) || topK <= 0) {
       throw new Error(`Dedup topK must be a positive integer, received ${topK}`);
@@ -114,6 +129,7 @@ export class DedupService implements DedupChecker {
     this.vectorStore = vectorStore;
     this.marketCatalog = marketCatalog;
     this.topK = topK;
+    this.indexInspector = indexInspector;
   }
 
   private async resolveLiveMatches(
@@ -178,22 +194,35 @@ export class DedupService implements DedupChecker {
   private async checkWithProvider(
     question: string,
     provider: MarketIntelligenceProvider,
+    indexHealth: DedupIndexHealth,
   ): Promise<DedupCheckResponse> {
+    const providerHealth = indexHealth.providers[provider.mode];
+    if (!providerHealth.complete) {
+      throw new MarketVectorIndexUnavailable(
+        `Dedup index provider ${provider.mode} is missing ${String(providerHealth.missingMarketCount)} canonical markets`,
+      );
+    }
     const vector = await callMarketIntelligenceProvider(provider, 'embed', () =>
       provider.embed(question),
     );
     const draft = groundMarketQuestion(question);
     let retrieved: readonly MarketVectorMatch[];
     try {
+      const unexpectedMarketCount = providerHealth.unexpectedMarketCount ?? 0;
       retrieved = await this.vectorStore.searchMarkets(
         vector,
-        this.topK,
+        this.topK + unexpectedMarketCount,
         provider.mode,
       );
     } catch (error) {
       throw new MarketVectorStoreFailure(error);
     }
-    const matches = await this.resolveLiveMatches(retrieved);
+    const matches = (await this.resolveLiveMatches(retrieved)).slice(0, this.topK);
+    if ((indexHealth.canonicalMarketCount ?? 0) > 0 && matches.length === 0) {
+      throw new MarketVectorIndexUnavailable(
+        `Dedup index provider ${provider.mode} returned no usable canonical markets`,
+      );
+    }
     const judged = await this.judgeMatches(provider, draft, matches);
     const duplicate = judged.find(({ judgment }) => judgment.sameFact);
     const candidates: DedupCandidate[] = judged.map(({ match, judgment }) => ({
@@ -211,20 +240,41 @@ export class DedupService implements DedupChecker {
   }
 
   async check(question: string): Promise<DedupCheckResponse> {
+    let indexHealth: DedupIndexHealth;
     try {
-      return await this.checkWithProvider(question, this.provider);
+      indexHealth = await this.indexInspector.inspect();
+    } catch {
+      return unavailableDedupResponse();
+    }
+    const queryProvider =
+      indexHealth.queryProvider === this.provider.mode
+        ? this.provider
+        : indexHealth.queryProvider === this.fallbackProvider?.mode
+          ? this.fallbackProvider
+          : undefined;
+    if (queryProvider === undefined) return unavailableDedupResponse();
+
+    try {
+      return await this.checkWithProvider(question, queryProvider, indexHealth);
     } catch (error) {
       if (
         error instanceof MarketIntelligenceProviderFailure &&
-        this.fallbackProvider !== undefined
+        queryProvider.mode !== 'fallback' &&
+        this.fallbackProvider !== undefined &&
+        indexHealth.providers.fallback.complete
       ) {
         try {
-          return await this.checkWithProvider(question, this.fallbackProvider);
+          return await this.checkWithProvider(
+            question,
+            this.fallbackProvider,
+            indexHealth,
+          );
         } catch (fallbackError) {
           if (
             fallbackError instanceof MarketIntelligenceProviderFailure ||
             fallbackError instanceof MarketVectorStoreFailure ||
-            fallbackError instanceof MarketCatalogFailure
+            fallbackError instanceof MarketCatalogFailure ||
+            fallbackError instanceof MarketVectorIndexUnavailable
           ) {
             return unavailableDedupResponse();
           }
@@ -234,10 +284,12 @@ export class DedupService implements DedupChecker {
       if (
         error instanceof MarketIntelligenceProviderFailure ||
         error instanceof MarketVectorStoreFailure ||
-        error instanceof MarketCatalogFailure
+        error instanceof MarketCatalogFailure ||
+        error instanceof MarketVectorIndexUnavailable
       ) {
-        // Dependency failures are explicit in the response. A successful empty
-        // retrieval never reaches this path and remains available=true.
+        // Dependency and index-coverage failures are explicit. A negative
+        // verdict is returned only after a complete provider partition yields
+        // usable canonical candidates (or the canonical catalog is empty).
         return unavailableDedupResponse();
       }
       // Do not turn unexpected matching/orchestration bugs into a plausible

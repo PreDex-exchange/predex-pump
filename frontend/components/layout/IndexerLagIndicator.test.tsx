@@ -36,6 +36,27 @@ const healthy: HealthResponse = {
     error: null,
     issues: [],
   },
+  dedupIndex: {
+    status: 'ready',
+    configuredProvider: 'fallback',
+    queryProvider: 'fallback',
+    canonicalMarketCount: 2,
+    providers: {
+      openai: {
+        indexedMarketCount: 0,
+        missingMarketCount: 2,
+        unexpectedMarketCount: 0,
+        complete: false,
+      },
+      fallback: {
+        indexedMarketCount: 2,
+        missingMarketCount: 0,
+        unexpectedMarketCount: 0,
+        complete: true,
+      },
+    },
+    error: null,
+  },
   historyGaps: [],
 };
 
@@ -54,6 +75,39 @@ describe('IndexerLagIndicator liveness', () => {
     state.health = healthy;
     const { container } = render(<IndexerLagIndicator />);
     expect(container.innerHTML).toBe('');
+  });
+
+  it('surfaces a mixed dedup provider index and its configured-mode coverage', () => {
+    state.health = {
+      ...healthy,
+      dedupIndex: {
+        status: 'degraded',
+        configuredProvider: 'openai',
+        queryProvider: 'fallback',
+        canonicalMarketCount: 3,
+        providers: {
+          openai: {
+            indexedMarketCount: 1,
+            missingMarketCount: 2,
+            unexpectedMarketCount: 0,
+            complete: false,
+          },
+          fallback: {
+            indexedMarketCount: 3,
+            missingMarketCount: 0,
+            unexpectedMarketCount: 0,
+            complete: true,
+          },
+        },
+        error: null,
+      },
+    };
+
+    const status = render(<IndexerLagIndicator />).getByRole('status');
+    expect(status.textContent).toContain('Duplicate index using fallback');
+    expect(status.getAttribute('title')).toContain(
+      'configured provider openai; query provider fallback; indexed 1, missing 2',
+    );
   });
 
   it('surfaces a failed required chain-state bootstrap', () => {

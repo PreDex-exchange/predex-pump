@@ -30,6 +30,7 @@ async function main(): Promise<void> {
     prisma,
     eventBus,
     dedupChecker: dedup.checker,
+    dedupIndexHealthReader: dedup.indexHealth,
     indexerStallMs: config.indexerStallMs,
     ...(truthPaymentGate === undefined ? {} : { truthPaymentGate }),
   });

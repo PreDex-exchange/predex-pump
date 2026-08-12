@@ -2,6 +2,7 @@ import type {
   AccountResponse,
   ActivityResponse,
   ConfigResponse,
+  DedupIndexHealth,
   DedupCheckResponse,
   ExchangeApprovalStateResponse,
   HealthResponse,
@@ -28,8 +29,31 @@ import {
   seedContractData,
 } from './fixtures.js';
 
+const READY_DEDUP_INDEX: DedupIndexHealth = {
+  status: 'ready',
+  configuredProvider: 'fallback',
+  queryProvider: 'fallback',
+  canonicalMarketCount: 2,
+  providers: {
+    openai: {
+      indexedMarketCount: 0,
+      missingMarketCount: 2,
+      unexpectedMarketCount: 0,
+      complete: false,
+    },
+    fallback: {
+      indexedMarketCount: 2,
+      missingMarketCount: 0,
+      unexpectedMarketCount: 0,
+      complete: true,
+    },
+  },
+  error: null,
+};
+
 describe('REST shared contract', () => {
   let app: FastifyInstance;
+  let dedupIndexHealth = READY_DEDUP_INDEX;
 
   beforeAll(async () => {
     app = await buildServer({
@@ -55,11 +79,15 @@ describe('REST shared contract', () => {
           };
         },
       },
+      dedupIndexHealthReader: {
+        getHealth: async () => dedupIndexHealth,
+      },
       logger: false,
     });
   });
 
   beforeEach(async () => {
+    dedupIndexHealth = READY_DEDUP_INDEX;
     await resetDatabase();
     await seedContractData();
   });
@@ -772,7 +800,39 @@ describe('REST shared contract', () => {
         error: null,
         issues: [],
       },
+      dedupIndex: READY_DEDUP_INDEX,
       historyGaps: [],
+    });
+  });
+
+  it('GET /health surfaces a mixed dedup provider index as degraded', async () => {
+    dedupIndexHealth = {
+      status: 'degraded',
+      configuredProvider: 'openai',
+      queryProvider: 'fallback',
+      canonicalMarketCount: 3,
+      providers: {
+        openai: {
+          indexedMarketCount: 1,
+          missingMarketCount: 2,
+          unexpectedMarketCount: 0,
+          complete: false,
+        },
+        fallback: {
+          indexedMarketCount: 3,
+          missingMarketCount: 0,
+          unexpectedMarketCount: 0,
+          complete: true,
+        },
+      },
+      error: null,
+    };
+
+    await expect(
+      (await app.inject({ method: 'GET', url: '/health' })).json<HealthResponse>(),
+    ).toMatchObject({
+      ok: true,
+      dedupIndex: dedupIndexHealth,
     });
   });
 

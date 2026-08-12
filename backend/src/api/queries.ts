@@ -3,6 +3,7 @@ import type {
   AccountResponse,
   ActivityResponse,
   ConfigResponse,
+  DedupIndexHealth,
   ExchangeApprovalStateResponse,
   HealthResponse,
   IndexerHistoryGap,
@@ -23,6 +24,7 @@ import {
 } from '@prisma/client';
 
 import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
+import { unavailableDedupIndexHealth } from '../dedup/health.js';
 import {
   inspectChainStateRows,
   inspectPersistedChainState,
@@ -809,6 +811,10 @@ export async function getHealth(
   prisma: PrismaClient,
   stallAfterMs = DEFAULT_INDEXER_STALL_MS,
   now = new Date(),
+  dedupIndex: DedupIndexHealth = unavailableDedupIndexHealth(
+    'fallback',
+    'Dedup index health reader is not configured',
+  ),
 ): Promise<HealthResponse> {
   const [state, subscription, gaps, persistedChainState] = await Promise.all([
     prisma.indexerState.findUnique({ where: { id: 1 } }),
@@ -871,6 +877,7 @@ export async function getHealth(
       balancesReconciled,
       unreconciledBalanceGapCount,
       chainState,
+      dedupIndex,
       historyGaps,
     };
   }
@@ -917,6 +924,7 @@ export async function getHealth(
     balancesReconciled,
     unreconciledBalanceGapCount,
     chainState,
+    dedupIndex,
     historyGaps,
   };
 }
