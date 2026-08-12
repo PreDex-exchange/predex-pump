@@ -327,7 +327,9 @@ describe('REST shared contract', () => {
     const body = response.json<MarketBookResponse>();
     expect(body.marketId).toBe('1');
     expect(body.liveVenue).toBe('MINICLOB');
+    expect(body.orderBookAvailable).toBe(true);
     expect(body.minimumTickSizeRaw).toBe('1000');
+    expect(body.minimumTickSizeAppliesTo).toBe('NEW_ORDERS');
     expect(body.yes).toMatchObject({
       marketId: '1',
       minimumTickSizeRaw: '1000',
@@ -366,6 +368,86 @@ describe('REST shared contract', () => {
       orders: [],
       offchainOrders: [],
     });
+  });
+
+  it.each([
+    ['bootstrap curve', 'LMSR', false],
+    ['graduated book', 'MINICLOB', true],
+    ['migrated book', 'HYBRID', true],
+  ] as const)(
+    'reports the true live venue for a %s market',
+    async (lifecycle, expectedVenue, expectedBookAvailable) => {
+      if (lifecycle === 'bootstrap curve') {
+        await testPrisma.market.update({
+          where: { id: '1' },
+          data: {
+            phase: 'Opened',
+            bookAddress: null,
+            graduatedAt: null,
+          },
+        });
+      } else if (lifecycle === 'migrated book') {
+        await testPrisma.bookMigration.create({
+          data: {
+            marketId: '1',
+            status: 'MIGRATED',
+            yesSeedOrderId: '2',
+            noSeedOrderId: '3',
+            createdAt: 1_700_003_700,
+            updatedAt: 1_700_003_800,
+            migratedAt: 1_700_003_800,
+          },
+        });
+      }
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/markets/1/book',
+      });
+      const body = response.json<MarketBookResponse>();
+
+      expect(response.statusCode).toBe(200);
+      expect(body).toMatchObject({
+        liveVenue: expectedVenue,
+        orderBookAvailable: expectedBookAvailable,
+        minimumTickSizeRaw: '1000',
+        minimumTickSizeAppliesTo: 'NEW_ORDERS',
+      });
+      if (!expectedBookAvailable) {
+        expect(body.yes.orders).toEqual([]);
+        expect(body.no.orders).toEqual([]);
+        expect(body.yes.offchainOrders).toEqual([]);
+        expect(body.no.offchainOrders).toEqual([]);
+      }
+    },
+  );
+
+  it('preserves an executable off-tick seed price while scoping the tick to new orders', async () => {
+    await testPrisma.order.update({
+      where: { orderId: '3' },
+      data: { priceRaw: '543213' },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/markets/1/book',
+    });
+    const body = response.json<MarketBookResponse>();
+
+    expect(response.statusCode).toBe(200);
+    expect(body.minimumTickSizeRaw).toBe('1000');
+    expect(body.minimumTickSizeAppliesTo).toBe('NEW_ORDERS');
+    expect(body.yes.asks).toContainEqual({
+      priceRaw: '543213',
+      sizeRaw: '1000000',
+      orderCount: 1,
+    });
+    expect(body.yes.orders).toContainEqual(
+      expect.objectContaining({
+        isSeed: true,
+        priceRaw: '543213',
+      }),
+    );
   });
 
   it('GET /orderbook/:tokenId returns the exact single-token ladder', async () => {

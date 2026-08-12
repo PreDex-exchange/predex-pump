@@ -18,10 +18,10 @@ const NAV_ITEMS = [
 function BrandMark() {
   return (
     <svg aria-hidden="true" className={styles.brandMark} viewBox="0 0 38 38">
-      <rect fill="#ffc24b" height="35" rx="12" stroke="#2b2440" strokeWidth="2.5" width="35" x="1.5" y="1.5" />
-      <circle cx="13.5" cy="15.5" fill="#2b2440" r="2.2" />
-      <circle cx="24.5" cy="15.5" fill="#2b2440" r="2.2" />
-      <path d="m15 21 8 0-4 5z" fill="#ff6b57" stroke="#2b2440" strokeLinejoin="round" strokeWidth="1.5" />
+      <rect fill="var(--reward)" height="35" rx="12" stroke="var(--ink)" strokeWidth="2.5" width="35" x="1.5" y="1.5" />
+      <circle cx="13.5" cy="15.5" fill="var(--ink)" r="2.2" />
+      <circle cx="24.5" cy="15.5" fill="var(--ink)" r="2.2" />
+      <path d="m15 21 8 0-4 5z" fill="var(--brand)" stroke="var(--ink)" strokeLinejoin="round" strokeWidth="1.5" />
     </svg>
   );
 }

@@ -35,29 +35,29 @@
 
 .coral {
   background: var(--brand);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .coral:hover:not(:disabled) {
-  background: #ff7967;
+  background: var(--brand-hover);
 }
 
 .mint {
   background: var(--yes);
-  color: #063d2e;
+  color: var(--yes-button-ink);
 }
 
 .mint:hover:not(:disabled) {
-  background: #2bc49c;
+  background: var(--yes-hover);
 }
 
 .sky {
   background: var(--no);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .sky:hover:not(:disabled) {
-  background: #55a1eb;
+  background: var(--no-hover);
 }
 
 .neutral {

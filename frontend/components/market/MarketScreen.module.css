@@ -1,8 +1,10 @@
 .page {
   width: calc(100% - 32px);
   max-width: 1240px;
+  min-width: 0;
   margin: 0 auto;
   padding: var(--space-6) 0 var(--space-16);
+  overflow-x: clip;
 }
 
 .state {
@@ -32,6 +34,7 @@
 }
 
 .marketHeader {
+  min-width: 0;
   margin-bottom: 18px;
 }
 
@@ -40,6 +43,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-6);
+  min-width: 0;
 }
 
 .headerRow > div:first-child {
@@ -62,14 +66,16 @@
 }
 
 .marketHeader h1 {
-  max-width: 26ch;
+  max-width: min(26ch, 100%);
   margin: 12px 0 0;
   font-family: var(--font-fredoka), sans-serif;
   font-size: clamp(1.8rem, 4vw, 2.2rem);
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.14;
+  overflow-wrap: anywhere;
   text-wrap: balance;
+  word-break: break-word;
 }
 
 .watchlistControl {
@@ -88,6 +94,7 @@
 
 .grid {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(0, 1fr) 372px;
   align-items: start;
   gap: 22px;
@@ -102,6 +109,7 @@
 .sidebarStack {
   display: grid;
   gap: 20px;
+  min-width: 0;
 }
 
 .sidebarStack > aside {

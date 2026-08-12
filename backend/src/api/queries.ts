@@ -404,11 +404,49 @@ export async function getMarketBook(
       id: true,
       yesTokenId: true,
       noTokenId: true,
+      phase: true,
+      bookAddress: true,
+      graduatedAt: true,
+      resolvedAt: true,
       minimumTickSizeRaw: true,
       bookMigration: { select: { status: true, cancelledAt: true } },
     },
   });
   if (market === null) return null;
+
+  const hasLiveGraduatedBook =
+    market.phase === 'Graduated' &&
+    market.resolvedAt === null &&
+    market.bookAddress !== null &&
+    market.graduatedAt !== null;
+  if (!hasLiveGraduatedBook) {
+    const liveVenue =
+      market.phase === 'Opened' && market.resolvedAt === null ? 'LMSR' : 'NONE';
+    return {
+      marketId,
+      minimumTickSizeRaw: market.minimumTickSizeRaw,
+      minimumTickSizeAppliesTo: 'NEW_ORDERS',
+      orderBookAvailable: false,
+      liveVenue,
+      yes: buildOrderBook(
+        marketId,
+        market.minimumTickSizeRaw,
+        'YES',
+        market.yesTokenId ?? '',
+        [],
+        [],
+      ),
+      no: buildOrderBook(
+        marketId,
+        market.minimumTickSizeRaw,
+        'NO',
+        market.noTokenId ?? '',
+        [],
+        [],
+      ),
+    };
+  }
+
   const liveVenue =
     market.bookMigration?.status === 'MIGRATED' ? 'HYBRID' : 'MINICLOB';
   const cancellingGap =
@@ -437,6 +475,8 @@ export async function getMarketBook(
   return {
     marketId,
     minimumTickSizeRaw: market.minimumTickSizeRaw,
+    minimumTickSizeAppliesTo: 'NEW_ORDERS',
+    orderBookAvailable: true,
     liveVenue,
     yes: buildOrderBook(
       marketId,

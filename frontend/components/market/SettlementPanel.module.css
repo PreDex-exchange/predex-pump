@@ -184,7 +184,7 @@
   padding: 11px 12px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-input);
-  background: #fbf9f5;
+  background: var(--surface-disabled);
   font-size: 0.72rem;
 }
 

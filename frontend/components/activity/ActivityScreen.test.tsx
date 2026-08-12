@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     nextCursor: null as string | null,
   },
   activityError: null as Error | null,
+  activityLoading: false,
   activityListener: null as ((message: { event: string; data: unknown }) => void) | null,
   markets: [] as Market[],
   refetch: vi.fn(),
@@ -22,7 +23,7 @@ vi.mock('@/lib/api/hooks', () => ({
   useActivity: () => ({
     data: mocks.activityData,
     error: mocks.activityError,
-    isLoading: false,
+    isLoading: mocks.activityLoading,
     refetch: mocks.refetch,
   }),
   useMarkets: () => ({
@@ -118,6 +119,7 @@ function trade(
 beforeEach(() => {
   mocks.activityData = { items: [], nextCursor: null };
   mocks.activityError = null;
+  mocks.activityLoading = false;
   mocks.activityListener = null;
   mocks.markets = [market];
   mocks.refetch.mockClear();
@@ -180,6 +182,16 @@ describe('ActivityScreen', () => {
 
     expect(screen.getByText('Waiting for activity…')).toBeTruthy();
     expect(screen.getByText(/will appear here live/u)).toBeTruthy();
+  });
+
+  it('distinguishes indexed-history loading from a successful empty tape', () => {
+    mocks.activityLoading = true;
+
+    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+
+    expect(screen.getByText('Loading indexed history…')).toBeTruthy();
+    expect(screen.queryByText('Waiting for activity…')).toBeNull();
+    expect(screen.getByText(/before deciding whether this tape is empty/u)).toBeTruthy();
   });
 
   it('shows reconnecting and refreshes indexed history once the stream returns', () => {

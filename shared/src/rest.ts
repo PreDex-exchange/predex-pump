@@ -13,7 +13,7 @@ import type {
   DedupCandidate,
   Market,
   MarketPhase,
-  LiveBookVenue,
+  MarketLiveVenue,
   OffchainOrder,
   OrderBook,
   Pnl,
@@ -55,16 +55,30 @@ export interface MarketDetailResponse {
   };
 }
 
-// GET /markets/:id/book  → both outcomes of the graduated book (empty until graduation)
-export interface MarketBookResponse {
+interface MarketBookResponseBase {
   marketId: string;
-  /** Effective per-market price quantum applied to newly accepted orders. */
+  /** Price quantum enforced for newly accepted orders, not existing resting orders. */
   minimumTickSizeRaw: Raw;
-  /** Exactly one venue is actionable; P4 will move this from MiniCLOB to Hybrid. */
-  liveVenue: LiveBookVenue;
+  /** Existing executable orders retain their exact prices when the tick changes. */
+  minimumTickSizeAppliesTo: 'NEW_ORDERS';
   yes: OrderBook;
   no: OrderBook;
 }
+
+// GET /markets/:id/book → a lifecycle-aware venue and both outcome snapshots.
+export type MarketBookResponse = MarketBookResponseBase &
+  (
+    | {
+        /** A MiniCLOB or Hybrid order book is currently actionable. */
+        orderBookAvailable: true;
+        liveVenue: Extract<MarketLiveVenue, 'MINICLOB' | 'HYBRID'>;
+      }
+    | {
+        /** LMSR is live before graduation; NONE means no venue is live. */
+        orderBookAvailable: false;
+        liveVenue: Extract<MarketLiveVenue, 'LMSR' | 'NONE'>;
+      }
+  );
 
 // GET /orderbook/:tokenId  → single-token ladder (plan-specified path)
 export type OrderBookResponse = OrderBook;

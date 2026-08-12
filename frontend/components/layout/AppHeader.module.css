@@ -117,4 +117,18 @@
   .actions > span {
     align-self: center;
   }
+
+  .nav {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    overflow-x: visible;
+  }
+
+  .navLink {
+    min-width: 0;
+    padding-inline: var(--space-1);
+    font-size: 0.68rem;
+    line-height: 1.1;
+    white-space: normal;
+  }
 }

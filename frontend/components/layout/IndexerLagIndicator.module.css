@@ -4,10 +4,10 @@
   gap: 7px;
   flex: none;
   padding: 6px 10px;
-  border: 1.5px solid #d39a24;
+  border: 1.5px solid var(--warning-strong);
   border-radius: var(--radius-pill);
   background: var(--reward-soft);
-  color: #795613;
+  color: var(--warning-ink);
   font-size: 0.7rem;
   font-weight: 800;
   white-space: nowrap;
@@ -17,5 +17,5 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #d39a24;
+  background: var(--warning-strong);
 }

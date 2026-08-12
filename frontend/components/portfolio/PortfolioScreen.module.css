@@ -1,8 +1,10 @@
 .page {
   width: calc(100% - 32px);
   max-width: 1200px;
+  min-width: 0;
   margin: 0 auto;
   padding: var(--space-12) 0 88px;
+  overflow-x: clip;
 }
 
 .header {
@@ -117,7 +119,7 @@
   border: 2px solid var(--yes-ink);
   border-radius: 50%;
   background: var(--yes);
-  color: #fff;
+  color: var(--text-on-accent);
   font-weight: 800;
 }
 
@@ -146,8 +148,36 @@
   font-size: 0.72rem;
 }
 
+.orders,
 .positions {
   margin-top: var(--space-8);
+}
+
+.orderSafety {
+  padding: var(--space-3) var(--space-4);
+  margin: 0 0 var(--space-3);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-input);
+  background: var(--reward-soft);
+  color: var(--ink);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.inlineState {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+}
+
+.inlineState p {
+  margin: 0;
 }
 
 .sectionHeading {
@@ -173,20 +203,45 @@
 }
 
 .tableCard {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   background: rgb(255 255 255 / 88%);
 }
 
 .tableCard table {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border-collapse: collapse;
   table-layout: fixed;
+}
+
+.tableCard.ordersTableCard th:first-child {
+  width: 29%;
+}
+
+.tableCard.ordersTableCard th:nth-child(2) {
+  width: 10%;
+}
+
+.tableCard.ordersTableCard th:nth-child(3) {
+  width: 8%;
+}
+
+.tableCard.ordersTableCard th:nth-child(4) {
+  width: 9%;
+}
+
+.tableCard.ordersTableCard th:nth-child(n + 5) {
+  width: 11%;
 }
 
 .tableCard th {
   padding: 13px 14px;
   border-bottom: 2px solid var(--hairline);
-  background: #fbf8f3;
+  background: var(--surface-table-head);
   color: var(--muted);
   font-size: 0.67rem;
   font-weight: 800;
@@ -208,6 +263,7 @@
 }
 
 .tableCard td {
+  min-width: 0;
   padding: 16px 14px;
   border-bottom: 1px solid var(--hairline);
   vertical-align: middle;
@@ -222,7 +278,7 @@
 }
 
 .tableCard tbody tr:hover {
-  background: #fffcf7;
+  background: var(--surface-hover);
 }
 
 .numericHeading,
@@ -256,7 +312,26 @@
   font-size: 0.85rem;
   font-weight: 800;
   line-height: 1.35;
+  overflow-wrap: anywhere;
   text-overflow: ellipsis;
+}
+
+.venue,
+.orderStatus {
+  display: inline-flex;
+  padding: 3px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  font-size: 0.64rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.venue {
+  border-color: var(--brand);
+  background: var(--brand-soft);
 }
 
 .marketCell span {
@@ -403,7 +478,9 @@
   }
 
   .tableCard {
-    overflow: visible;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
     border: 0;
     background: transparent;
   }
@@ -411,6 +488,9 @@
   .tableCard table,
   .tableCard tbody {
     display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .tableCard thead {
@@ -419,6 +499,9 @@
 
   .tableCard tr {
     display: grid;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0 var(--space-4);
     padding: var(--space-4);
@@ -430,6 +513,7 @@
 
   .tableCard td {
     display: flex;
+    min-width: 0;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
@@ -464,6 +548,16 @@
 
   .marketCell strong {
     white-space: normal;
+  }
+
+  .numericCell {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .inlineState {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

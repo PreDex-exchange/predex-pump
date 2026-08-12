@@ -296,21 +296,30 @@ export function HybridOrderBookPanel({
   );
   const priceRaw = rawInput(price);
   const sizeRaw = rawInput(size);
+  const outcomeBalanceRaw = BigInt(
+    positions.find((position) => position.outcome === outcome)?.qtyRaw ?? '0',
+  );
   const priceOnTick =
     priceRaw !== null && isPriceOnTick(priceRaw, minimumTickSizeRaw);
   const sizeIsGranular =
     sizeRaw !== null && isOrderSizeGranular(sizeRaw);
+  const hasSufficientOutcomeBalance =
+    orderSide !== 'ASK' ||
+    sizeRaw === null ||
+    sizeRaw <= outcomeBalanceRaw;
   const sizeError =
     sizeRaw === null || sizeRaw <= 0n
       ? 'Enter an order size greater than zero'
       : !sizeIsGranular
         ? ORDER_SIZE_STEP_ERROR
-        : null;
+        : !hasSufficientOutcomeBalance
+          ? `Insufficient ${outcome} balance for this sell`
+          : null;
   const expiration = parseUtcInput(expiry);
   const validExpiration =
     expiration !== null &&
     expiration >= nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS;
-  const commitment = useMemo(() => {
+  const commitment = (() => {
     if (
       priceRaw === null ||
       sizeRaw === null ||
@@ -331,15 +340,7 @@ export function HybridOrderBookPanel({
     } catch {
       return null;
     }
-  }, [
-    expiration,
-    minimumTickSizeRaw,
-    orderSide,
-    priceOnTick,
-    priceRaw,
-    sizeIsGranular,
-    sizeRaw,
-  ]);
+  })();
   const effectiveApprovals = useMemo(
     () =>
       approvalStateWithConfirmed(
@@ -371,6 +372,7 @@ export function HybridOrderBookPanel({
     Boolean(address) &&
     !wrongNetwork &&
     Boolean(commitment) &&
+    sizeError === null &&
     validExpiration &&
     makerApprovalReady &&
     market.resolvedAt === null;
@@ -479,6 +481,7 @@ export function HybridOrderBookPanel({
       !address ||
       !commitment ||
       !makerApprovalReady ||
+      sizeError !== null ||
       !validExpiration
     ) {
       return;
@@ -810,8 +813,9 @@ export function HybridOrderBookPanel({
               </p>
             )}
             <p className={styles.bindingNote}>
-              Price tick {formatUnits(minimumTickSizeRaw, 6)} USDC · size step
-              {' '}0.001 token · off-step sizes round down on blur
+              New-order price tick {formatUnits(minimumTickSizeRaw, 6)} USDC ·
+              {' '}size step 0.001 token · existing resting quotes keep their
+              exact executable prices
             </p>
             <label className={styles.field}>
               <span>Expiry (UTC)</span>
@@ -856,14 +860,10 @@ export function HybridOrderBookPanel({
               <div>
                 <dt>Wallet holds</dt>
                 <dd className="numeric">
-                  {formatRaw(
-                    positions.find((position) => position.outcome === outcome)
-                      ?.qtyRaw ?? '0',
-                    {
-                      minimumFractionDigits: 0,
-                      maximumFractionDigits: 6,
-                    },
-                  )}{' '}
+                  {formatRaw(outcomeBalanceRaw.toString(), {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 6,
+                  })}{' '}
                   {outcome}
                 </dd>
               </div>

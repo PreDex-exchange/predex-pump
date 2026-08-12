@@ -45,7 +45,7 @@
 .filters button.active {
   background: var(--brand);
   box-shadow: 0 4px 0 var(--outline);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .filters button:focus-visible {

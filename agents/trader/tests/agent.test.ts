@@ -34,6 +34,11 @@ const MAKER = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Address;
 const BOOK = '0xa4f4e20bb706b38c7bbfeb923b63c2d427c9f7a3' as Address;
 const SECRET_SIGNATURE = `0x${'9a'.repeat(65)}` as const;
 
+type AvailableMarketBookResponse = Extract<
+  MarketBookResponse,
+  { orderBookAvailable: true }
+>;
+
 class MemoryLogger implements TraderLogger {
   readonly entries: TraderLogEntry[] = [];
 
@@ -111,7 +116,7 @@ function order(
 function book(
   marketValue = market(),
   orders: Order[] = [],
-): MarketBookResponse {
+): AvailableMarketBookResponse {
   const yesOrders = orders.filter(({ outcome }) => outcome === 'YES');
   const noOrders = orders.filter(({ outcome }) => outcome === 'NO');
   const yesBids = yesOrders
@@ -131,6 +136,8 @@ function book(
   return {
     marketId: marketValue.id,
     minimumTickSizeRaw: marketValue.params.minimumTickSizeRaw,
+    minimumTickSizeAppliesTo: 'NEW_ORDERS',
+    orderBookAvailable: true,
     liveVenue: 'MINICLOB',
     yes: {
       marketId: marketValue.id,
@@ -203,7 +210,7 @@ function offchainOrder(
 function hybridBook(
   marketValue = market(),
   orders: OffchainOrder[] = [],
-): MarketBookResponse {
+): AvailableMarketBookResponse {
   const response = book(marketValue);
   const yesOrders = orders.filter(({ outcome }) => outcome === 'YES');
   const noOrders = orders.filter(({ outcome }) => outcome === 'NO');
@@ -771,17 +778,36 @@ describe('TraderAgent', () => {
   });
 
   it('refuses place/fill decisions for a non-tradable indexed market', async () => {
-    const resolved = market('1', {
-      phase: 'ResolvedObserved',
-      resolvedAt: 999,
+    const bootstrap = market('1', {
+      phase: 'Opened',
+      bookAddress: null,
+      graduatedAt: null,
     });
+    const unavailableBook: MarketBookResponse = {
+      ...book(bootstrap, [order()]),
+      orderBookAvailable: false,
+      liveVenue: 'LMSR',
+      yes: {
+        ...book(bootstrap).yes,
+        bids: [],
+        asks: [],
+        bestBidRaw: null,
+        bestAskRaw: null,
+        orders: [],
+      },
+    };
     const actionExecutor = executor();
+    const readSignal = vi.fn(async ({ marketId }: { marketId: string }) => ({
+      signal: signal(marketId),
+      paymentSpendRaw: 0n,
+    }));
     const { agent, logger } = createAgent({
       dataClient: dataClient({
-        markets: [resolved],
-        books: new Map([['1', book(resolved, [order()])]]),
+        markets: [bootstrap],
+        books: new Map([['1', unavailableBook]]),
       }),
       executor: actionExecutor,
+      readSignal,
       dryRun: false,
     });
 
@@ -789,10 +815,11 @@ describe('TraderAgent', () => {
 
     expect(actionExecutor.placeOrder).not.toHaveBeenCalled();
     expect(actionExecutor.fillOrder).not.toHaveBeenCalled();
+    expect(readSignal).not.toHaveBeenCalled();
     expect(logger.entries).toContainEqual(
       expect.objectContaining({
         event: 'refused',
-        reason: expect.stringContaining('not tradable'),
+        reason: expect.stringContaining('liveVenue=LMSR'),
       }),
     );
   });

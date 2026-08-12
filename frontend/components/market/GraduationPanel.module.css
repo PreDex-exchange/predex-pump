@@ -30,13 +30,19 @@
   overflow: hidden;
   border: 2px solid var(--outline);
   border-radius: var(--radius-pill);
-  background: #f3ece0;
+  background: var(--surface-track);
 }
 
 .bar span {
   display: block;
   height: 100%;
-  background: repeating-linear-gradient(45deg, var(--reward), var(--reward) 8px, #ffd777 8px, #ffd777 16px);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--reward),
+    var(--reward) 8px,
+    var(--reward-stripe) 8px,
+    var(--reward-stripe) 16px
+  );
 }
 
 .row {

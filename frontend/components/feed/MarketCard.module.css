@@ -125,12 +125,12 @@
 
 .settled .price:not(.winner) {
   border-color: var(--hairline);
-  background: #f4f1f6;
+  background: var(--surface-neutral);
   opacity: 0.6;
 }
 
 .settled .winner {
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .settled .winner.yes {
@@ -145,7 +145,7 @@
 
 .settled .winner .priceLabel,
 .settled .winner .priceValue {
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .winner::after {
@@ -160,7 +160,7 @@
   border-radius: 50%;
   background: inherit;
   box-shadow: 0 2px 0 rgb(43 36 64 / 20%);
-  color: #fff;
+  color: var(--text-on-accent);
   content: '✓';
   font-size: 0.7rem;
   font-weight: 800;
@@ -235,7 +235,7 @@
   height: 14px;
   border: 2px solid var(--outline);
   border-radius: var(--radius-pill);
-  background: #f3ece1;
+  background: var(--surface-track-warm);
 }
 
 .bar > span {

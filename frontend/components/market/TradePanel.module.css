@@ -41,7 +41,7 @@
 }
 
 .yes {
-  border-color: #bfe8db;
+  border-color: var(--yes-border);
 }
 
 .yes > span:first-child {
@@ -55,7 +55,7 @@
 }
 
 .no {
-  border-color: #c4ddf6;
+  border-color: var(--no-border);
 }
 
 .no > span:first-child {
@@ -150,7 +150,7 @@
   margin-bottom: 14px;
   border: 2px solid var(--hairline);
   border-radius: 14px;
-  background: #fbf7f0;
+  background: var(--surface-muted);
 }
 
 .quote > div,

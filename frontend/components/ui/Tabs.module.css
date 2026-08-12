@@ -4,7 +4,7 @@
   padding: 3px;
   border: 2px solid var(--outline);
   border-radius: var(--radius-pill);
-  background: #f3ece0;
+  background: var(--surface-track);
 }
 
 .tab {

@@ -37,6 +37,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('FeedScreen failure states', () => {
+  it('keeps character art out of the market-price loading surface', () => {
+    mocks.markets.isLoading = true;
+
+    render(<FeedScreen />);
+
+    const marketSurface = screen.getByRole('region', { name: 'Markets' });
+    expect(within(marketSurface).getByText('Warming the nest…')).toBeTruthy();
+    expect(marketSurface.querySelector('svg')).toBeNull();
+  });
+
   it('renders unknown hero statistics when the markets query fails', () => {
     mocks.markets.data = null as never;
     mocks.markets.error = new Error('markets unavailable');

@@ -26,7 +26,7 @@
 }
 
 .yes {
-  border-color: #bfe8db;
+  border-color: var(--yes-border);
   background: var(--yes-soft);
 }
 
@@ -35,7 +35,7 @@
 }
 
 .no {
-  border-color: #c4ddf6;
+  border-color: var(--no-border);
   background: var(--no-soft);
 }
 

@@ -3,6 +3,7 @@
 import type {
   ActivityEvent,
   Market,
+  OffchainOrder,
   Position,
   Trade,
 } from '@predex-pump/shared/domain';
@@ -16,12 +17,15 @@ import { Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { StatePanel } from '@/components/ui/StatePanel';
+import { useAuth } from '@/components/providers/AuthProvider';
 import {
   useAccount as useIndexedAccount,
   useActivity,
   useMarkets,
+  useMyOrders,
 } from '@/lib/api/hooks';
 import {
+  formatPrice,
   formatRaw,
   formatSignedUsdc,
   formatUsdc,
@@ -73,8 +77,26 @@ function tradeToActivity(trade: Trade): ActivityEvent {
   };
 }
 
+function isOpenOrder(order: OffchainOrder) {
+  return (
+    (order.status === 'OPEN' || order.status === 'PARTIALLY_FILLED') &&
+    BigInt(order.remainingRaw) > 0n
+  );
+}
+
+function orderStatusLabel(status: OffchainOrder['status']) {
+  return status === 'PARTIALLY_FILLED'
+    ? 'Partially filled'
+    : status.charAt(0) + status.slice(1).toLowerCase().replaceAll('_', ' ');
+}
+
 export function PortfolioScreen() {
   const { address, isConnected } = useWalletAccount();
+  const { session, isLoading: sessionLoading, isSigningIn, signIn } = useAuth();
+  const authenticated =
+    session?.authenticated === true &&
+    Boolean(address) &&
+    session.address.toLowerCase() === address?.toLowerCase();
   const {
     connect,
     connectors,
@@ -98,12 +120,22 @@ export function PortfolioScreen() {
     isLoading: activityLoading,
     error: activityError,
   } = useActivity({ account: address, limit: 20 });
+  const {
+    data: makerOrders,
+    isLoading: ordersLoading,
+    error: ordersError,
+    refetch: refetchOrders,
+  } = useMyOrders(address, authenticated);
+
+  const marketById = useMemo(
+    () =>
+      new Map(
+        (marketsPage?.items ?? []).map((market) => [market.id, market]),
+      ),
+    [marketsPage?.items],
+  );
 
   const positionRows = useMemo<PositionRow[]>(() => {
-    const marketById = new Map(
-      (marketsPage?.items ?? []).map((market) => [market.id, market]),
-    );
-
     return (account?.positions ?? []).map((position) => {
       const market = marketById.get(position.marketId);
 
@@ -118,7 +150,19 @@ export function PortfolioScreen() {
         ).toString(),
       };
     });
-  }, [account?.positions, marketsPage?.items]);
+  }, [account?.positions, marketById]);
+
+  const openOrders = useMemo(
+    () =>
+      (makerOrders?.orders ?? [])
+        .filter(
+          (order) =>
+            isOpenOrder(order) &&
+            order.maker.toLowerCase() === address?.toLowerCase(),
+        )
+        .sort((left, right) => right.createdAt - left.createdAt),
+    [address, makerOrders?.orders],
+  );
 
   const totalPositionValueRaw = positionRows
     .reduce((total, row) => total + BigInt(row.currentValueRaw), 0n)
@@ -247,29 +291,6 @@ export function PortfolioScreen() {
     );
   }
 
-  if (positionRows.length === 0) {
-    return (
-      <main className={styles.page}>
-        {header}
-        <StatePanel
-          actions={
-            <>
-              <Link className={buttonClassName('coral')} href="/">
-                Explore the feed
-              </Link>
-              <Link className={buttonClassName('neutral')} href="/create">
-                Create a market
-              </Link>
-            </>
-          }
-          message="This account holds no outcome tokens for markets in the live deployment."
-          showMascot={false}
-          title="No positions in this nest yet"
-        />
-      </main>
-    );
-  }
-
   return (
     <main className={styles.page}>
       {header}
@@ -331,6 +352,126 @@ export function PortfolioScreen() {
         </Card>
       )}
 
+      <section className={styles.orders} aria-labelledby="open-orders-heading">
+        <div className={styles.sectionHeading}>
+          <div>
+            <span className={styles.kicker}>Working liquidity</span>
+            <h2 id="open-orders-heading">Open orders</h2>
+          </div>
+          <p>Live signed orders are separate from historical placement events.</p>
+        </div>
+
+        <p className={styles.orderSafety}>
+          <strong>Withdraw · free</strong> removes an order from this operator’s
+          book only. <strong>Cancel on-chain · gas</strong> invalidates the
+          signature; otherwise it can remain valid until expiry.
+        </p>
+
+        {sessionLoading ? (
+          <p className={styles.inlineState} role="status">
+            Checking the connected wallet session…
+          </p>
+        ) : !authenticated ? (
+          <Card className={styles.inlineState} quiet>
+            <p>Sign in with this wallet to load its private live-order list.</p>
+            <Button
+              disabled={isSigningIn}
+              onClick={() => void signIn()}
+              size="small"
+              variant="neutral"
+            >
+              {isSigningIn ? 'Signing in…' : 'Sign in to view open orders'}
+            </Button>
+          </Card>
+        ) : ordersLoading ? (
+          <p className={styles.inlineState} role="status">
+            Loading live open orders…
+          </p>
+        ) : ordersError || !makerOrders ? (
+          <Card className={styles.inlineState} quiet role="alert">
+            <p>The live order list could not be loaded.</p>
+            <Button onClick={refetchOrders} size="small" variant="neutral">
+              Try orders again
+            </Button>
+          </Card>
+        ) : openOrders.length === 0 ? (
+          <p className={styles.inlineState}>No live open orders for this wallet.</p>
+        ) : (
+          <Card
+            className={`${styles.tableCard} ${styles.ordersTableCard}`}
+            padded={false}
+            quiet
+          >
+            <table aria-describedby="open-orders-safety">
+              <caption className="sr-only">
+                Live Hybrid signed orders for the connected wallet
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Market</th>
+                  <th scope="col">Venue</th>
+                  <th scope="col">Side</th>
+                  <th scope="col">Outcome</th>
+                  <th className={styles.numericHeading} scope="col">Price</th>
+                  <th className={styles.numericHeading} scope="col">Original</th>
+                  <th className={styles.numericHeading} scope="col">Remaining</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {openOrders.map((order) => {
+                  const orderMarket = marketById.get(order.marketId);
+                  return (
+                    <tr key={order.orderHash}>
+                      <td className={styles.marketCell} data-label="Market">
+                        <Link href={`/market/${order.marketId}`}>
+                          <strong>
+                            {orderMarket?.question ?? `Market #${order.marketId}`}
+                          </strong>
+                          <span>
+                            Manage on market <span aria-hidden="true">→</span>
+                          </span>
+                        </Link>
+                      </td>
+                      <td data-label="Venue">
+                        <span className={styles.venue}>HYBRID</span>
+                      </td>
+                      <td data-label="Side">{order.side}</td>
+                      <td data-label="Outcome">
+                        <OutcomeBadge outcome={order.outcome} />
+                      </td>
+                      <td className={styles.numericCell} data-label="Price">
+                        {formatPrice(order.priceRaw, 6)}
+                      </td>
+                      <td className={styles.numericCell} data-label="Original">
+                        {formatRaw(order.sizeRaw, {
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 6,
+                        })}
+                      </td>
+                      <td className={styles.numericCell} data-label="Remaining">
+                        {formatRaw(order.remainingRaw, {
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 6,
+                        })}
+                      </td>
+                      <td data-label="Status">
+                        <span className={styles.orderStatus} title={order.status}>
+                          {orderStatusLabel(order.status)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+        )}
+        <span className="sr-only" id="open-orders-safety">
+          Withdrawal is off-chain only; on-chain cancellation is authoritative.
+        </span>
+      </section>
+
       <section className={styles.positions}>
         <div className={styles.sectionHeading}>
           <div>
@@ -342,80 +483,94 @@ export function PortfolioScreen() {
           </p>
         </div>
 
-        <Card className={styles.tableCard} padded={false} quiet>
-          <table aria-describedby="positions-note">
-            <caption className="sr-only">
-              Indexed outcome-token positions for the connected Arc account
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">Market</th>
-                <th scope="col">Outcome</th>
-                <th className={styles.numericHeading} scope="col">
-                  Quantity
-                </th>
-                <th className={styles.numericHeading} scope="col">
-                  Avg. cost
-                </th>
-                <th className={styles.numericHeading} scope="col">
-                  Current value
-                </th>
-                <th className={styles.numericHeading} scope="col">
-                  PnL (est.)
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {positionRows.map((row) => (
-                <tr key={`${row.position.marketId}:${row.position.outcome}`}>
-                  <td className={styles.marketCell} data-label="Market">
-                    <Link href={`/market/${row.position.marketId}`}>
-                      <strong>
-                        {row.market?.question ?? `Market #${row.position.marketId}`}
-                      </strong>
-                      <span>
-                        {row.market
-                          ? isMarketSettled(row.market)
-                            ? row.market.phase === 'ClosedOut'
-                              ? 'Closed out'
-                              : 'Resolved'
-                            : phaseLabel(row.market.phase)
-                          : 'Market unavailable'}{' '}
-                        <span aria-hidden="true">→</span>
-                      </span>
-                    </Link>
-                  </td>
-                  <td data-label="Outcome">
-                    <OutcomeBadge outcome={row.position.outcome} />
-                  </td>
-                  <td className={styles.numericCell} data-label="Quantity">
-                    {formatRaw(row.position.qtyRaw, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </td>
-                  <td className={styles.numericCell} data-label="Avg. cost">
-                    <span title="Estimated from indexed trade history">
-                      {formatUsdc(row.averageCostRaw, 3)} <small>USDC</small>
-                    </span>
-                  </td>
-                  <td className={styles.numericCell} data-label="Current value">
-                    {formatUsdc(row.currentValueRaw)} <small>USDC</small>
-                  </td>
-                  <td className={styles.numericCell} data-label="PnL (est.)">
-                    <span
-                      className={pnlClassName(row.estimatedPnlRaw)}
-                      title="Estimated from indexed trade history"
-                    >
-                      {formatSignedUsdc(row.estimatedPnlRaw)}{' '}
-                      <small>USDC</small>
-                    </span>
-                  </td>
+        {positionRows.length === 0 ? (
+          <StatePanel
+            actions={
+              <Link className={buttonClassName('neutral')} href="/">
+                Explore the feed
+              </Link>
+            }
+            message="This account holds no indexed outcome-token positions. Open orders, if any, remain listed above."
+            showMascot={false}
+            title="No positions yet"
+          />
+        ) : (
+          <Card className={styles.tableCard} padded={false} quiet>
+            <table aria-describedby="positions-note">
+              <caption className="sr-only">
+                Indexed outcome-token positions for the connected Arc account
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Market</th>
+                  <th scope="col">Outcome</th>
+                  <th className={styles.numericHeading} scope="col">
+                    Quantity
+                  </th>
+                  <th className={styles.numericHeading} scope="col">
+                    Avg. cost
+                  </th>
+                  <th className={styles.numericHeading} scope="col">
+                    Current value
+                  </th>
+                  <th className={styles.numericHeading} scope="col">
+                    PnL (est.)
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+              </thead>
+              <tbody>
+                {positionRows.map((row) => (
+                  <tr key={`${row.position.marketId}:${row.position.outcome}`}>
+                    <td className={styles.marketCell} data-label="Market">
+                      <Link href={`/market/${row.position.marketId}`}>
+                        <strong>
+                          {row.market?.question ??
+                            `Market #${row.position.marketId}`}
+                        </strong>
+                        <span>
+                          {row.market
+                            ? isMarketSettled(row.market)
+                              ? row.market.phase === 'ClosedOut'
+                                ? 'Closed out'
+                                : 'Resolved'
+                              : phaseLabel(row.market.phase)
+                            : 'Market unavailable'}{' '}
+                          <span aria-hidden="true">→</span>
+                        </span>
+                      </Link>
+                    </td>
+                    <td data-label="Outcome">
+                      <OutcomeBadge outcome={row.position.outcome} />
+                    </td>
+                    <td className={styles.numericCell} data-label="Quantity">
+                      {formatRaw(row.position.qtyRaw, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className={styles.numericCell} data-label="Avg. cost">
+                      <span title="Estimated from indexed trade history">
+                        {formatUsdc(row.averageCostRaw, 3)} <small>USDC</small>
+                      </span>
+                    </td>
+                    <td className={styles.numericCell} data-label="Current value">
+                      {formatUsdc(row.currentValueRaw)} <small>USDC</small>
+                    </td>
+                    <td className={styles.numericCell} data-label="PnL (est.)">
+                      <span
+                        className={pnlClassName(row.estimatedPnlRaw)}
+                        title="Estimated from indexed trade history"
+                      >
+                        {formatSignedUsdc(row.estimatedPnlRaw)}{' '}
+                        <small>USDC</small>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        )}
       </section>
 
       <section className={styles.history}>

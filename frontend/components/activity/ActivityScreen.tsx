@@ -212,7 +212,18 @@ export function ActivityScreen({
           <span>What landed on-chain</span>
           <span>Transaction</span>
         </div>
-        {events.length === 0 ? (
+        {activity.isLoading && events.length === 0 ? (
+          <div className={styles.empty} role="status">
+            <span aria-hidden="true" className={styles.waitingDot} />
+            <div>
+              <strong>Loading indexed history…</strong>
+              <p>
+                Checking the activity index before deciding whether this tape is
+                empty.
+              </p>
+            </div>
+          </div>
+        ) : events.length === 0 ? (
           <div className={styles.empty} role="status">
             <span aria-hidden="true" className={styles.waitingDot} />
             <div>

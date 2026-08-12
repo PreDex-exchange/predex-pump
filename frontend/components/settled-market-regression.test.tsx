@@ -90,6 +90,12 @@ vi.mock('@/lib/api/hooks', () => ({
     error: null,
     refetch: vi.fn(),
   }),
+  useMyOrders: () => ({
+    data: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
   useOrderBook: () => ({
     data: null,
     isLoading: false,

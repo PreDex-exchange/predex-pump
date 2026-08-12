@@ -190,7 +190,7 @@
 
 .agent .actorBadge {
   background: var(--brand);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .protocol .actorBadge {

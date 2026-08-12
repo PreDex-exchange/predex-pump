@@ -104,6 +104,16 @@ function Ladder({
   return (
     <div className={styles.levels}>
       {levels.map((level) => {
+        const hasExactOffTickSeed = book.orders.some(
+          (order) =>
+            order.isSeed &&
+            order.side === (side === 'asks' ? 'ASK' : 'BID') &&
+            order.priceRaw === level.priceRaw &&
+            !isPriceOnTick(
+              BigInt(order.priceRaw),
+              BigInt(book.minimumTickSizeRaw),
+            ),
+        );
         const totalRaw = book.orders
           .filter(
             (order) =>
@@ -128,7 +138,14 @@ function Ladder({
             }`}
             key={`${side}:${level.priceRaw}`}
           >
-            <span className="numeric">{formatPrice(level.priceRaw, 6)}</span>
+            <span className={`${styles.levelPrice} numeric`}>
+              <span>{formatPrice(level.priceRaw, 6)}</span>
+              {hasExactOffTickSeed && (
+                <small title="Exact executable graduation handoff price">
+                  exact seed
+                </small>
+              )}
+            </span>
             <span className="numeric">
               {formatRaw(level.sizeRaw, {
                 minimumFractionDigits: 0,
@@ -157,11 +174,22 @@ interface OrderBookPanelProps {
 }
 
 export function OrderBookPanel(props: OrderBookPanelProps) {
-  return props.books.liveVenue === 'HYBRID' ? (
-    <HybridOrderBookPanel {...props} />
-  ) : (
-    <MiniClobOrderBookPanel {...props} />
-  );
+  if (!props.books.orderBookAvailable) {
+    return (
+      <Card className={styles.card}>
+        <h2 className={styles.unavailableTitle}>No live order book</h2>
+        <p className={styles.unavailableCopy}>
+          {props.books.liveVenue === 'LMSR'
+            ? 'The LMSR bonding curve is live; MiniCLOB has not opened.'
+            : 'This market has no actionable trading venue.'}
+        </p>
+      </Card>
+    );
+  }
+
+  return props.books.liveVenue === 'HYBRID'
+    ? <HybridOrderBookPanel {...props} />
+    : <MiniClobOrderBookPanel {...props} />;
 }
 
 function MiniClobOrderBookPanel({
@@ -523,7 +551,9 @@ function MiniClobOrderBookPanel({
               </span>
             </label>
             <p className={styles.onchainNote}>
-              Price tick {formatUnits(minimumTickSizeRaw, 6)} USDC · size step 0.001 token
+              New-order price tick {formatUnits(minimumTickSizeRaw, 6)} USDC ·
+              {' '}size step 0.001 token. Existing resting orders, including
+              handoff seeds, keep their exact executable prices.
             </p>
             <label className={styles.field}>
               <span>Size</span>
@@ -638,7 +668,18 @@ function MiniClobOrderBookPanel({
                   <div className={styles.orderRow} key={order.orderId}>
                     <span className="numeric">
                       #{order.orderId}
-                      {order.isSeed && <small>Seed</small>}
+                      {order.isSeed && (
+                        <small
+                          title="Graduation handoff quote keeps its exact executable price"
+                        >
+                          {isPriceOnTick(
+                            BigInt(order.priceRaw),
+                            minimumTickSizeRaw,
+                          )
+                            ? 'Seed'
+                            : 'Exact seed'}
+                        </small>
+                      )}
                     </span>
                     <span className={styles.sideLabel}>{order.side}</span>
                     <span className="numeric">

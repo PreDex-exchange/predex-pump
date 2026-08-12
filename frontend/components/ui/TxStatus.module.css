@@ -3,7 +3,7 @@
   margin-top: var(--space-4);
   border: 2px solid var(--hairline);
   border-radius: var(--radius-input);
-  background: #fbf7f0;
+  background: var(--surface-muted);
   color: var(--ink);
   font-size: 0.75rem;
 }

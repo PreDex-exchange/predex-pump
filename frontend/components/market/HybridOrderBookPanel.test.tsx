@@ -2,6 +2,7 @@ import type {
   Market,
   OffchainOrder,
   Order,
+  Position,
 } from '@predex-pump/shared/domain';
 import type {
   ExchangeApprovalStateResponse,
@@ -240,7 +241,9 @@ function books(order: OffchainOrder): MarketBookResponse {
   return {
     marketId: '1',
     liveVenue: 'HYBRID',
+    orderBookAvailable: true,
     minimumTickSizeRaw: '1000',
+    minimumTickSizeAppliesTo: 'NEW_ORDERS',
     yes: {
       marketId: '1',
       minimumTickSizeRaw: '1000',
@@ -271,6 +274,7 @@ function books(order: OffchainOrder): MarketBookResponse {
 function renderPanel(
   bookResponse: MarketBookResponse,
   marketSnapshot: Market = market,
+  positions: Position[] = [],
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -281,7 +285,11 @@ function renderPanel(
     </QueryClientProvider>
   );
   return render(
-    <HybridOrderBookPanel books={bookResponse} market={marketSnapshot} />,
+    <HybridOrderBookPanel
+      books={bookResponse}
+      market={marketSnapshot}
+      positions={positions}
+    />,
     { wrapper },
   );
 }
@@ -426,12 +434,28 @@ describe('Hybrid human trading surface', () => {
     expect(screen.queryByText('Live venue · Hybrid CTF exchange')).toBeNull();
   });
 
+  it('renders an explicit LMSR/no-book state without routing it to MiniCLOB', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'a0'));
+    const bootstrapResponse: MarketBookResponse = {
+      ...response,
+      liveVenue: 'LMSR',
+      orderBookAvailable: false,
+    };
+
+    renderLivePanel(bootstrapResponse);
+
+    expect(screen.getByText('No live order book')).toBeTruthy();
+    expect(screen.getByText(/LMSR bonding curve is live/u)).toBeTruthy();
+    expect(screen.queryByText('Live venue · On-chain MiniCLOB')).toBeNull();
+  });
+
   it('keeps executable MiniCLOB price precision across ladder, table, and modal', () => {
     const response = books(offchainOrder(OTHER_MAKER, 'a4'));
     response.liveVenue = 'MINICLOB';
     response.yes.orders = [
       {
         ...miniOnlyOrder,
+        isSeed: true,
         priceRaw: '543213',
         sizeRaw: '750000',
         remainingRaw: '750000',
@@ -441,6 +465,11 @@ describe('Hybrid human trading surface', () => {
 
     expect(screen.getAllByText('0.543213')).toHaveLength(2);
     expect(screen.getByText('0.407410')).toBeTruthy();
+    expect(screen.getAllByText(/exact seed/iu).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/New-order price tick 0\.001 USDC/u),
+    ).toBeTruthy();
+    expect(response.minimumTickSizeAppliesTo).toBe('NEW_ORDERS');
 
     fireEvent.click(screen.getByRole('button', { name: 'Fill' }));
     expect(
@@ -557,6 +586,38 @@ describe('Hybrid human trading surface', () => {
 
     expect(size.value).toBe('0.2');
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('rejects a Hybrid sell above the selected outcome-token balance before review', () => {
+    const position: Position = {
+      account: mocks.address,
+      marketId: market.id,
+      outcome: 'NO',
+      qtyRaw: '750000',
+      costBasisRaw: '300000',
+      costBasisEstimated: true,
+      realizedPnlRaw: '0',
+      unrealizedPnlRaw: '0',
+      updatedAt: 1_900_000_000,
+    };
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'bf')), market, [position]);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'NO' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Sell · ASK' }));
+    const size = screen.getByLabelText(/^Size/u) as HTMLInputElement;
+    fireEvent.change(size, { target: { value: '0.751' } });
+
+    expect(size.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Insufficient NO balance for this sell',
+    );
+    expect(
+      screen.getByRole('button', {
+        name: 'Insufficient NO balance for this sell',
+      }).hasAttribute('disabled'),
+    ).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(mocks.signOrder).not.toHaveBeenCalled();
   });
 
   it('explains and visibly snaps an off-step MiniCLOB order size on blur', () => {

@@ -105,8 +105,8 @@ export function PriceOverview({
       >
         <defs>
           <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0" stopColor="#17b890" stopOpacity=".22" />
-            <stop offset="1" stopColor="#17b890" stopOpacity="0" />
+            <stop offset="0" stopColor="var(--yes)" stopOpacity=".22" />
+            <stop offset="1" stopColor="var(--yes)" stopOpacity="0" />
           </linearGradient>
         </defs>
         <line className={styles.gridLine} x1="0" x2="600" y1="45" y2="45" />

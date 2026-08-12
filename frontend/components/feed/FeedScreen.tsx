@@ -87,6 +87,7 @@ export function FeedScreen() {
           {isLoading && (
             <StatePanel
               message="Loading indexed markets and their latest prices."
+              showMascot={false}
               title="Warming the nest…"
             />
           )}

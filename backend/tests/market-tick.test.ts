@@ -90,6 +90,7 @@ describe('per-market minimum tick changes', () => {
     expect(detail?.market.params.minimumTickSizeRaw).toBe('10000');
     expect(book).toMatchObject({
       minimumTickSizeRaw: '10000',
+      minimumTickSizeAppliesTo: 'NEW_ORDERS',
       yes: {
         minimumTickSizeRaw: '10000',
         offchainOrders: [{ orderHash: existing.request.orderHash.toLowerCase() }],

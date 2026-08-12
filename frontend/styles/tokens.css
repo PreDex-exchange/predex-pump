@@ -34,6 +34,38 @@
   --brand-soft: #ffece7;
   --error-soft: #ffeaeb;
 
+  /* Reusable component surfaces and interaction colors */
+  --text-on-accent: #ffffff;
+  --surface-neutral: #f4f1f6;
+  --surface-track: #f3ece0;
+  --surface-track-warm: #f3ece1;
+  --surface-muted: #fbf7f0;
+  --surface-sunken: #f8f4ed;
+  --surface-table-head: #fbf8f3;
+  --surface-hover: #fffcf7;
+  --surface-disabled: #fbf9f5;
+  --reward-pale: #fff8e8;
+  --brand-hover: #ff7967;
+  --yes-button-ink: #063d2e;
+  --yes-hover: #2bc49c;
+  --no-hover: #55a1eb;
+  --yes-border: #bfe8db;
+  --no-border: #c4ddf6;
+  --warning-strong: #d39a24;
+  --warning-ink: #795613;
+  --warning-border: #e7c85b;
+  --reward-stripe: #ffd777;
+  --reward-ring: #ffe9bf;
+
+  /* Illustration palette */
+  --surface-art: #fffdf8;
+  --shell-highlight: #ffe4c4;
+  --shell-line: #f0e2cd;
+  --reward-highlight: #ffd77a;
+  --reward-mid: #ffce66;
+  --reward-deep: #ffbf3d;
+  --reward-shadow: #f4a92f;
+
   /* 4px spacing scale */
   --space-1: 4px;
   --space-2: 8px;

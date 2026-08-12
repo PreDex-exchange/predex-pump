@@ -179,6 +179,16 @@ interface Snapshot {
   book: MarketBookResponse;
 }
 
+type OrderBookSnapshot = Snapshot & {
+  book: MarketBookResponse & {
+    orderBookAvailable: true;
+  };
+};
+
+function hasOrderBook(snapshot: Snapshot): snapshot is OrderBookSnapshot {
+  return snapshot.book.orderBookAvailable;
+}
+
 interface DecisionOrder {
   venue: LiveBookVenue;
   orderId: string;
@@ -758,7 +768,7 @@ export class TraderAgent {
   }
 
   private async executePlace(
-    snapshot: Snapshot,
+    snapshot: OrderBookSnapshot,
     side: 'BID' | 'ASK',
     priceRaw: bigint,
     fairValueYesRaw: bigint,
@@ -1032,7 +1042,8 @@ export class TraderAgent {
     const snapshots = snapshotResults.filter(
       (snapshot): snapshot is Snapshot => snapshot !== null,
     );
-    const ownOrdersFromBooks = snapshots.flatMap(({ book }) =>
+    const orderBookSnapshots = snapshots.filter(hasOrderBook);
+    const ownOrdersFromBooks = orderBookSnapshots.flatMap(({ book }) =>
       [
         ...venueOrders(book.yes, book.liveVenue),
         ...venueOrders(book.no, book.liveVenue),
@@ -1042,7 +1053,7 @@ export class TraderAgent {
     );
     let orderSnapshotComplete = snapshots.length === markets.length;
     let openOwnOrders = ownOrdersFromBooks;
-    const hasHybridMarket = snapshots.some(
+    const hasHybridMarket = orderBookSnapshots.some(
       ({ book }) => book.liveVenue === 'HYBRID',
     );
     if (hasHybridMarket && !this.options.dryRun) {
@@ -1108,15 +1119,20 @@ export class TraderAgent {
     let actualSignalSpendThisCycle = 0n;
 
     for (const snapshot of snapshots) {
-      const { market, book } = snapshot;
-      if (market.phase !== 'Graduated' || market.bookAddress === null) {
+      const { market } = snapshot;
+      if (
+        market.phase !== 'Graduated' ||
+        market.bookAddress === null ||
+        !hasOrderBook(snapshot)
+      ) {
         this.refuse(
           market.id,
           'HOLD',
-          `market is not tradable in the indexed model (phase=${market.phase}, book=${market.bookAddress ?? 'none'})`,
+          `market is not tradable in the indexed model (phase=${market.phase}, book=${market.bookAddress ?? 'none'}, liveVenue=${snapshot.book.liveVenue})`,
         );
         continue;
       }
+      const { book } = snapshot;
 
       const currentYesRaw = BigInt(
         account.positions.find(

@@ -294,7 +294,7 @@
   margin: -8px 0 20px;
   border: 2px solid var(--reward);
   border-radius: var(--radius-input);
-  background: #fff8e8;
+  background: var(--reward-pale);
   box-shadow: 0 5px 18px rgb(83 57 26 / 7%);
 }
 
@@ -420,7 +420,7 @@
   margin-bottom: var(--space-4);
   border: 2px solid var(--hairline);
   border-radius: var(--radius-input);
-  background: #fbf7f0;
+  background: var(--surface-muted);
 }
 
 .committee > span,

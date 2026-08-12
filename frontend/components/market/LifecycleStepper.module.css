@@ -67,7 +67,7 @@
 .current .icon {
   border-color: var(--reward);
   background: var(--reward-soft);
-  box-shadow: 0 0 0 4px #ffe9bf;
+  box-shadow: 0 0 0 4px var(--reward-ring);
 }
 
 .skipped {
@@ -76,7 +76,7 @@
 
 .skipped .icon {
   border-style: dashed;
-  background: #fbf9f5;
+  background: var(--surface-disabled);
   filter: grayscale(1);
   opacity: 0.72;
 }

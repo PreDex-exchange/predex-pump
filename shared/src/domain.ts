@@ -33,6 +33,9 @@ export type Venue = 'LMSR' | 'BOOK';
 /** The single order-book venue currently accepting trades for a market. */
 export type LiveBookVenue = 'MINICLOB' | 'HYBRID';
 
+/** The active lifecycle venue reported by the market-book snapshot. */
+export type MarketLiveVenue = 'LMSR' | LiveBookVenue | 'NONE';
+
 /** Snapshot of the immutable-per-market economic params (indexed at creation). */
 export interface MarketParams {
   seedFloorRaw: Raw;
