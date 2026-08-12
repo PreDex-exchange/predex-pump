@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compareAuthoritativeFields,
+  compareMarketQuestionFacts,
   extractFieldsLocally,
+  groundMarketQuestion,
 } from '../src/dedup/normalization.js';
 
 describe('deterministic market fact extraction', () => {
@@ -116,6 +118,108 @@ describe('deterministic market fact extraction', () => {
     const identical = compareAuthoritativeFields(priced, { ...priced });
     expect(identical).toMatchObject({ compatible: true });
     expect(identical.needsSemanticJudgment).toBeUndefined();
+  });
+
+  it.each([
+    ['over', 'above'],
+    ['above', 'above'],
+    ['more than', 'above'],
+    ['greater than', 'above'],
+    ['at least', 'at_or_above'],
+    ['at or above', 'at_or_above'],
+  ])('normalizes the stated comparator "%s" to %s', (wording, comparator) => {
+    expect(
+      extractFieldsLocally(
+        `Will Manchester United score ${wording} 70 Premier League goals?`,
+      ),
+    ).toMatchObject({ comparator, strike: 'number:70' });
+  });
+
+  it('keeps strict-above and at-or-above in distinct existing comparator classes', () => {
+    expect(
+      compareAuthoritativeFields(
+        extractFieldsLocally('Will BTC be above $70k in 2027?'),
+        extractFieldsLocally('Will BTC be at least $70k in 2027?'),
+      ),
+    ).toMatchObject({
+      compatible: false,
+      reason: expect.stringContaining('comparator'),
+    });
+  });
+
+  it('marks ungrounded extractor values as inferred and does not hard-gate them', () => {
+    const question =
+      'Will Manchester United score above 70 Premier League goals in the 2026-27 season?';
+    const draft = groundMarketQuestion(question, {
+      subject: 'manchester united',
+      comparator: 'above',
+      strike: 'number:70',
+      deadline: '2027',
+      basis: 'official_result',
+    });
+    const candidate = groundMarketQuestion(question, {
+      subject: 'manchester united',
+      comparator: 'above',
+      strike: 'number:70',
+      deadline: '2027',
+      basis: 'settlement',
+    });
+
+    expect(draft.fieldSources).toMatchObject({
+      subject: 'stated',
+      comparator: 'stated',
+      strike: 'stated',
+      deadline: 'stated',
+      basis: 'inferred',
+    });
+    expect(compareMarketQuestionFacts(draft, candidate)).toMatchObject({
+      compatible: true,
+    });
+  });
+
+  it('still hard-gates a genuinely different field stated in both questions', () => {
+    const draft = groundMarketQuestion(
+      'Will BTC close above $70k Friday?',
+    );
+    const candidate = groundMarketQuestion(
+      'Will BTC settle above $70k Friday?',
+    );
+
+    expect(compareMarketQuestionFacts(draft, candidate)).toMatchObject({
+      compatible: false,
+      reason: expect.stringContaining('basis'),
+    });
+  });
+
+  it('defers a one-sided stated field instead of turning absence into a conflict', () => {
+    const draft = groundMarketQuestion('Will BTC close above $70k Friday?');
+    const candidate = groundMarketQuestion('Will BTC be above $70k Friday?');
+
+    expect(compareMarketQuestionFacts(draft, candidate)).toMatchObject({
+      compatible: true,
+    });
+  });
+
+  it('normalizes season ranges while preserving different stated seasons', () => {
+    const canonical = groundMarketQuestion(
+      'Will Manchester United score above 70 goals in the 2026-27 season?',
+    );
+    const paraphrase = groundMarketQuestion(
+      'Will Man Utd score over 70 goals in the 2026/27 Premier League season?',
+    );
+    const differentSeason = groundMarketQuestion(
+      'Will Man Utd score over 70 goals in the 2027/28 Premier League season?',
+    );
+
+    expect(canonical.fields.deadline).toBe('season:2026-2027');
+    expect(paraphrase.fields.deadline).toBe('season:2026-2027');
+    expect(compareMarketQuestionFacts(canonical, paraphrase)).toMatchObject({
+      compatible: true,
+    });
+    expect(compareMarketQuestionFacts(canonical, differentSeason)).toMatchObject({
+      compatible: false,
+      reason: expect.stringContaining('deadline'),
+    });
   });
 
   // Regression: "this friday" used to canonicalize differently from a bare

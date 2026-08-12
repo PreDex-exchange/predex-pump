@@ -6,6 +6,7 @@ import type {
   MarketIntelligenceProvider,
   MarketVectorStore,
 } from './types.js';
+import { groundMarketQuestion } from './normalization.js';
 import {
   callMarketIntelligenceProvider,
   deterministicFallbackFor,
@@ -39,14 +40,12 @@ export class MarketVectorIndexer implements MarketDedupIndexer {
     market: IndexableMarket,
     provider: MarketIntelligenceProvider,
   ): Promise<void> {
-    const [vector, fields] = await Promise.all([
-      callMarketIntelligenceProvider(provider, 'embed', () =>
-        provider.embed(market.question),
-      ),
-      callMarketIntelligenceProvider(provider, 'extract-fields', () =>
-        provider.extractFields(market.question),
-      ),
-    ]);
+    const vector = await callMarketIntelligenceProvider(provider, 'embed', () =>
+      provider.embed(market.question),
+    );
+    // Every embedding for a market stores the same text-grounded fields. The
+    // semantic judge reads the question itself; model inference is not canonical.
+    const fields = groundMarketQuestion(market.question).fields;
     await this.vectorStore.upsertMarket({
       vector,
       payload: {

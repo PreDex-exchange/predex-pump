@@ -9,6 +9,8 @@ import { DedupService, unavailableDedupResponse } from '../src/dedup/service.js'
 import type {
   MarketIntelligenceProvider,
   EmbeddingProviderMode,
+  CanonicalMarket,
+  MarketCatalog,
   MarketQuestionFact,
   MarketVectorMatch,
   MarketVectorPoint,
@@ -34,7 +36,10 @@ class InMemoryMarketVectorStore implements MarketVectorStore {
   private readonly points = new Map<string, MarketVectorPoint>();
 
   async upsertMarket(point: MarketVectorPoint): Promise<void> {
-    this.points.set(point.payload.marketId, point);
+    this.points.set(
+      `${point.payload.embeddingProvider}:${point.payload.marketId}`,
+      point,
+    );
   }
 
   async searchMarkets(
@@ -53,6 +58,25 @@ class InMemoryMarketVectorStore implements MarketVectorStore {
   }
 }
 
+class InMemoryMarketCatalog implements MarketCatalog {
+  private readonly markets: Map<string, CanonicalMarket>;
+
+  constructor(markets: readonly CanonicalMarket[]) {
+    this.markets = new Map(markets.map((market) => [market.marketId, market]));
+  }
+
+  async findMarketsByIds(marketIds: readonly string[]): Promise<CanonicalMarket[]> {
+    return marketIds.flatMap((marketId) => {
+      const market = this.markets.get(marketId);
+      return market === undefined ? [] : [market];
+    });
+  }
+}
+
+function catalogWithMarket(marketId: string, question: string): MarketCatalog {
+  return new InMemoryMarketCatalog([{ marketId, question }]);
+}
+
 async function serviceWithMarket(
   question: string,
   marketId = '1',
@@ -65,7 +89,12 @@ async function serviceWithMarket(
     question,
     phase,
   });
-  return new DedupService(provider, store, 5);
+  return new DedupService(
+    provider,
+    store,
+    catalogWithMarket(marketId, question),
+    5,
+  );
 }
 
 afterEach(() => {
@@ -122,7 +151,12 @@ describe('retrieve-then-judge dedup service', () => {
       });
 
       await expect(
-        new DedupService(configuredProvider, store, 5).check(question),
+        new DedupService(
+          configuredProvider,
+          store,
+          catalogWithMarket('42', question),
+          5,
+        ).check(question),
       ).resolves.toMatchObject({
         available: true,
         isDuplicate: true,
@@ -162,7 +196,12 @@ describe('retrieve-then-judge dedup service', () => {
     };
 
     await expect(
-      new DedupService(provider, emptyStore, 5).check('Will a new fact happen?'),
+      new DedupService(
+        provider,
+        emptyStore,
+        new InMemoryMarketCatalog([]),
+        5,
+      ).check('Will a new fact happen?'),
     ).resolves.toEqual({
       available: true,
       isDuplicate: false,
@@ -216,6 +255,180 @@ describe('retrieve-then-judge dedup service', () => {
   });
 
   it.each([
+    'Will Man Utd get over 70 goals in the 2026/27 Premier League season?',
+    'Will Man Utd score more than 70 goals in the 2026/27 Premier League season?',
+    'Will Man Utd score above 70 goals in the 2026/27 Premier League season?',
+  ])('merges the documented threshold paraphrase: %s', async (draftQuestion) => {
+    const service = await serviceWithMarket(
+      'Will Manchester United score above 70 Premier League goals in the 2026-27 season?',
+      '77',
+    );
+
+    await expect(service.check(draftQuestion)).resolves.toMatchObject({
+      available: true,
+      isDuplicate: true,
+      canonicalMarketId: '77',
+    });
+  });
+
+  it('still refuses the explicitly stated 90-vs-70 strike conflict', async () => {
+    const service = await serviceWithMarket(
+      'Will Manchester United score above 70 Premier League goals in the 2026-27 season?',
+      '77',
+    );
+
+    await expect(
+      service.check(
+        'Will Man Utd score over 90 goals in the 2026/27 Premier League season?',
+      ),
+    ).resolves.toMatchObject({
+      available: true,
+      isDuplicate: false,
+      canonicalMarketId: null,
+      candidates: [
+        {
+          marketId: '77',
+          reason: 'Different strike: "number:90" vs "number:70"',
+        },
+      ],
+    });
+  });
+
+  it('is independent of which conflicting vector point for a market is retrieved', async () => {
+    const provider = new FallbackMarketIntelligenceProvider();
+    const canonicalQuestion =
+      'Will Manchester United score above 70 Premier League goals in the 2026-27 season?';
+    const draftQuestion =
+      'Will Man Utd score over 70 goals in the 2026/27 Premier League season?';
+    const semantic: MarketVectorMatch = {
+      score: 0.952,
+      payload: {
+        marketId: '9',
+        question: canonicalQuestion,
+        phase: 'Opened',
+        embeddingProvider: 'fallback',
+        subject: 'manchester united',
+        comparator: 'above',
+        strike: 'number:70',
+        deadline: '2027',
+        basis: 'settlement',
+      },
+    };
+    const deterministic: MarketVectorMatch = {
+      score: 0.952,
+      payload: {
+        ...semantic.payload,
+        deadline: null,
+        basis: null,
+      },
+    };
+    let calls = 0;
+    const alternatingStore: MarketVectorStore = {
+      upsertMarket: async () => undefined,
+      searchMarkets: async () => {
+        calls += 1;
+        return calls % 2 === 0 ? [semantic] : [deterministic];
+      },
+    };
+    const service = new DedupService(
+      provider,
+      alternatingStore,
+      catalogWithMarket('9', canonicalQuestion),
+      5,
+    );
+
+    const verdicts = await Promise.all(
+      Array.from({ length: 20 }, () => service.check(draftQuestion)),
+    );
+    expect(new Set(verdicts.map((result) => JSON.stringify(result))).size).toBe(1);
+    expect(verdicts[0]).toMatchObject({
+      isDuplicate: true,
+      canonicalMarketId: '9',
+      candidates: [{ marketId: '9', question: canonicalQuestion }],
+    });
+  });
+
+  it('never returns a vector candidate whose market no longer exists', async () => {
+    const provider = new FallbackMarketIntelligenceProvider();
+    const question = 'Will BTC close above $70k Friday?';
+    const fields = await provider.extractFields(question);
+    const staleStore: MarketVectorStore = {
+      upsertMarket: async () => undefined,
+      searchMarkets: async () => [
+        {
+          score: 0.999,
+          payload: {
+            marketId: '404',
+            question,
+            phase: 'Opened',
+            embeddingProvider: 'fallback',
+            ...fields,
+          },
+        },
+      ],
+    };
+
+    await expect(
+      new DedupService(
+        provider,
+        staleStore,
+        new InMemoryMarketCatalog([]),
+        5,
+      ).check(question),
+    ).resolves.toEqual({
+      available: true,
+      isDuplicate: false,
+      canonicalMarketId: null,
+      candidates: [],
+    });
+  });
+
+  it('indexes identical stated fields for semantic and deterministic embeddings', async () => {
+    const fallback = new FallbackMarketIntelligenceProvider();
+    const extractFields = vi.fn(async () => ({
+      subject: 'manchester united',
+      comparator: 'at_or_above',
+      strike: 'number:70',
+      deadline: '2027',
+      basis: 'official_result',
+    }));
+    const semanticProvider: MarketIntelligenceProvider = {
+      mode: 'openai',
+      embed: (question) => fallback.embed(question),
+      extractFields,
+      judgeSameFact: (draft, candidate) =>
+        fallback.judgeSameFact(draft, candidate),
+    };
+    const store = new InMemoryMarketVectorStore();
+    const question =
+      'Will Manchester United score above 70 Premier League goals in the 2026-27 season?';
+    await new MarketVectorIndexer(
+      semanticProvider,
+      store,
+      fallback,
+    ).indexMarket({ marketId: '9', question, phase: 'Opened' });
+    const vector = await fallback.embed(question);
+
+    const [semanticPoint, deterministicPoint] = await Promise.all([
+      store.searchMarkets(vector, 1, 'openai'),
+      store.searchMarkets(vector, 1, 'fallback'),
+    ]);
+    expect(semanticPoint[0]?.payload).toMatchObject({
+      comparator: 'above',
+      strike: 'number:70',
+      deadline: 'season:2026-2027',
+      basis: null,
+    });
+    expect(deterministicPoint[0]?.payload).toMatchObject({
+      comparator: 'above',
+      strike: 'number:70',
+      deadline: 'season:2026-2027',
+      basis: null,
+    });
+    expect(extractFields).not.toHaveBeenCalled();
+  });
+
+  it.each([
     // Objective fields stay a hard gate: a difference here is a different fact.
     ['strike', 'Will BTC close above $75k Friday?', 'Different strike'],
     ['deadline', 'Will BTC close above $70k Saturday?', 'Different deadline'],
@@ -259,9 +472,12 @@ describe('retrieve-then-judge dedup service', () => {
         },
       ],
     };
-    const response = await new DedupService(provider, highScoreStore, 5).check(
-      'Will BTC close above $75k Friday?',
-    );
+    const response = await new DedupService(
+      provider,
+      highScoreStore,
+      catalogWithMarket('1', candidateQuestion),
+      5,
+    ).check('Will BTC close above $75k Friday?');
     expect(response).toMatchObject({
       available: true,
       isDuplicate: false,
@@ -285,7 +501,12 @@ describe('retrieve-then-judge dedup service', () => {
       },
     };
     await expect(
-      new DedupService(provider, downStore, 5).check(
+      new DedupService(
+        provider,
+        downStore,
+        new InMemoryMarketCatalog([]),
+        5,
+      ).check(
         'Will BTC close above $70k Friday?',
       ),
     ).resolves.toEqual(unavailableDedupResponse());
@@ -311,7 +532,12 @@ describe('retrieve-then-judge dedup service', () => {
       },
     };
     await expect(
-      new DedupService(downProvider, store, 5).check(
+      new DedupService(
+        downProvider,
+        store,
+        catalogWithMarket('1', 'Will BTC close above $70k Friday?'),
+        5,
+      ).check(
         'BTC > $70,000 by Friday close?',
       ),
     ).resolves.toEqual(unavailableDedupResponse());

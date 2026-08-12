@@ -11,7 +11,16 @@ export type EmbeddingProviderMode = 'openai' | 'fallback';
 export interface MarketQuestionFact {
   question: string;
   fields: MarketFactFields;
+  /** How each extracted value is grounded in the question text. */
+  fieldSources?: MarketFactFieldSources;
 }
+
+export type MarketFactFieldName = keyof MarketFactFields;
+export type MarketFactFieldSource = 'stated' | 'inferred' | 'absent';
+export type MarketFactFieldSources = Record<
+  MarketFactFieldName,
+  MarketFactFieldSource
+>;
 
 export interface SameFactJudgment {
   sameFact: boolean;
@@ -64,6 +73,16 @@ export interface IndexableMarket {
   marketId: string;
   question: string;
   phase: MarketPhase;
+}
+
+export interface CanonicalMarket {
+  marketId: string;
+  question: string;
+}
+
+/** Authoritative market records used to reject stale vector-store points. */
+export interface MarketCatalog {
+  findMarketsByIds(marketIds: readonly string[]): Promise<CanonicalMarket[]>;
 }
 
 export interface MarketDedupIndexer {

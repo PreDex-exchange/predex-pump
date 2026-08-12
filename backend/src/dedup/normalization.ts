@@ -1,5 +1,10 @@
 import type { MarketFactFields } from '@predex-pump/shared';
 
+import type {
+  MarketFactFieldSources,
+  MarketQuestionFact,
+} from './types.js';
+
 const MONTH_NUMBER: Readonly<Record<string, string>> = {
   january: '01',
   february: '02',
@@ -36,10 +41,22 @@ const SUBJECT_ALIASES: readonly {
 ];
 
 const COMPARATOR_ALIASES: readonly [RegExp, string][] = [
-  [/\b(?:at\s+least|no\s+less\s+than)\b|>=/u, 'at_or_above'],
-  [/\b(?:at\s+most|no\s+more\s+than)\b|<=/u, 'at_or_below'],
-  [/\b(?:above|over|exceeds?|greater\s+than|higher\s+than)\b|(?<![<>=])>(?!=)/u, 'above'],
-  [/\b(?:below|under|less\s+than|lower\s+than)\b|(?<![<>=])<(?!=)/u, 'below'],
+  [
+    /\b(?:at\s+least|at\s+or\s+above|no\s+less\s+than|not\s+less\s+than)\b|>=/u,
+    'at_or_above',
+  ],
+  [
+    /\b(?:at\s+most|at\s+or\s+below|no\s+more\s+than|not\s+more\s+than)\b|<=/u,
+    'at_or_below',
+  ],
+  [
+    /\b(?:above|over|more\s+than|exceeds?|greater\s+than|higher\s+than)\b|(?<![<>=])>(?!=)/u,
+    'above',
+  ],
+  [
+    /\b(?:below|under|fewer\s+than|less\s+than|lower\s+than)\b|(?<![<>=])<(?!=)/u,
+    'below',
+  ],
   [/\b(?:equals?|equal\s+to|exactly)\b|(?<![<>=])=(?!=)/u, 'equal'],
   [/\b(?:reaches?|hits?|touch(?:es)?)\b/u, 'reach'],
   [/\b(?:wins?|won|becomes?\s+(?:the\s+)?champion)\b/u, 'win'],
@@ -119,7 +136,7 @@ function extractSubject(question: string): string | null {
     '',
   );
   const delimiter =
-    /\s+(?:close[sd]?\s+)?(?:be\s+)?(?:at\s+least|at\s+most|above|over|below|under|exceed(?:s)?|reach(?:es)?|hit(?:s)?|touch(?:es)?|win(?:s)?|won|lose(?:s)?|lost|graduate(?:s)?|graduated|launch(?:es)?|launched|outperform(?:s)?|beat(?:s)?|rain(?:s)?|happen(?:s)?|occur(?:s)?)\b|(?:>=|<=|>|<|=)/u;
+    /\s+(?:close[sd]?\s+)?(?:be\s+)?(?:at\s+least|at\s+most|at\s+or\s+above|at\s+or\s+below|no\s+less\s+than|no\s+more\s+than|above|over|more\s+than|greater\s+than|higher\s+than|below|under|fewer\s+than|less\s+than|lower\s+than|exceed(?:s)?|reach(?:es)?|hit(?:s)?|touch(?:es)?|win(?:s)?|won|lose(?:s)?|lost|graduate(?:s)?|graduated|launch(?:es)?|launched|outperform(?:s)?|beat(?:s)?|rain(?:s)?|happen(?:s)?|occur(?:s)?)\b|(?:>=|<=|>|<|=)/u;
   const boundary = withoutOpener.search(delimiter);
   if (boundary <= 0) return null;
 
@@ -201,7 +218,7 @@ function extractStrike(question: string, comparator: string | null): string | nu
     )
   ) {
     const afterComparator = normalized.match(
-      /(?:>=|<=|>|<|=|\b(?:above|over|below|under|exceeds?|greater\s+than|less\s+than|at\s+least|at\s+most|reaches?|hits?)\b)\s*(\d[\d,]*(?:\.\d+)?)\s*([kmbt])?\b/u,
+      /(?:>=|<=|>|<|=|\b(?:above|over|more\s+than|greater\s+than|higher\s+than|below|under|fewer\s+than|less\s+than|lower\s+than|exceeds?|at\s+least|at\s+most|at\s+or\s+above|at\s+or\s+below|no\s+less\s+than|no\s+more\s+than|reaches?|hits?)\b)\s*(\d[\d,]*(?:\.\d+)?)\s*([kmbt])?\b/u,
     );
     if (afterComparator !== null) {
       const amount = expandNumber(afterComparator[1] ?? '', afterComparator[2]);
@@ -228,6 +245,20 @@ function extractDeadline(question: string): string | null {
   const normalized = normalizedText(question);
   const isoDate = normalized.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/u);
   if (isoDate !== null) return `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`;
+
+  const yearRange = normalized.match(/\b(20\d{2})\s*[-/]\s*(\d{2}|20\d{2})\b/u);
+  if (yearRange !== null) {
+    const start = Number(yearRange[1]);
+    const rawEnd = yearRange[2] ?? '';
+    let end = Number(rawEnd);
+    if (rawEnd.length === 2) {
+      end += Math.floor(start / 100) * 100;
+      if (end < start) end += 100;
+    }
+    // Treat only consecutive-year ranges as season-style deadlines. This
+    // avoids misreading the YYYY-MM prefix of malformed or partial dates.
+    if (end === start + 1) return `season:${start}-${end}`;
+  }
 
   const monthFirst = normalized.match(
     new RegExp(
@@ -346,6 +377,53 @@ export function extractFieldsLocally(question: string): MarketFactFields {
   };
 }
 
+function fieldSource(
+  statedValue: string | null,
+  extractedValue: string | null,
+): 'stated' | 'inferred' | 'absent' {
+  if (statedValue !== null) return 'stated';
+  return extractedValue === null ? 'absent' : 'inferred';
+}
+
+/**
+ * Grounds an extraction against literal evidence in the source question.
+ * Deterministic matches win; extractor-only values remain available to a
+ * semantic judge but are labelled inferred and can never become hard gates.
+ */
+export function groundMarketQuestion(
+  question: string,
+  extractedFields?: MarketFactFields,
+): MarketQuestionFact {
+  const stated = extractFieldsLocally(question);
+  const extracted =
+    extractedFields === undefined
+      ? {
+          subject: null,
+          comparator: null,
+          strike: null,
+          deadline: null,
+          basis: null,
+        }
+      : normalizeExtractedFields(extractedFields);
+  return {
+    question,
+    fields: {
+      subject: stated.subject ?? extracted.subject,
+      comparator: stated.comparator ?? extracted.comparator,
+      strike: stated.strike ?? extracted.strike,
+      deadline: stated.deadline ?? extracted.deadline,
+      basis: stated.basis ?? extracted.basis,
+    },
+    fieldSources: {
+      subject: fieldSource(stated.subject, extracted.subject),
+      comparator: fieldSource(stated.comparator, extracted.comparator),
+      strike: fieldSource(stated.strike, extracted.strike),
+      deadline: fieldSource(stated.deadline, extracted.deadline),
+      basis: fieldSource(stated.basis, extracted.basis),
+    },
+  };
+}
+
 export interface AuthoritativeComparison {
   compatible: boolean;
   reason: string;
@@ -388,21 +466,100 @@ const AUTHORITATIVE_FIELDS = [
   'basis',
 ] as const satisfies readonly (keyof MarketFactFields)[];
 
+export interface AuthoritativeFieldEvidence {
+  draft: MarketFactFieldSources;
+  candidate: MarketFactFieldSources;
+}
+
+function compareStatedAuthoritativeFields(
+  draft: MarketFactFields,
+  candidate: MarketFactFields,
+  evidence: AuthoritativeFieldEvidence,
+): AuthoritativeComparison {
+  const subjectIsEstablished =
+    evidence.draft.subject === 'stated' &&
+    evidence.candidate.subject === 'stated' &&
+    draft.subject !== null &&
+    draft.subject === candidate.subject;
+  let needsSemanticJudgment = !subjectIsEstablished;
+
+  const comparatorsAreStated =
+    evidence.draft.comparator === 'stated' &&
+    evidence.candidate.comparator === 'stated';
+  if (comparatorsAreStated) {
+    if (draft.comparator !== candidate.comparator) {
+      if (
+        draft.comparator !== null &&
+        candidate.comparator !== null &&
+        DIRECTIONAL_COMPARATORS.has(draft.comparator) &&
+        DIRECTIONAL_COMPARATORS.has(candidate.comparator)
+      ) {
+        return {
+          compatible: false,
+          reason: `Different comparator: "${draft.comparator}" vs "${candidate.comparator}"`,
+        };
+      }
+      needsSemanticJudgment = true;
+    }
+  } else {
+    needsSemanticJudgment = true;
+  }
+
+  for (const field of AUTHORITATIVE_FIELDS) {
+    if (
+      evidence.draft[field] !== 'stated' ||
+      evidence.candidate[field] !== 'stated'
+    ) {
+      continue;
+    }
+    const draftValue = draft[field];
+    const candidateValue = candidate[field];
+    if (draftValue === null || candidateValue === null) {
+      needsSemanticJudgment = true;
+      continue;
+    }
+    if (draftValue !== candidateValue) {
+      return {
+        compatible: false,
+        reason: `Different ${field}: "${draftValue}" vs "${candidateValue}"`,
+      };
+    }
+    if (field === 'deadline' && draftValue.startsWith('relative:')) {
+      return {
+        compatible: false,
+        reason: `Cannot resolve relative deadline "${draftValue}" conservatively`,
+      };
+    }
+  }
+
+  return needsSemanticJudgment
+    ? {
+        compatible: true,
+        needsSemanticJudgment: true,
+        reason:
+          'Explicit objective fields do not conflict; subject naming or ' +
+          'unstated comparator phrasing needs semantic judgment',
+      }
+    : {
+        compatible: true,
+        reason: 'All explicitly stated authoritative fields match',
+      };
+}
+
 /**
- * Objective fields are a hard gate: a conflict, or a field present on only one
- * side, can never be overridden by vector similarity or a model judgment.
- *
- * `subject` is a softer gate. It must be established on BOTH sides, but when the
- * two sides merely NAME it differently the decision is deferred to the caller's
- * semantic judge via `subjectNeedsJudgment` — extractors emit unstable surface
- * forms ("man_utd" vs "manchester_united") for one entity, and demanding exact
- * equality rejected true duplicates. Deterministic judges must treat that flag
- * as not-a-duplicate; only a semantic judge may equate the two.
+ * Compares structured fields. Callers with source text should use
+ * `compareMarketQuestionFacts`, which supplies provenance and only hard-gates
+ * stated-vs-stated conflicts. The two-argument form retains the conservative
+ * legacy contract for already-authoritative field records.
  */
 export function compareAuthoritativeFields(
   draft: MarketFactFields,
   candidate: MarketFactFields,
+  evidence?: AuthoritativeFieldEvidence,
 ): AuthoritativeComparison {
+  if (evidence !== undefined) {
+    return compareStatedAuthoritativeFields(draft, candidate, evidence);
+  }
   if (draft.subject === null && candidate.subject === null) {
     return {
       compatible: false,
@@ -479,6 +636,33 @@ export function compareAuthoritativeFields(
       };
 }
 
+export function compareMarketQuestionFacts(
+  draft: MarketQuestionFact,
+  candidate: MarketQuestionFact,
+): AuthoritativeComparison {
+  const groundedDraft =
+    draft.fieldSources === undefined
+      ? groundMarketQuestion(draft.question, draft.fields)
+      : draft;
+  const groundedCandidate =
+    candidate.fieldSources === undefined
+      ? groundMarketQuestion(candidate.question, candidate.fields)
+      : candidate;
+  const draftSources = groundedDraft.fieldSources;
+  const candidateSources = groundedCandidate.fieldSources;
+  if (draftSources === undefined || candidateSources === undefined) {
+    throw new Error('Grounded market facts must include field sources');
+  }
+  return compareAuthoritativeFields(
+    groundedDraft.fields,
+    groundedCandidate.fields,
+    {
+      draft: draftSources,
+      candidate: candidateSources,
+    },
+  );
+}
+
 function canonicalizeAliases(value: string): string {
   let normalized = normalizedText(value)
     .replace(/>=/gu, ' at_or_above ')
@@ -491,8 +675,19 @@ function canonicalizeAliases(value: string): string {
       /\b(?:manchester\s+united|man\s+utd|man\s+united)\b/gu,
       'manchester_united',
     )
-    .replace(/\b(?:greater\s+than|higher\s+than|over|exceeds?)\b/gu, 'above')
-    .replace(/\b(?:less\s+than|lower\s+than|under)\b/gu, 'below')
+    .replace(
+      /\b(?:at\s+least|at\s+or\s+above|no\s+less\s+than|not\s+less\s+than)\b/gu,
+      'at_or_above',
+    )
+    .replace(
+      /\b(?:at\s+most|at\s+or\s+below|no\s+more\s+than|not\s+more\s+than)\b/gu,
+      'at_or_below',
+    )
+    .replace(
+      /\b(?:more\s+than|greater\s+than|higher\s+than|over|exceeds?)\b/gu,
+      'above',
+    )
+    .replace(/\b(?:fewer\s+than|less\s+than|lower\s+than|under)\b/gu, 'below')
     .replace(/\b(?:closing|closed|closes)\b/gu, 'close')
     .replace(/\b(?:becomes?\s+(?:the\s+)?champion|champions?)\b/gu, 'win')
     .replace(/,/gu, '');

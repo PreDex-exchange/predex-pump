@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { buildServer } from './api/server.js';
 import { loadRuntimeConfig } from './config.js';
 import { prisma } from './db.js';
+import { PrismaMarketCatalog } from './dedup/market-catalog.js';
 import { createDedupRuntime } from './dedup/runtime.js';
 import { ServerEventBus } from './events/bus.js';
 import { publishIndexedEvents } from './events/projector.js';
@@ -21,7 +22,7 @@ async function main(): Promise<void> {
     return;
   }
   const config = loadRuntimeConfig();
-  const dedup = createDedupRuntime(config);
+  const dedup = createDedupRuntime(config, new PrismaMarketCatalog(prisma));
   const truthSeller = loadTruthSellerConfig();
   const truthPaymentGate = createTruthPaymentGate(truthSeller);
   const eventBus = new ServerEventBus();

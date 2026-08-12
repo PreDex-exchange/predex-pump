@@ -1,7 +1,7 @@
 import type { MarketFactFields } from '@predex-pump/shared';
 
 import {
-  compareAuthoritativeFields,
+  compareMarketQuestionFacts,
   normalizeExtractedFields,
 } from './normalization.js';
 import {
@@ -207,7 +207,7 @@ export class OpenAiMarketIntelligenceProvider
     draft: MarketQuestionFact,
     candidate: MarketQuestionFact,
   ): Promise<SameFactJudgment> {
-    const authoritative = compareAuthoritativeFields(draft.fields, candidate.fields);
+    const authoritative = compareMarketQuestionFacts(draft, candidate);
     if (!authoritative.compatible) {
       return { sameFact: false, reason: authoritative.reason };
     }
@@ -217,7 +217,8 @@ export class OpenAiMarketIntelligenceProvider
       JUDGMENT_SCHEMA,
       [
         'Decide whether two prediction-market questions resolve from exactly the same real-world fact.',
-        'The objective fields (comparator, strike, deadline, basis) already match and are authoritative.',
+        'Any conflict between objective fields explicitly stated in both questions has already been rejected.',
+        'An absent, inferred, or low-confidence field is not evidence of a conflict; decide it from the question text instead.',
         'The two subjects may be written differently. Decide whether they denote the SAME real-world entity: aliases, abbreviations, and renamings of one entity are the same ("man utd" and "manchester united", "the fed" and "federal reserve"); genuinely different entities are not.',
         'Judge remaining semantic details and phrasing.',
         'Be conservative: uncertainty means sameFact=false.',

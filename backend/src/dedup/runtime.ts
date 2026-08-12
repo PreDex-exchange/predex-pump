@@ -5,6 +5,7 @@ import { QdrantMarketClient } from './qdrant-client.js';
 import { DedupService } from './service.js';
 import type {
   DedupChecker,
+  MarketCatalog,
   MarketDedupIndexer,
   MarketIntelligenceProvider,
   MarketVectorStore,
@@ -17,7 +18,10 @@ export interface DedupRuntime {
   indexer: MarketDedupIndexer;
 }
 
-export function createDedupRuntime(config: RuntimeConfig): DedupRuntime {
+export function createDedupRuntime(
+  config: RuntimeConfig,
+  marketCatalog: MarketCatalog,
+): DedupRuntime {
   const provider = createMarketIntelligenceProvider({
     apiKey: config.openAiApiKey,
     timeoutMs: config.dedupTimeoutMs,
@@ -29,7 +33,12 @@ export function createDedupRuntime(config: RuntimeConfig): DedupRuntime {
   return {
     provider,
     vectorStore,
-    checker: new DedupService(provider, vectorStore, config.dedupTopK),
+    checker: new DedupService(
+      provider,
+      vectorStore,
+      marketCatalog,
+      config.dedupTopK,
+    ),
     indexer: new MarketVectorIndexer(provider, vectorStore),
   };
 }

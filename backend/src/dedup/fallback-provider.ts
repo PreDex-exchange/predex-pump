@@ -4,7 +4,7 @@ import type { MarketFactFields } from '@predex-pump/shared';
 
 import {
   canonicalQuestionTokens,
-  compareAuthoritativeFields,
+  compareMarketQuestionFacts,
   extractFieldsLocally,
   tokenSimilarity,
 } from './normalization.js';
@@ -66,7 +66,7 @@ export class FallbackMarketIntelligenceProvider
     draft: MarketQuestionFact,
     candidate: MarketQuestionFact,
   ): Promise<SameFactJudgment> {
-    const structured = compareAuthoritativeFields(draft.fields, candidate.fields);
+    const structured = compareMarketQuestionFacts(draft, candidate);
     if (!structured.compatible) {
       return { sameFact: false, reason: structured.reason };
     }

@@ -3,13 +3,14 @@ import 'dotenv/config';
 import { loadRuntimeConfig } from '../config.js';
 import { prisma } from '../db.js';
 import { parseMarketPhase } from './indexer.js';
+import { PrismaMarketCatalog } from './market-catalog.js';
 import { createDedupRuntime } from './runtime.js';
 
 const PAGE_SIZE = 100;
 
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();
-  const runtime = createDedupRuntime(config);
+  const runtime = createDedupRuntime(config, new PrismaMarketCatalog(prisma));
   let cursor: string | undefined;
   let indexed = 0;
   let failed = 0;
