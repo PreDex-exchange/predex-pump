@@ -52,11 +52,13 @@ function phaseDataValue(market: Market) {
 interface MarketCardProps {
   market: Market;
   href?: string | null;
+  referenceTimestamp?: number;
 }
 
 export function MarketCard({
   market,
   href = `/market/${market.id}`,
+  referenceTimestamp,
 }: MarketCardProps) {
   const { data: priceHistory } = usePriceHistory(market.id);
   const graduation = graduationPercent(market);
@@ -70,7 +72,9 @@ export function MarketCard({
     <article className={styles.card} data-phase={phaseDataValue(market)}>
         <div className={styles.top}>
           <PhaseBadge phase={visiblePhase} surface="feed" />
-          <span className={styles.time}>{relativeTime(market.createdAt)}</span>
+          <span className={styles.time}>
+            {relativeTime(market.createdAt, referenceTimestamp)}
+          </span>
         </div>
         <h2>{market.question}</h2>
         <div className={`${styles.prices} ${isSettled ? styles.settled : ''}`}>

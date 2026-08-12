@@ -13,6 +13,7 @@ import type {
 } from '../events/bus.js';
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+const MAX_CHANNELS_PER_CONNECTION = 200;
 
 function normalizeChannel(value: unknown): Channel | null {
   if (value === 'markets' || value === 'activity') return value;
@@ -47,7 +48,7 @@ function parseInbound(raw: string): WsInbound {
     (value.type !== 'subscribe' && value.type !== 'unsubscribe') ||
     !('channels' in value) ||
     !Array.isArray(value.channels) ||
-    value.channels.length > 200
+    value.channels.length > MAX_CHANNELS_PER_CONNECTION
   ) {
     throw new Error('Expected a subscribe/unsubscribe message with channels');
   }
@@ -85,6 +86,18 @@ export async function registerWebsocketRoute(
     socket.on('message', (raw) => {
       try {
         const message = parseInbound(raw.toString());
+        if (message.type === 'subscribe') {
+          const requestedChannels = new Set(message.channels);
+          let addedChannelCount = 0;
+          for (const channel of requestedChannels) {
+            if (!channels.has(channel)) addedChannelCount += 1;
+          }
+          if (channels.size + addedChannelCount > MAX_CHANNELS_PER_CONNECTION) {
+            throw new Error(
+              `A connection may subscribe to at most ${MAX_CHANNELS_PER_CONNECTION} channels`,
+            );
+          }
+        }
         for (const channel of message.channels) {
           if (message.type === 'subscribe') {
             if (!channels.has(channel)) {

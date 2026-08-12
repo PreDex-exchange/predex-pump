@@ -103,6 +103,15 @@
   color: var(--error);
 }
 
+.errorDot {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid var(--outline);
+  border-radius: 50%;
+  background: var(--error);
+}
+
 .tape {
   overflow: hidden;
   border: 2px solid var(--outline);
@@ -133,6 +142,25 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.loadMore {
+  display: block;
+  min-width: 220px;
+  padding: 11px 18px;
+  margin: var(--space-5) auto;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-chunky);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.loadMore:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .event {

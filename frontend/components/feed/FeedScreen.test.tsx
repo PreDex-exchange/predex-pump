@@ -1,5 +1,12 @@
 import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedScreen } from './FeedScreen';
@@ -9,12 +16,16 @@ const mocks = vi.hoisted(() => ({
     data: { items: [] as ActivityEvent[], nextCursor: null as string | null },
     error: null as Error | null,
     isLoading: false,
+    isLoadingMore: false,
+    loadMore: vi.fn(),
     refetch: vi.fn(),
   },
   markets: {
     data: { items: [] as Market[], nextCursor: null as string | null },
     error: null as Error | null,
     isLoading: false,
+    isLoadingMore: false,
+    loadMore: vi.fn(),
     refetch: vi.fn(),
   },
 }));
@@ -29,12 +40,19 @@ beforeEach(() => {
   mocks.activity.data = { items: [], nextCursor: null };
   mocks.activity.error = null;
   mocks.activity.isLoading = false;
+  mocks.activity.isLoadingMore = false;
   mocks.markets.data = { items: [], nextCursor: null };
   mocks.markets.error = null;
   mocks.markets.isLoading = false;
+  mocks.markets.isLoadingMore = false;
+  mocks.activity.loadMore.mockClear();
+  mocks.markets.loadMore.mockClear();
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.history.replaceState({}, '', '/');
+});
 
 describe('FeedScreen failure states', () => {
   it('keeps character art out of the market-price loading surface', () => {
@@ -89,5 +107,48 @@ describe('FeedScreen filters', () => {
 
     expect(buttons[0]?.getAttribute('aria-pressed')).toBe('false');
     expect(buttons[2]?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('stores filter and sort in the URL and restores them after remount', async () => {
+    render(<FeedScreen />);
+    const group = screen.getByRole('group', { name: 'Filter markets' });
+
+    fireEvent.click(within(group).getByRole('button', { name: 'Graduated' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sort markets' }), {
+      target: { value: 'volume' },
+    });
+
+    expect(window.location.search).toBe('?filter=graduated&sort=volume');
+    cleanup();
+    render(<FeedScreen />);
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('button', { name: 'Graduated' })
+          .getAttribute('aria-pressed'),
+      ).toBe('true'),
+    );
+    expect(
+      (screen.getByRole('combobox', { name: 'Sort markets' }) as HTMLSelectElement)
+        .value,
+    ).toBe('volume');
+  });
+
+  it('exposes the next market page through a load-more control', () => {
+    mocks.markets.data = { items: [], nextCursor: 'next-market-page' };
+    render(<FeedScreen />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more markets' }));
+
+    expect(mocks.markets.loadMore).toHaveBeenCalledOnce();
+  });
+
+  it('does not offer Trending as a duplicate of Newest', () => {
+    render(<FeedScreen />);
+
+    const sort = screen.getByRole('combobox', { name: 'Sort markets' });
+    expect(sort.textContent).not.toContain('Trending');
+    expect((sort as HTMLSelectElement).value).toBe('newest');
   });
 });

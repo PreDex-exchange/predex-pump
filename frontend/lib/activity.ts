@@ -5,9 +5,48 @@ import {
   formatPrice,
   formatRaw,
   relativeTime,
+  shortAddress,
 } from './format';
 
-export type ActivityTone = 'created' | 'graduated' | 'filled' | 'resolved';
+export type ActivityTone =
+  | 'cancelled'
+  | 'created'
+  | 'graduated'
+  | 'filled'
+  | 'resolved';
+
+const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/iu;
+
+export type ActivityActorKind = 'agent' | 'human' | 'protocol';
+
+export function parseAgentAddresses(value: string | undefined) {
+  return new Set(
+    (value ?? '')
+      .split(',')
+      .map((address) => address.trim().toLowerCase())
+      .filter((address) => ADDRESS_PATTERN.test(address)),
+  );
+}
+
+export function activityActorKind(
+  event: ActivityEvent,
+  agentAddresses: ReadonlySet<string>,
+): ActivityActorKind {
+  if (event.account === null) return 'protocol';
+  return agentAddresses.has(event.account.toLowerCase()) ? 'agent' : 'human';
+}
+
+export function spokenActivityActor(
+  event: ActivityEvent,
+  kind: ActivityActorKind,
+) {
+  if (event.account === null) return 'Protocol';
+  return `${kind === 'agent' ? 'Agent' : 'Human'} ${shortAddress(
+    event.account,
+    5,
+    4,
+  )}`;
+}
 
 export type ActivityDescriptionSegment =
   | { kind: 'text'; text: string }
@@ -169,7 +208,7 @@ export function describeActivityEvent(
           : event.side === 'BID'
             ? 'bid'
             : 'order';
-      return finishDescription(event, 'Cancelled', 'created', [
+      return finishDescription(event, 'Cancelled', 'cancelled', [
         text('cancelled a '),
         value(outcomeAmount),
         text(` ${orderKind} on `),

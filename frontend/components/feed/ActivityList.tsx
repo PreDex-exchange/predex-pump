@@ -2,8 +2,11 @@ import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
 
 import { ActivityDescription } from '@/components/activity/ActivityDescription';
 import {
+  activityActorKind,
   dedupeActivityEvents,
   describeActivityEvent,
+  parseAgentAddresses,
+  spokenActivityActor,
 } from '@/lib/activity';
 
 import styles from './ActivityList.module.css';
@@ -15,6 +18,8 @@ interface ActivityListProps {
   emptyMessage?: string;
   error?: Error | null;
   isLoading?: boolean;
+  limit?: number;
+  agentAddresses?: ReadonlySet<string>;
   sticky?: boolean;
 }
 
@@ -25,9 +30,15 @@ export function ActivityList({
   emptyMessage = 'Waiting for on-chain activity…',
   error = null,
   isLoading = false,
+  limit,
+  agentAddresses = parseAgentAddresses(
+    process.env.NEXT_PUBLIC_AGENT_ADDRESSES,
+  ),
   sticky = true,
 }: ActivityListProps) {
-  const visibleEvents = dedupeActivityEvents(events);
+  const dedupedEvents = dedupeActivityEvents(events);
+  const visibleEvents =
+    limit === undefined ? dedupedEvents : dedupedEvents.slice(0, limit);
 
   return (
     <aside className={`${styles.activity} ${sticky ? '' : styles.static}`}>
@@ -52,6 +63,10 @@ export function ActivityList({
         <ul>
           {visibleEvents.map((event) => {
             const description = describeActivityEvent(event, markets);
+            const actor = spokenActivityActor(
+              event,
+              activityActorKind(event, agentAddresses),
+            );
             return (
               <li key={event.id}>
                 <span
@@ -60,6 +75,7 @@ export function ActivityList({
                   {description.label}
                 </span>
                 <span className={styles.text}>
+                  <strong className={styles.actor}>{actor}</strong>{' '}
                   <ActivityDescription
                     description={description}
                     marketClassName={styles.marketLink}

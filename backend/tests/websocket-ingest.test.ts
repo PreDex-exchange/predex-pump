@@ -146,4 +146,46 @@ describe('WebSocket indexer bridge', () => {
       await app.close();
     }
   });
+
+  it('enforces the channel cap across cumulative subscribe frames', async () => {
+    const eventBus = new ServerEventBus();
+    const app = await buildServer({
+      prisma: testPrisma,
+      eventBus,
+      logger: false,
+    });
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const socket = new WebSocket(`${address.replace(/^http/, 'ws')}/ws`);
+    const initialChannels = Array.from(
+      { length: 200 },
+      (_, index) => `market:${index + 1}`,
+    );
+
+    try {
+      await waitForOpen(socket);
+      const initialAck = nextMessage(socket);
+      socket.send(
+        JSON.stringify({ type: 'subscribe', channels: initialChannels }),
+      );
+      await expect(initialAck).resolves.toEqual({
+        type: 'ack',
+        channels: initialChannels,
+      });
+
+      const rejected = nextMessage(socket);
+      socket.send(
+        JSON.stringify({ type: 'subscribe', channels: ['book:201'] }),
+      );
+      await expect(rejected).resolves.toEqual({
+        type: 'error',
+        message: 'A connection may subscribe to at most 200 channels',
+      });
+      expect(eventBus.hasSubscribers('market:1')).toBe(true);
+      expect(eventBus.hasSubscribers('market:200')).toBe(true);
+      expect(eventBus.hasSubscribers('book:201')).toBe(false);
+    } finally {
+      await waitForClose(socket);
+      await app.close();
+    }
+  });
 });

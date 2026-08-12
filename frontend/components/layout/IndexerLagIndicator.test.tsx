@@ -5,14 +5,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IndexerLagIndicator } from './IndexerLagIndicator';
 
 const state = vi.hoisted(() => ({
-  health: null as HealthResponse | null,
+  health: null as unknown,
+  error: null as Error | null,
 }));
 
 vi.mock('@/lib/api/hooks', () => ({
-  useHealth: () => ({ data: state.health }),
+  useHealth: () => ({ data: state.health, error: state.error }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  state.error = null;
+});
 
 const healthy: HealthResponse = {
   ok: true,
@@ -61,6 +65,37 @@ const healthy: HealthResponse = {
 };
 
 describe('IndexerLagIndicator liveness', () => {
+  it('degrades an older payload with missing nested fields to unknown', () => {
+    state.health = {
+      ok: true,
+      indexedBlock: 100,
+      headBlock: 100,
+      lagBlocks: 0,
+      indexerStatus: 'healthy',
+    };
+
+    expect(() => render(<IndexerLagIndicator />)).not.toThrow();
+    expect(screen.getByRole('status').textContent).toContain('Health unknown');
+  });
+
+  it('shows unknown after the health request fails', () => {
+    state.health = null;
+    state.error = new Error('health unavailable');
+
+    render(<IndexerLagIndicator />);
+
+    expect(screen.getByRole('status').textContent).toContain('Health unknown');
+    expect(document.body.textContent).not.toContain('health unavailable');
+  });
+
+  it('shows unknown while no health contract is available yet', () => {
+    state.health = null;
+
+    render(<IndexerLagIndicator />);
+
+    expect(screen.getByRole('status').textContent).toContain('Health unknown');
+  });
+
   it('surfaces degraded and stalled states even with no reported block lag', () => {
     state.health = { ...healthy, indexerStatus: 'degraded' };
     const { rerender } = render(<IndexerLagIndicator />);

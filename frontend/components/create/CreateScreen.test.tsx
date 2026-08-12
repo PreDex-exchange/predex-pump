@@ -1,5 +1,6 @@
 import type { DedupCheckResponse } from '@predex-pump/shared/rest';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -7,6 +8,8 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
+import { hydrateRoot } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import {
   afterEach,
   beforeEach,
@@ -108,10 +111,6 @@ vi.mock('wagmi', () => ({
   }),
 }));
 
-vi.mock('@/components/feed/MarketCard', () => ({
-  MarketCard: () => <div aria-label="market preview" />,
-}));
-
 vi.mock('@/lib/api/hooks', () => ({
   useConfig: () => ({
     data: testState.config,
@@ -125,6 +124,7 @@ vi.mock('@/lib/api/hooks', () => ({
     error: testState.dedupError,
     refetch: mocks.dedupRefetch,
   }),
+  usePriceHistory: () => ({ data: { points: [] } }),
 }));
 
 vi.mock('@/lib/api/rest-client', () => ({
@@ -185,6 +185,61 @@ describe('CreateScreen market launch guardrails', () => {
     expect(launch.getAttribute('aria-disabled')).toBe('true');
     expect(launch.getAttribute('aria-describedby')).toBe('launch-help');
     expect(screen.getByText('Enter a market question to continue.')).toBeTruthy();
+  });
+
+  it('rejects a zero-width-only question as visually empty', () => {
+    render(<CreateScreen />);
+    const question = screen.getByPlaceholderText('Will…?');
+
+    fireEvent.change(question, { target: { value: '\u200B\u200C\uFEFF' } });
+    fireEvent.blur(question);
+
+    expect(question.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText('0/180')).toBeTruthy();
+    expect(screen.getByText('Enter a question for the market.')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: /Launch a market/u }).hasAttribute('disabled'),
+    ).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('does not present an uncommitted category in the draft or approval review', () => {
+    render(<CreateScreen />);
+
+    expect(screen.queryByText('Category')).toBeNull();
+    const dialog = openReview();
+    expect(within(dialog).queryByText('Category')).toBeNull();
+    expect(within(dialog).queryByText('Technology')).toBeNull();
+  });
+
+  it('hydrates a minute-boundary preview from stable initial markup', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(
+      Date.UTC(2026, 7, 13, 12, 0, 59, 999),
+    );
+    const html = renderToString(<CreateScreen />);
+    expect(html).toContain('Calculating after page loads');
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    document.body.append(container);
+    clock.mockReturnValue(Date.UTC(2026, 7, 13, 12, 1, 0, 1));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+    await act(async () => {
+      root = hydrateRoot(container, <CreateScreen />);
+      await Promise.resolve();
+    });
+
+    expect(
+      consoleError.mock.calls.flat().join(' '),
+    ).not.toMatch(/hydration|did not match/iu);
+    await waitFor(() =>
+      expect(container.textContent).not.toContain('Calculating after page loads'),
+    );
+    await act(async () => root?.unmount());
+    container.remove();
+    consoleError.mockRestore();
+    clock.mockRestore();
   });
 
   it('shows a pending duplicate check and blocks opening the review', () => {

@@ -3,9 +3,13 @@
 import type { Market } from '@predex-pump/shared/domain';
 import type { MarketDetailResponse } from '@predex-pump/shared/rest';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { backendWsClient } from './websocket';
+import styles from './live.module.css';
+import {
+  backendWsClient,
+  type BackendConnectionStatus,
+} from './websocket';
 
 function marketFromData(data: unknown): Market | null {
   if (
@@ -25,8 +29,14 @@ function marketFromData(data: unknown): Market | null {
  */
 export function BackendLiveSync() {
   const queryClient = useQueryClient();
+  const [connectionStatus, setConnectionStatus] =
+    useState<BackendConnectionStatus>('connecting');
+  const [isCatchingUp, setIsCatchingUp] = useState(false);
+  const wasDisconnected = useRef(false);
 
   useEffect(() => {
+    let active = true;
+    let catchUpRun = 0;
     const unsubscribeMarkets = backendWsClient.subscribe(
       'markets',
       (message) => {
@@ -78,12 +88,55 @@ export function BackendLiveSync() {
         void queryClient.invalidateQueries({ queryKey: ['activity'] });
       },
     );
+    const unsubscribeStatus = backendWsClient.subscribeStatus((status) => {
+      if (!active) return;
+      setConnectionStatus(status);
+      if (status === 'reconnecting') {
+        wasDisconnected.current = true;
+        catchUpRun += 1;
+        setIsCatchingUp(false);
+        return;
+      }
+      if (status !== 'live' || !wasDisconnected.current) return;
+
+      wasDisconnected.current = false;
+      const currentRun = ++catchUpRun;
+      setIsCatchingUp(true);
+      const finishCatchUp = () => {
+        if (active && catchUpRun === currentRun) setIsCatchingUp(false);
+      };
+      void queryClient.refetchQueries({ type: 'active' }).then(
+        finishCatchUp,
+        finishCatchUp,
+      );
+    });
 
     return () => {
+      active = false;
+      catchUpRun += 1;
       unsubscribeMarkets();
       unsubscribeActivity();
+      unsubscribeStatus();
     };
   }, [queryClient]);
 
-  return null;
+  if (connectionStatus !== 'reconnecting' && !isCatchingUp) return null;
+
+  return (
+    <p aria-live="assertive" className={styles.recovery} role="status">
+      <span aria-hidden="true" className={styles.dot} />
+      <span>
+        <strong>
+          {connectionStatus === 'reconnecting'
+            ? 'Live data reconnecting'
+            : 'Catching up live data'}
+        </strong>
+        <small>
+          {connectionStatus === 'reconnecting'
+            ? 'Prices and activity may be stale until the stream returns.'
+            : 'Refreshing every active view from the indexed API.'}
+        </small>
+      </span>
+    </p>
+  );
 }

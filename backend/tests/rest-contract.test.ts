@@ -248,6 +248,54 @@ describe('REST shared contract', () => {
     ).toBe(400);
   });
 
+  it.each([
+    {
+      name: 'malformed JSON',
+      payload: '{"question":',
+      contentType: 'application/json',
+      status: 400,
+    },
+    {
+      name: 'trailing-comma JSON',
+      payload: '{"question":"test",}',
+      contentType: 'application/json',
+      status: 400,
+    },
+    {
+      name: 'empty JSON',
+      payload: '',
+      contentType: 'application/json',
+      status: 400,
+    },
+    {
+      name: 'unsupported XML',
+      payload: '<question>test</question>',
+      contentType: 'application/xml',
+      status: 415,
+    },
+    {
+      name: 'oversized JSON',
+      payload: JSON.stringify({ question: 'x'.repeat(1_100_000) }),
+      contentType: 'application/json',
+      status: 413,
+    },
+  ])('maps $name parser failures to HTTP $status', async (testCase) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/markets/dedup-check',
+      headers: { 'content-type': testCase.contentType },
+      payload: testCase.payload,
+    });
+
+    expect(response.statusCode).toBe(testCase.status);
+    expect(response.json<{ error: string }>().error).not.toBe(
+      'Internal server error',
+    );
+    if (testCase.payload.length > 0) {
+      expect(response.body).not.toContain(testCase.payload.slice(0, 100));
+    }
+  });
+
   it('GET /markets/:id returns market, recent trades, and resolution', async () => {
     const response = await app.inject({ method: 'GET', url: '/markets/1' });
     expect(response.statusCode).toBe(200);

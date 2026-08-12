@@ -66,6 +66,11 @@
   background: var(--reward-soft);
 }
 
+.cancelled {
+  border-color: var(--info);
+  background: var(--surface-neutral);
+}
+
 .graduated {
   border-color: var(--brand);
   background: var(--brand-soft);
@@ -93,6 +98,10 @@
 
 .value {
   font-variant-numeric: tabular-nums;
+  font-weight: 900;
+}
+
+.actor {
   font-weight: 900;
 }
 

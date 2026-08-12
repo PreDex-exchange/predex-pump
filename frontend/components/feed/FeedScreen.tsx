@@ -1,7 +1,7 @@
 'use client';
 
 import type { Market } from '@predex-pump/shared/domain';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { StatePanel } from '@/components/ui/StatePanel';
 import { useActivity, useMarkets } from '@/lib/api/hooks';
@@ -13,7 +13,7 @@ import { MarketCard } from './MarketCard';
 import styles from './FeedScreen.module.css';
 
 type FeedFilter = 'all' | 'incubating' | 'graduated' | 'resolved';
-type FeedSort = 'trending' | 'newest' | 'volume';
+type FeedSort = 'newest' | 'volume';
 
 const FILTERS: { value: FeedFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -21,6 +21,25 @@ const FILTERS: { value: FeedFilter; label: string }[] = [
   { value: 'graduated', label: 'Graduated' },
   { value: 'resolved', label: 'Resolved' },
 ];
+
+function feedFilter(value: string | null): FeedFilter {
+  return FILTERS.some((filter) => filter.value === value)
+    ? (value as FeedFilter)
+    : 'all';
+}
+
+function feedSort(value: string | null): FeedSort {
+  return value === 'volume' ? 'volume' : 'newest';
+}
+
+function replaceFeedUrl(filter: FeedFilter, sort: FeedSort) {
+  const url = new URL(window.location.href);
+  if (filter === 'all') url.searchParams.delete('filter');
+  else url.searchParams.set('filter', filter);
+  if (sort === 'newest') url.searchParams.delete('sort');
+  else url.searchParams.set('sort', sort);
+  window.history.replaceState(window.history.state, '', url);
+}
 
 export function matchesFilter(market: Market, filter: FeedFilter) {
   if (filter === 'all') return true;
@@ -32,18 +51,34 @@ export function matchesFilter(market: Market, filter: FeedFilter) {
 
 export function FeedScreen() {
   const [filter, setFilter] = useState<FeedFilter>('all');
-  const [sort, setSort] = useState<FeedSort>('trending');
-  const { data: marketPage, isLoading, error } = useMarkets();
+  const [sort, setSort] = useState<FeedSort>('newest');
+  const {
+    data: marketPage,
+    isLoading,
+    isLoadingMore,
+    error,
+    loadMore,
+  } = useMarkets();
   const {
     data: activityPage,
     error: activityError,
     isLoading: activityIsLoading,
-  } = useActivity({ limit: 5 });
+  } = useActivity({ limit: 20 });
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      setFilter(feedFilter(params.get('filter')));
+      setSort(feedSort(params.get('sort')));
+    };
+    syncFromUrl();
+    window.addEventListener('popstate', syncFromUrl);
+    return () => window.removeEventListener('popstate', syncFromUrl);
+  }, []);
 
   const markets = useMemo(() => {
     const filtered = (marketPage?.items ?? []).filter((market) => matchesFilter(market, filter));
     return [...filtered].sort((left, right) => {
-      if (sort === 'trending') return 0;
       if (sort === 'newest') return right.createdAt - left.createdAt;
       if (sort === 'volume') {
         const leftVolume = BigInt(left.volumeRaw);
@@ -64,7 +99,10 @@ export function FeedScreen() {
               aria-pressed={item.value === filter}
               className={item.value === filter ? styles.active : ''}
               key={item.value}
-              onClick={() => setFilter(item.value)}
+              onClick={() => {
+                setFilter(item.value);
+                replaceFeedUrl(item.value, sort);
+              }}
               type="button"
             >
               {item.label}
@@ -73,8 +111,14 @@ export function FeedScreen() {
         </div>
         <label className={styles.sort}>
           <span className="sr-only">Sort markets</span>
-          <select onChange={(event) => setSort(event.target.value as FeedSort)} value={sort}>
-            <option value="trending">Sort: Trending</option>
+          <select
+            onChange={(event) => {
+              const nextSort = feedSort(event.target.value);
+              setSort(nextSort);
+              replaceFeedUrl(filter, nextSort);
+            }}
+            value={sort}
+          >
             <option value="newest">Sort: Newest</option>
             <option value="volume">Sort: Volume</option>
           </select>
@@ -110,11 +154,22 @@ export function FeedScreen() {
               ))}
             </div>
           )}
+          {!isLoading && !error && marketPage?.nextCursor && (
+            <button
+              className={styles.loadMore}
+              disabled={isLoadingMore}
+              onClick={loadMore}
+              type="button"
+            >
+              {isLoadingMore ? 'Loading more markets…' : 'Load more markets'}
+            </button>
+          )}
         </section>
         <ActivityList
           error={activityError}
           events={activityPage?.items ?? []}
           isLoading={activityIsLoading}
+          limit={5}
           markets={marketPage?.items ?? []}
         />
       </div>

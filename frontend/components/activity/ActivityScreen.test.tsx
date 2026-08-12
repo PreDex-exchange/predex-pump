@@ -11,9 +11,11 @@ const mocks = vi.hoisted(() => ({
   },
   activityError: null as Error | null,
   activityLoading: false,
+  activityLoadingMore: false,
   activityListener: null as ((message: { event: string; data: unknown }) => void) | null,
   markets: [] as Market[],
   refetch: vi.fn(),
+  loadMore: vi.fn(),
   statusListener: null as
     | ((status: 'idle' | 'connecting' | 'live' | 'reconnecting') => void)
     | null,
@@ -24,6 +26,8 @@ vi.mock('@/lib/api/hooks', () => ({
     data: mocks.activityData,
     error: mocks.activityError,
     isLoading: mocks.activityLoading,
+    isLoadingMore: mocks.activityLoadingMore,
+    loadMore: mocks.loadMore,
     refetch: mocks.refetch,
   }),
   useMarkets: () => ({
@@ -120,9 +124,11 @@ beforeEach(() => {
   mocks.activityData = { items: [], nextCursor: null };
   mocks.activityError = null;
   mocks.activityLoading = false;
+  mocks.activityLoadingMore = false;
   mocks.activityListener = null;
   mocks.markets = [market];
   mocks.refetch.mockClear();
+  mocks.loadMore.mockClear();
   mocks.statusListener = null;
 });
 
@@ -194,7 +200,7 @@ describe('ActivityScreen', () => {
     expect(screen.getByText(/before deciding whether this tape is empty/u)).toBeTruthy();
   });
 
-  it('shows reconnecting and refreshes indexed history once the stream returns', () => {
+  it('shows the stream reconnecting state', () => {
     render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
 
     act(() => mocks.statusListener?.('reconnecting'));
@@ -203,7 +209,30 @@ describe('ActivityScreen', () => {
 
     act(() => mocks.statusListener?.('live'));
     expect(screen.getByText('Live')).toBeTruthy();
-    expect(mocks.refetch).toHaveBeenCalledOnce();
+  });
+
+  it('renders a load failure distinctly from a successful empty tape', () => {
+    mocks.activityError = new Error('activity unavailable');
+
+    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Activity history could not load',
+    );
+    expect(screen.queryByText('Waiting for activity…')).toBeNull();
+    expect(screen.getByText(/this is not an empty activity tape/u)).toBeTruthy();
+  });
+
+  it('exposes the next cursor through a load-older control', () => {
+    mocks.activityData = {
+      items: [trade('indexed-event', HUMAN, TX_A)],
+      nextCursor: 'older-page',
+    };
+    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+
+    screen.getByRole('button', { name: 'Load older activity' }).click();
+
+    expect(mocks.loadMore).toHaveBeenCalledOnce();
   });
 
   it('renders one graduation row for its same-transaction graduation logs', () => {

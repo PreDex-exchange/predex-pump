@@ -72,6 +72,9 @@ const mocks = vi.hoisted(() => ({
   submitCancel: vi.fn(),
   postOrder: vi.fn(),
   withdrawOrder: vi.fn(),
+  approvalReset: vi.fn(),
+  actionReset: vi.fn(),
+  txHookCall: 0,
 }));
 
 vi.mock('wagmi', () => ({
@@ -133,14 +136,18 @@ vi.mock('@/lib/chain/useSettlementStatus', () => ({
 }));
 
 vi.mock('@/lib/chain/useTxFlow', () => ({
-  useTxFlow: () => ({
-    state: { phase: 'idle', message: 'Ready.' },
-    execute: async <T,>(
-      operation: (report: (state: unknown) => void) => Promise<T>,
-    ) => operation(vi.fn()),
-    reset: vi.fn(),
-    isBusy: false,
-  }),
+  useTxFlow: () => {
+    const isApprovalFlow = mocks.txHookCall % 2 === 0;
+    mocks.txHookCall += 1;
+    return {
+      state: { phase: 'idle', message: 'Ready.' },
+      execute: async <T,>(
+        operation: (report: (state: unknown) => void) => Promise<T>,
+      ) => operation(vi.fn()),
+      reset: isApprovalFlow ? mocks.approvalReset : mocks.actionReset,
+      isBusy: false,
+    };
+  },
 }));
 
 const OTHER_MAKER = `0x${'34'.repeat(20)}` as const;
@@ -302,13 +309,16 @@ function renderPanel(
   );
 }
 
-function renderLivePanel(bookResponse: MarketBookResponse) {
+function renderLivePanel(
+  bookResponse: MarketBookResponse,
+  positions: Position[] = [],
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <OrderBookPanel books={bookResponse} market={market} />
+      <OrderBookPanel books={bookResponse} market={market} positions={positions} />
     </QueryClientProvider>,
   );
 }
@@ -334,6 +344,7 @@ beforeEach(() => {
   mocks.collateralBalance.data = 5_000_000n;
   mocks.collateralBalance.isLoading = false;
   mocks.collateralBalance.error = null;
+  mocks.txHookCall = 0;
   for (const mock of [
     mocks.approvals.refetch,
     mocks.myOrders.refetch,
@@ -346,6 +357,8 @@ beforeEach(() => {
     mocks.postOrder,
     mocks.withdrawOrder,
     mocks.collateralBalance.refetch,
+    mocks.approvalReset,
+    mocks.actionReset,
   ]) {
     mock.mockReset();
   }
@@ -570,6 +583,25 @@ describe('Hybrid human trading surface', () => {
     expect(dialog.getByText(/This is a binding commitment, not a draft/u)).toBeTruthy();
   });
 
+  it('blocks a known zero-balance MiniCLOB sell and exposes the reason', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'a0'));
+    response.liveVenue = 'MINICLOB';
+    renderLivePanel(response);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'NO' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Sell · ASK' }));
+    fireEvent.change(screen.getByLabelText(/^Size/u), {
+      target: { value: '1.000' },
+    });
+
+    const reason = 'Insufficient NO balance: requires 1 NO, wallet holds 0 NO';
+    expect(screen.getByRole('alert').textContent).toContain(reason);
+    expect(
+      screen.getByRole('button', { name: reason }).hasAttribute('disabled'),
+    ).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('labels a Hybrid sell total as proceeds in the ticket and dialog', () => {
     const position: Position = {
       account: mocks.address,
@@ -664,6 +696,7 @@ describe('Hybrid human trading surface', () => {
     expect(mocks.postOrder).toHaveBeenCalledOnce();
     expect(mocks.approveCollateral).not.toHaveBeenCalled();
     expect(mocks.approveTokens).not.toHaveBeenCalled();
+    expect(mocks.approvalReset).toHaveBeenCalledOnce();
   });
 
   it('snaps bids down and asks up to the effective market tick', () => {

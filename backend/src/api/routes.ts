@@ -101,6 +101,25 @@ function notFound(message: string): HttpError {
   return new HttpError(404, message);
 }
 
+function clientErrorStatus(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null || !('statusCode' in error)) {
+    return null;
+  }
+  const statusCode = error.statusCode;
+  return typeof statusCode === 'number' &&
+    Number.isInteger(statusCode) &&
+    statusCode >= 400 &&
+    statusCode < 500
+    ? statusCode
+    : null;
+}
+
+function clientErrorMessage(statusCode: number) {
+  if (statusCode === 413) return 'Request body is too large';
+  if (statusCode === 415) return 'Unsupported media type';
+  return 'Request body is invalid';
+}
+
 export function registerRestRoutes(
   app: FastifyInstance,
   prisma: PrismaClient,
@@ -114,6 +133,11 @@ export function registerRestRoutes(
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof HttpError) {
       void reply.code(error.statusCode).send({ error: error.message });
+      return;
+    }
+    const statusCode = clientErrorStatus(error);
+    if (statusCode !== null) {
+      void reply.code(statusCode).send({ error: clientErrorMessage(statusCode) });
       return;
     }
     app.log.error(error);

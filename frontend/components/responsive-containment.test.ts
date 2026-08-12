@@ -12,6 +12,24 @@ function rule(css: string, selector: string) {
 }
 
 describe('responsive containment contracts', () => {
+  it('prevents arbitrary form input from widening the page body', () => {
+    const base = source('styles/base.css');
+    const create = source('components/create/CreateScreen.module.css');
+
+    expect(rule(base, 'html')).toContain('overflow-x: clip');
+    expect(rule(base, 'body')).toContain('overflow-x: clip');
+    expect(rule(create, '.page')).toContain('min-width: 0');
+    expect(rule(create, '.previewMeta > span:last-child')).toContain(
+      'overflow-wrap: anywhere',
+    );
+  });
+
+  it('wraps an accepted unbroken question inside a feed card', () => {
+    const css = source('components/feed/MarketCard.module.css');
+
+    expect(rule(css, '.card h2')).toContain('overflow-wrap: anywhere');
+  });
+
   it.each([390, 1024])(
     'contains an unbroken market question at a %ipx viewport',
     () => {

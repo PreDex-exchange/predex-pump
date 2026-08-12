@@ -9,7 +9,7 @@ import { DEFAULT_MINIMUM_TICK_SIZE_RAW } from '@predex-pump/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
 import { MarketCard } from '@/components/feed/MarketCard';
@@ -34,14 +34,7 @@ import styles from './CreateScreen.module.css';
 import { DedupHint } from './DedupHint';
 
 const QUESTION_MAX_LENGTH = 180;
-const CATEGORIES = [
-  { value: '', label: 'No category' },
-  { value: 'crypto', label: 'Crypto' },
-  { value: 'macro', label: 'Macro' },
-  { value: 'technology', label: 'Technology' },
-  { value: 'culture', label: 'Culture' },
-  { value: 'climate', label: 'Climate' },
-] as const;
+const INVISIBLE_FORMATTING = /\p{Default_Ignorable_Code_Point}/gu;
 const DEFAULT_TRADING_WINDOW_SECONDS = 86_400n;
 const TRADING_WINDOW_PRESETS = [
   { label: '1 hour', seconds: 3_600n },
@@ -68,9 +61,18 @@ function duplicateIdentity(response: DedupCheckResponse | null) {
     : null;
 }
 
+function normalizeQuestion(value: string) {
+  return value.trim();
+}
+
+function hasVisibleQuestion(value: string) {
+  return normalizeQuestion(value).replace(INVISIBLE_FORMATTING, '').trim().length > 0;
+}
+
 function validateQuestion(value: string) {
-  if (!value.trim()) return 'Enter a question for the market.';
-  if (value.trim().length > QUESTION_MAX_LENGTH) {
+  const normalized = normalizeQuestion(value);
+  if (!hasVisibleQuestion(normalized)) return 'Enter a question for the market.';
+  if (normalized.length > QUESTION_MAX_LENGTH) {
     return `Keep the question to ${QUESTION_MAX_LENGTH} characters or fewer.`;
   }
   return null;
@@ -175,14 +177,15 @@ function buildPreviewMarket({
   question,
   seedRaw,
   tradingWindowSeconds,
+  nowSeconds,
 }: {
   address?: Address;
   config: RegistryConfig | null;
   question: string;
   seedRaw: string;
   tradingWindowSeconds: number;
+  nowSeconds: number;
 }): Market {
-  const now = Math.floor(Date.now() / 1_000);
   return {
     id: 'preview',
     creator:
@@ -218,8 +221,8 @@ function buildPreviewMarket({
       minimumTimeOpenSeconds: 0,
       minimumTickSizeRaw: DEFAULT_MINIMUM_TICK_SIZE_RAW.toString(),
     },
-    createdAt: now,
-    tradingEndsAt: now + tradingWindowSeconds,
+    createdAt: nowSeconds,
+    tradingEndsAt: nowSeconds + tradingWindowSeconds,
     graduatedAt: null,
     resolvedAt: null,
   };
@@ -234,7 +237,6 @@ export function CreateScreen() {
   const [customWindow, setCustomWindow] = useState('24');
   const [customWindowUnit, setCustomWindowUnit] =
     useState<CustomWindowUnit>('hours');
-  const [category, setCategory] = useState('');
   const [questionTouched, setQuestionTouched] = useState(false);
   const [seedTouched, setSeedTouched] = useState(false);
   const [windowTouched, setWindowTouched] = useState(false);
@@ -247,7 +249,13 @@ export function CreateScreen() {
   const [dedupFeedbackError, setDedupFeedbackError] = useState<string | null>(null);
   const [commitDedup, setCommitDedup] = useState<QuestionDedupResult | null>(null);
   const [dedupVerifying, setDedupVerifying] = useState(false);
+  const [previewNow, setPreviewNow] = useState<number | null>(null);
   const confirmOpenRef = useRef(false);
+  const normalizedQuestion = normalizeQuestion(question);
+  const questionHasVisibleContent = hasVisibleQuestion(question);
+  const questionCharacterCount = questionHasVisibleContent
+    ? normalizedQuestion.length
+    : 0;
 
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -271,9 +279,8 @@ export function CreateScreen() {
     isLoading: dedupLoading,
     error: dedupError,
     refetch: refetchDedup,
-  } = useDedupCheck(question);
+  } = useDedupCheck(questionHasVisibleContent ? normalizedQuestion : '');
   const authenticated = session?.authenticated === true;
-  const normalizedQuestion = question.trim();
   const commitDedupResult =
     commitDedup?.question === normalizedQuestion ? commitDedup.response : null;
   const currentDedupResult = commitDedupResult ?? dedupResult;
@@ -328,8 +335,6 @@ export function CreateScreen() {
   const showQuestionError = (questionTouched || submitted) && questionError;
   const showSeedError = (seedTouched || submitted) && seedError;
   const showWindowError = (windowTouched || submitted) && windowError;
-  const categoryLabel =
-    CATEGORIES.find((item) => item.value === category)?.label ?? 'No category';
   const isWrongNetwork = isConnected && chainId !== arcTestnet.id;
   const currentDedupLoading = commitDedupResult === null && dedupLoading;
   const currentDedupError = commitDedupResult === null ? dedupError : null;
@@ -350,7 +355,7 @@ export function CreateScreen() {
     !isWrongNetwork &&
     Boolean(address);
   let launchDisabledReason: string | null = null;
-  if (!normalizedQuestion) {
+  if (!questionHasVisibleContent) {
     launchDisabledReason = 'Enter a market question to continue.';
   } else if (questionError) {
     launchDisabledReason = questionError;
@@ -376,15 +381,25 @@ export function CreateScreen() {
   const canPreviewTradingWindow =
     tradingWindowSeconds !== null &&
     tradingWindowSeconds <= BigInt(Number.MAX_SAFE_INTEGER);
+  const canPreviewEstimatedEnd =
+    canPreviewTradingWindow && previewNow !== null;
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setPreviewNow(Math.floor(Date.now() / 1_000));
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   const previewMarket = buildPreviewMarket({
     address: address?.toLowerCase() as Address | undefined,
     config,
-    question: question.trim(),
-    seedRaw: seedRaw ?? config?.seedFloorRaw ?? '0',
+    question: normalizedQuestion,
+    seedRaw: seedError ? (config?.seedFloorRaw ?? '0') : (seedRaw ?? '0'),
     tradingWindowSeconds: canPreviewTradingWindow
       ? Number(tradingWindowSeconds)
       : 0,
+    nowSeconds: previewNow ?? 0,
   });
 
   async function runCommitDedupCheck(): Promise<DedupCheckResponse> {
@@ -416,6 +431,9 @@ export function CreateScreen() {
     setWindowTouched(true);
 
     if (canLaunch) {
+      if (previewNow === null) {
+        setPreviewNow(Math.floor(Date.now() / 1_000));
+      }
       confirmOpenRef.current = true;
       setConfirmOpen(true);
     }
@@ -446,7 +464,7 @@ export function CreateScreen() {
       return;
     }
 
-    const metadata = buildMarketMetadata(question);
+    const metadata = buildMarketMetadata(normalizedQuestion);
     const result = await tx.execute((report) =>
       createMarketOnArc({
         account: address,
@@ -488,7 +506,6 @@ export function CreateScreen() {
     setTradingWindowChoice(DEFAULT_TRADING_WINDOW_SECONDS.toString());
     setCustomWindow('24');
     setCustomWindowUnit('hours');
-    setCategory('');
     setQuestionTouched(false);
     setSeedTouched(false);
     setWindowTouched(false);
@@ -512,8 +529,8 @@ export function CreateScreen() {
               into the LMSR.
             </p>
             <div className={styles.successMarket}>
-              <span>{categoryLabel}</span>
-              <strong>{question.trim()}</strong>
+              <span>On-chain market</span>
+              <strong>{normalizedQuestion}</strong>
               <NumberDisplay size="body">
                 {formatUsdc(seedRaw ?? '0')} USDC seeded
               </NumberDisplay>
@@ -574,10 +591,10 @@ export function CreateScreen() {
                 <span>Question</span>
                 <span
                   className={
-                    question.trim().length > QUESTION_MAX_LENGTH ? styles.countError : ''
+                    questionCharacterCount > QUESTION_MAX_LENGTH ? styles.countError : ''
                   }
                 >
-                  {question.trim().length}/{QUESTION_MAX_LENGTH}
+                  {questionCharacterCount}/{QUESTION_MAX_LENGTH}
                 </span>
               </span>
               <textarea
@@ -600,7 +617,7 @@ export function CreateScreen() {
               )}
             </label>
             <DedupHint
-              error={normalizedQuestion ? currentDedupError : null}
+              error={questionHasVisibleContent ? currentDedupError : null}
               feedbackEnabled={authenticated}
               feedbackError={dedupFeedbackError}
               onAccept={(marketId) =>
@@ -614,8 +631,8 @@ export function CreateScreen() {
                 setCommitDedup(null);
                 refetchDedup();
               }}
-              pending={Boolean(normalizedQuestion) && currentDedupLoading}
-              response={normalizedQuestion ? visibleDedupResult : null}
+              pending={questionHasVisibleContent && currentDedupLoading}
+              response={questionHasVisibleContent ? visibleDedupResult : null}
             />
 
             <fieldset className={`${styles.field} ${styles.durationField}`}>
@@ -753,29 +770,6 @@ export function CreateScreen() {
                   {seedError}
                 </span>
               )}
-            </label>
-
-            <label className={styles.field}>
-              <span className={styles.labelRow}>
-                <span>Category</span>
-                <span>Optional</span>
-              </span>
-              <span className={styles.selectField}>
-                <select
-                  onChange={(event) => setCategory(event.target.value)}
-                  value={category}
-                >
-                  {CATEGORIES.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-                <span aria-hidden="true">⌄</span>
-              </span>
-              <span className={styles.help}>
-                Categories help people scan the feed; they do not affect market economics.
-              </span>
             </label>
 
             <div className={styles.committee}>
@@ -920,26 +914,31 @@ export function CreateScreen() {
                 <h2>Feed card</h2>
               </div>
               <div className={styles.previewMeta}>
-                <Badge tone="neutral">{categoryLabel}</Badge>
                 <NumberDisplay size="small">
-                  {seedRaw ? formatUsdc(seedRaw) : '—'} USDC seed
+                  {!seedError && seedRaw ? formatUsdc(seedRaw) : '—'} USDC seed
                 </NumberDisplay>
               </div>
             </div>
             <div className={styles.previewResolution}>
               <span>Resolves</span>
               <strong>
-                {canPreviewTradingWindow
+                {canPreviewEstimatedEnd
                   ? formatDateTime(previewMarket.tradingEndsAt)
-                  : 'Choose a valid window'}
+                  : canPreviewTradingWindow
+                    ? 'Calculating after page loads…'
+                    : 'Choose a valid window'}
               </strong>
-              {canPreviewTradingWindow && (
+              {canPreviewEstimatedEnd && (
                 <small>
                   {formatDurationSeconds(tradingWindowSeconds)} after creation
                 </small>
               )}
             </div>
-            <MarketCard href={null} market={previewMarket} />
+            <MarketCard
+              href={null}
+              market={previewMarket}
+              referenceTimestamp={previewNow ?? 0}
+            />
           </section>
         </div>
       </div>
@@ -984,12 +983,8 @@ export function CreateScreen() {
           showActions={false}
           showFeedback={false}
         />
-        <p className={styles.confirmQuestion}>{question.trim()}</p>
+        <p className={styles.confirmQuestion}>{normalizedQuestion}</p>
         <dl className={styles.confirmRows}>
-          <div>
-            <dt>Category</dt>
-            <dd>{categoryLabel}</dd>
-          </div>
           <div>
             <dt>Seed</dt>
             <dd className="numeric">
@@ -1007,7 +1002,9 @@ export function CreateScreen() {
           <div>
             <dt>Estimated end</dt>
             <dd className="numeric">
-              {!windowError && tradingWindowSeconds !== null
+              {!windowError &&
+              tradingWindowSeconds !== null &&
+              previewNow !== null
                 ? formatDateTime(previewMarket.tradingEndsAt)
                 : '—'}
             </dd>

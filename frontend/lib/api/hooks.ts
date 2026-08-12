@@ -23,11 +23,12 @@ import type {
   RegistryConfig,
 } from '@predex-pump/shared/domain';
 import {
+  useInfiniteQuery,
   useQuery,
   useQueryClient,
   type QueryKey,
 } from '@tanstack/react-query';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { backendRestClient as apiClient } from './rest-client';
 import { backendWsClient } from './websocket';
@@ -77,15 +78,43 @@ function useApiResource<T>(
 
 export function useMarkets(query: ListMarketsQuery = {}) {
   const { phase, creator, limit, cursor } = query;
-  const load = useCallback(
-    () => apiClient.listMarkets({ phase, creator, limit, cursor }),
-    [creator, cursor, limit, phase],
-  );
-  return useApiResource<ListMarketsResponse>(
-    ['markets', phase, creator, limit, cursor],
-    load,
-    { refetchInterval: MARKET_BACKGROUND_REFRESH_MS },
-  );
+  const result = useInfiniteQuery({
+    queryKey: ['markets', phase, creator, limit, cursor, 'paginated'],
+    queryFn: ({ pageParam }) =>
+      apiClient.listMarkets({
+        phase,
+        creator,
+        limit,
+        ...(pageParam === undefined ? {} : { cursor: pageParam }),
+      }),
+    initialPageParam: cursor,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    staleTime: 30_000,
+    refetchInterval: MARKET_BACKGROUND_REFRESH_MS,
+    refetchIntervalInBackground: false,
+  });
+  const data = useMemo<ListMarketsResponse | null>(() => {
+    if (!result.data) return null;
+    const pages = result.data.pages;
+    return {
+      items: pages.flatMap((page) => page.items),
+      nextCursor: pages[pages.length - 1]?.nextCursor ?? null,
+    };
+  }, [result.data]);
+
+  return {
+    data,
+    isLoading: result.isLoading,
+    isLoadingMore: result.isFetchingNextPage,
+    error: result.error,
+    hasNextPage: result.hasNextPage,
+    loadMore: () => {
+      void result.fetchNextPage();
+    },
+    refetch: () => {
+      void result.refetch();
+    },
+  };
 }
 
 export function useDedupCheck(
@@ -255,14 +284,41 @@ export function useOrderBook(marketId: string) {
 
 export function useActivity(query: ActivityQuery = {}) {
   const { marketId, account, limit, cursor } = query;
-  const load = useCallback(
-    () => apiClient.getActivity({ marketId, account, limit, cursor }),
-    [account, cursor, limit, marketId],
-  );
-  return useApiResource<ActivityResponse>(
-    ['activity', marketId, account, limit, cursor],
-    load,
-  );
+  const result = useInfiniteQuery({
+    queryKey: ['activity', marketId, account, limit, cursor, 'paginated'],
+    queryFn: ({ pageParam }) =>
+      apiClient.getActivity({
+        marketId,
+        account,
+        limit,
+        ...(pageParam === undefined ? {} : { cursor: pageParam }),
+      }),
+    initialPageParam: cursor,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    staleTime: 30_000,
+  });
+  const data = useMemo<ActivityResponse | null>(() => {
+    if (!result.data) return null;
+    const pages = result.data.pages;
+    return {
+      items: pages.flatMap((page) => page.items),
+      nextCursor: pages[pages.length - 1]?.nextCursor ?? null,
+    };
+  }, [result.data]);
+
+  return {
+    data,
+    isLoading: result.isLoading,
+    isLoadingMore: result.isFetchingNextPage,
+    error: result.error,
+    hasNextPage: result.hasNextPage,
+    loadMore: () => {
+      void result.fetchNextPage();
+    },
+    refetch: () => {
+      void result.refetch();
+    },
+  };
 }
 
 export function useConfig() {

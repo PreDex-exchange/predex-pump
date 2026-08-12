@@ -86,5 +86,39 @@ describe('feed activity list', () => {
     expect(screen.getByRole('listitem').textContent).toContain(
       'cancelled a 0.25 NO bid',
     );
+    expect(screen.getByRole('listitem').textContent).toContain(
+      'Human 0xaaaaa…aaaa',
+    );
+  });
+
+  it('uses a cancellation badge distinct from market creation', () => {
+    render(
+      <ActivityList
+        events={[
+          event('OrderCancelled', { id: `${TX}:cancelled` }),
+          event('MarketCreated', {
+            id: `${TX}:created`,
+            txHash: `0x${'2'.repeat(64)}`,
+          }),
+        ]}
+        markets={[market]}
+      />,
+    );
+
+    expect(screen.getByText('Cancelled').className).not.toBe(
+      screen.getByText('Created').className,
+    );
+  });
+
+  it('applies the visible limit after semantic deduplication', () => {
+    const events = Array.from({ length: 7 }, (_, index) =>
+      event('Trade', {
+        id: `${TX}:${index}`,
+        txHash: `0x${String(index + 1).repeat(64)}`,
+      }),
+    );
+    render(<ActivityList events={events} limit={5} markets={[market]} />);
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(5);
   });
 });

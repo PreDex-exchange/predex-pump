@@ -90,6 +90,25 @@
   gap: 22px;
 }
 
+.loadMore {
+  display: block;
+  min-width: 210px;
+  padding: 11px 18px;
+  margin: var(--space-6) auto 0;
+  border: 2px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-chunky);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.loadMore:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 @media (max-width: 1040px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);

@@ -1,8 +1,10 @@
 .page {
+  min-width: 0;
   width: calc(100% - 32px);
   max-width: 1180px;
   margin: 0 auto;
   padding: var(--space-12) 0 88px;
+  overflow-wrap: anywhere;
 }
 
 .hero {
@@ -601,7 +603,8 @@
 }
 
 .previewMeta > span:last-child {
-  white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .previewResolution {
@@ -643,6 +646,7 @@
   background: var(--brand-soft);
   color: var(--ink);
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .confirmRows {

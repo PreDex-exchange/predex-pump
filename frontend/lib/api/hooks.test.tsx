@@ -7,6 +7,7 @@ import {
   act,
   cleanup,
   renderHook,
+  waitFor,
 } from '@testing-library/react';
 import {
   afterEach,
@@ -16,7 +17,7 @@ import {
   vi,
 } from 'vitest';
 
-import { useDedupCheck } from './hooks';
+import { useDedupCheck, useMarkets } from './hooks';
 
 const mocks = vi.hoisted(() => ({
   dedupCheck: vi.fn(async () => ({
@@ -25,11 +26,13 @@ const mocks = vi.hoisted(() => ({
     canonicalMarketId: null,
     candidates: [],
   })),
+  listMarkets: vi.fn(),
 }));
 
 vi.mock('./rest-client', () => ({
   backendRestClient: {
     dedupCheck: mocks.dedupCheck,
+    listMarkets: mocks.listMarkets,
   },
 }));
 
@@ -43,6 +46,42 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   mocks.dedupCheck.mockClear();
+  mocks.listMarkets.mockReset();
+});
+
+describe('paginated API resources', () => {
+  it('retains fetched market pages and requests the returned cursor', async () => {
+    mocks.listMarkets
+      .mockResolvedValueOnce({
+        items: [{ id: 'first' }],
+        nextCursor: 'next-page',
+      })
+      .mockResolvedValueOnce({
+        items: [{ id: 'second' }],
+        nextCursor: null,
+      });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+    const { result } = renderHook(() => useMarkets({ limit: 1 }), { wrapper });
+
+    await waitFor(() => expect(result.current.data?.items).toHaveLength(1));
+    act(() => result.current.loadMore());
+    await waitFor(() => expect(result.current.data?.items).toHaveLength(2));
+
+    expect(mocks.listMarkets).toHaveBeenNthCalledWith(2, {
+      limit: 1,
+      cursor: 'next-page',
+      phase: undefined,
+      creator: undefined,
+    });
+    expect(result.current.data?.nextCursor).toBeNull();
+  });
 });
 
 describe('useDedupCheck', () => {

@@ -8,14 +8,17 @@ import Link from 'next/link';
 import {
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 
 import { ActivityDescription } from '@/components/activity/ActivityDescription';
 import {
+  activityActorKind,
   dedupeActivityEvents,
   describeActivityEvent,
+  parseAgentAddresses,
+  spokenActivityActor,
+  type ActivityActorKind,
 } from '@/lib/activity';
 import { useActivity, useMarkets } from '@/lib/api/hooks';
 import {
@@ -27,7 +30,6 @@ import { shortAddress } from '@/lib/format';
 import styles from './ActivityScreen.module.css';
 
 const ACTIVITY_LIMIT = 200;
-const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/iu;
 const ACTIVITY_TYPES = new Set<ActivityType>([
   'MarketCreated',
   'Trade',
@@ -46,14 +48,7 @@ const explorerUrl = (
   'https://testnet.arcscan.app'
 ).replace(/\/+$/u, '');
 
-export function parseAgentAddresses(value: string | undefined) {
-  return new Set(
-    (value ?? '')
-      .split(',')
-      .map((address) => address.trim().toLowerCase())
-      .filter((address) => ADDRESS_PATTERN.test(address)),
-  );
-}
+export { parseAgentAddresses } from '@/lib/activity';
 
 function isActivityEvent(value: unknown): value is ActivityEvent {
   if (typeof value !== 'object' || value === null) return false;
@@ -77,26 +72,10 @@ function mergeEvents(
   return dedupeActivityEvents([...liveEvents, ...indexedEvents]);
 }
 
-type ActorKind = 'agent' | 'human' | 'protocol';
-
-function actorKind(event: ActivityEvent, agentAddresses: ReadonlySet<string>): ActorKind {
-  if (event.account === null) return 'protocol';
-  return agentAddresses.has(event.account.toLowerCase()) ? 'agent' : 'human';
-}
-
-function actorLabel(kind: ActorKind) {
+function actorLabel(kind: ActivityActorKind) {
   if (kind === 'agent') return 'Autonomous agent';
   if (kind === 'human') return 'Human wallet';
   return 'Protocol';
-}
-
-function spokenActor(event: ActivityEvent, kind: ActorKind) {
-  if (event.account === null) return 'Protocol';
-  return `${kind === 'agent' ? 'Agent' : 'Human'} ${shortAddress(
-    event.account,
-    5,
-    4,
-  )}`;
 }
 
 const CONNECTION_COPY: Record<
@@ -126,12 +105,6 @@ export function ActivityScreen({
   const [liveEvents, setLiveEvents] = useState<ActivityEvent[]>([]);
   const [connectionStatus, setConnectionStatus] =
     useState<BackendConnectionStatus>('connecting');
-  const refetchActivity = useRef(activity.refetch);
-  const wasDisconnected = useRef(false);
-
-  useEffect(() => {
-    refetchActivity.current = activity.refetch;
-  }, [activity.refetch]);
 
   useEffect(() => {
     const unsubscribeActivity = backendWsClient.subscribe(
@@ -150,11 +123,6 @@ export function ActivityScreen({
     );
     const unsubscribeStatus = backendWsClient.subscribeStatus((status) => {
       setConnectionStatus(status);
-      if (status === 'reconnecting') wasDisconnected.current = true;
-      if (status === 'live' && wasDisconnected.current) {
-        wasDisconnected.current = false;
-        refetchActivity.current();
-      }
     });
 
     return () => {
@@ -199,7 +167,7 @@ export function ActivityScreen({
           appear under Human wallet.
         </p>
       )}
-      {activity.error && (
+      {activity.error && events.length > 0 && (
         <p className={styles.warning} role="alert">
           The indexed history is unavailable, but live events will still appear
           while the WebSocket is connected.
@@ -223,6 +191,17 @@ export function ActivityScreen({
               </p>
             </div>
           </div>
+        ) : activity.error && events.length === 0 ? (
+          <div className={styles.empty} role="alert">
+            <span aria-hidden="true" className={styles.errorDot} />
+            <div>
+              <strong>Activity history could not load</strong>
+              <p>
+                The indexed request failed. Refresh the page to retry; this is not
+                an empty activity tape.
+              </p>
+            </div>
+          </div>
         ) : events.length === 0 ? (
           <div className={styles.empty} role="status">
             <span aria-hidden="true" className={styles.waitingDot} />
@@ -235,54 +214,66 @@ export function ActivityScreen({
             </div>
           </div>
         ) : (
-          <ol
-            aria-live="polite"
-            aria-relevant="additions text"
-            className={styles.events}
-          >
-            {events.map((event) => {
-              const kind = actorKind(event, agentAddresses);
-              const description = describeActivityEvent(
-                event,
-                markets.data?.items ?? [],
-              );
-              return (
-                <li className={`${styles.event} ${styles[kind]}`} key={event.id}>
-                  <div className={styles.actor}>
-                    <span className={styles.actorBadge}>{actorLabel(kind)}</span>
-                    <strong title={event.account ?? undefined}>
-                      {event.account === null
-                        ? 'Predex contracts'
-                        : shortAddress(event.account, 5, 4)}
-                    </strong>
-                  </div>
-                  <p className={styles.sentence}>
-                    <span className={styles.spokenActor}>
-                      {spokenActor(event, kind)}
-                    </span>{' '}
-                    <ActivityDescription
-                      description={description}
-                      marketClassName={styles.marketLink}
-                      valueClassName={styles.money}
-                    />
-                  </p>
-                  <div className={styles.transaction}>
-                    <Link
-                      aria-label={`View transaction ${event.txHash} on Arcscan`}
-                      href={`${explorerUrl}/tx/${event.txHash}`}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {shortAddress(event.txHash, 5, 4)} ↗
-                    </Link>
-                    <time dateTime={description.time.dateTime}>
-                      {description.time.full}
-                    </time>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
+          <>
+            <ol
+              aria-live="polite"
+              aria-relevant="additions text"
+              className={styles.events}
+            >
+              {events.map((event) => {
+                const kind = activityActorKind(event, agentAddresses);
+                const description = describeActivityEvent(
+                  event,
+                  markets.data?.items ?? [],
+                );
+                return (
+                  <li className={`${styles.event} ${styles[kind]}`} key={event.id}>
+                    <div className={styles.actor}>
+                      <span className={styles.actorBadge}>{actorLabel(kind)}</span>
+                      <strong title={event.account ?? undefined}>
+                        {event.account === null
+                          ? 'Predex contracts'
+                          : shortAddress(event.account, 5, 4)}
+                      </strong>
+                    </div>
+                    <p className={styles.sentence}>
+                      <span className={styles.spokenActor}>
+                        {spokenActivityActor(event, kind)}
+                      </span>{' '}
+                      <ActivityDescription
+                        description={description}
+                        marketClassName={styles.marketLink}
+                        valueClassName={styles.money}
+                      />
+                    </p>
+                    <div className={styles.transaction}>
+                      <Link
+                        aria-label={`View transaction ${event.txHash} on Arcscan`}
+                        href={`${explorerUrl}/tx/${event.txHash}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {shortAddress(event.txHash, 5, 4)} ↗
+                      </Link>
+                      <time dateTime={description.time.dateTime}>
+                        {description.time.full}
+                      </time>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            {activity.data?.nextCursor && (
+              <button
+                className={styles.loadMore}
+                disabled={activity.isLoadingMore}
+                onClick={activity.loadMore}
+                type="button"
+              >
+                {activity.isLoadingMore ? 'Loading older activity…' : 'Load older activity'}
+              </button>
+            )}
+          </>
         )}
       </section>
     </main>
