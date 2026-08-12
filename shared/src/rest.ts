@@ -15,6 +15,7 @@ import type {
   MarketPhase,
   MarketLiveVenue,
   OffchainOrder,
+  Order,
   OrderBook,
   Pnl,
   Position,
@@ -122,9 +123,12 @@ export interface OrderIngestRejection {
   };
 }
 
-// GET /orders — authenticated maker's own active signed orders.
+// GET /orders — authenticated maker's active orders across both book venues.
 export interface MakerOrdersResponse {
+  /** Off-chain signed orders held by the Hybrid operator. */
   orders: OffchainOrder[];
+  /** Escrowed on-chain orders indexed from MiniCLOB events. */
+  onchainOrders: Order[];
   offchainWithdrawalIsOnchainCancellation: false;
   warning: string;
 }

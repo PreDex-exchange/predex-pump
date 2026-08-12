@@ -4,7 +4,7 @@ import type {
   ListMarketsResponse,
   MakerOrdersResponse,
 } from '@predex-pump/shared/rest';
-import type { Market, OffchainOrder } from '@predex-pump/shared/domain';
+import type { Market, OffchainOrder, Order } from '@predex-pump/shared/domain';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -82,6 +82,24 @@ const openOrder: OffchainOrder = {
   },
   createdAt: 1_900_004_000,
   updatedAt: 1_900_004_100,
+};
+
+const openMiniClobOrder: Order = {
+  orderId: '24',
+  marketId: market.id,
+  conditionId: CONDITION,
+  tokenId: market.noTokenId,
+  outcome: 'NO',
+  maker: ADDRESS,
+  side: 'BID',
+  priceRaw: '456000',
+  sizeRaw: '2000000',
+  filledRaw: '0',
+  remainingRaw: '2000000',
+  open: true,
+  isSeed: false,
+  createdAt: 1_900_004_200,
+  updatedAt: 1_900_004_200,
 };
 
 const mocks = vi.hoisted(() => ({
@@ -166,6 +184,7 @@ beforeEach(() => {
   mocks.markets = { items: [market], nextCursor: null };
   mocks.makerOrders = {
     orders: [openOrder],
+    onchainOrders: [openMiniClobOrder],
     offchainWithdrawalIsOnchainCancellation: false,
     warning: 'Withdrawal is not on-chain cancellation.',
   };
@@ -175,26 +194,58 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Portfolio open orders', () => {
-  it('lists the authenticated wallet order even when it holds no positions', () => {
+  it('lists Hybrid and MiniCLOB maker orders even when the wallet holds no positions', () => {
     render(<PortfolioScreen />);
 
     expect(mocks.useMyOrders).toHaveBeenCalledWith(ADDRESS, true);
     const section = screen.getByRole('region', { name: 'Open orders' });
     expect(
-      within(section).getByText('Live signed orders are separate from historical placement events.'),
+      within(section).getByText(
+        'Live maker orders from Hybrid and MiniCLOB are shown together.',
+      ),
     ).toBeTruthy();
-    const row = within(section).getByText(market.question).closest('tr');
-    expect(row).not.toBeNull();
-    const orderRow = within(row as HTMLElement);
-    expect(orderRow.getByText('HYBRID')).toBeTruthy();
-    expect(orderRow.getByText('ASK')).toBeTruthy();
-    expect(orderRow.getByText('YES')).toBeTruthy();
-    expect(orderRow.getByText('0.544000')).toBeTruthy();
-    expect(orderRow.getByText('1')).toBeTruthy();
-    expect(orderRow.getByText('0.75')).toBeTruthy();
-    expect(orderRow.getByText('Partially filled')).toBeTruthy();
-    expect(orderRow.getByRole('link', { name: /Manage on market/u })).toBeTruthy();
+    expect(within(section).getAllByText(market.question)).toHaveLength(2);
+    const hybridRow = within(section).getByText('HYBRID').closest('tr');
+    expect(hybridRow).not.toBeNull();
+    expect(within(hybridRow as HTMLElement).getByText('ASK')).toBeTruthy();
+    expect(within(hybridRow as HTMLElement).getByText('YES')).toBeTruthy();
+    expect(within(hybridRow as HTMLElement).getByText('0.544000')).toBeTruthy();
+    expect(within(hybridRow as HTMLElement).getByText('1')).toBeTruthy();
+    expect(within(hybridRow as HTMLElement).getByText('0.75')).toBeTruthy();
+    expect(
+      within(hybridRow as HTMLElement).getByText('Partially filled'),
+    ).toBeTruthy();
+
+    const miniClobRow = within(section).getByText('MINICLOB').closest('tr');
+    expect(miniClobRow).not.toBeNull();
+    expect(within(miniClobRow as HTMLElement).getByText('BID')).toBeTruthy();
+    expect(within(miniClobRow as HTMLElement).getByText('NO')).toBeTruthy();
+    expect(within(miniClobRow as HTMLElement).getByText('0.456000')).toBeTruthy();
+    expect(within(miniClobRow as HTMLElement).getAllByText('2')).toHaveLength(2);
+    expect(within(miniClobRow as HTMLElement).getByText('Open')).toBeTruthy();
+    expect(
+      within(miniClobRow as HTMLElement).getByRole('link', {
+        name: /Manage on market/u,
+      }),
+    ).toBeTruthy();
     expect(screen.getByText('No positions yet')).toBeTruthy();
+  });
+
+  it('does not claim there are no open orders when only MiniCLOB has one', () => {
+    if (!mocks.makerOrders) throw new Error('maker order fixture missing');
+    mocks.makerOrders = {
+      ...mocks.makerOrders,
+      orders: [],
+      onchainOrders: [openMiniClobOrder],
+    };
+
+    render(<PortfolioScreen />);
+
+    const section = screen.getByRole('region', { name: 'Open orders' });
+    expect(within(section).getByText('MINICLOB')).toBeTruthy();
+    expect(
+      within(section).queryByText('No live open orders for this wallet.'),
+    ).toBeNull();
   });
 
   it('states the difference between free withdrawal and authoritative cancellation', () => {

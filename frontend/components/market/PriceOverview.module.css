@@ -64,6 +64,27 @@
   height: 180px;
 }
 
+.emptyChart {
+  display: grid;
+  min-height: 180px;
+  place-content: center;
+  gap: var(--space-1);
+  padding: var(--space-6);
+  border: 2px dashed var(--hairline);
+  border-radius: var(--radius-input);
+  background: var(--surface-muted);
+  color: var(--muted);
+  text-align: center;
+}
+
+.emptyChart strong {
+  color: var(--ink);
+}
+
+.emptyChart span {
+  font-size: var(--text-small);
+}
+
 .gridLine {
   stroke: var(--hairline);
   stroke-dasharray: 4 8;
@@ -98,7 +119,9 @@
     flex-direction: column;
   }
 
-  .chart {
+  .chart,
+  .emptyChart {
     height: 150px;
+    min-height: 150px;
   }
 }

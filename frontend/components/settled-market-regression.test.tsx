@@ -317,3 +317,42 @@ describe('Graduated snapshots with final payout data', () => {
     expect(rendered.container.querySelector('svg')).toBeNull();
   });
 });
+
+describe('PriceOverview live-state and history truthfulness', () => {
+  it('labels a graduated frozen price without calling it live marginal', () => {
+    render(<PriceOverview market={liveMarket} points={[]} />);
+
+    expect(screen.getAllByText(/implied · frozen at graduation/u)).toHaveLength(2);
+    expect(screen.queryByText(/live marginal/u)).toBeNull();
+  });
+
+  it('keeps live marginal copy for a market that is still on the LMSR curve', () => {
+    render(
+      <PriceOverview
+        market={market({
+          phase: 'Opened',
+          graduatedAt: null,
+          frozenYesPriceRaw: null,
+          resolvedAt: null,
+          resolution: null,
+        })}
+        points={[]}
+      />,
+    );
+
+    expect(screen.getAllByText(/implied · live marginal/u)).toHaveLength(2);
+  });
+
+  it.each([
+    ['zero', []],
+    [
+      'one',
+      [{ ts: 1_900_000_000, yesPriceRaw: '543000', noPriceRaw: '457000' }],
+    ],
+  ])('renders a no-history state for %s indexed price points', (_label, points) => {
+    const rendered = render(<PriceOverview market={liveMarket} points={points} />);
+
+    expect(screen.getByText('No price history yet')).toBeTruthy();
+    expect(rendered.container.querySelector('path')).toBeNull();
+  });
+});

@@ -49,6 +49,19 @@ interface PositionRow {
   estimatedPnlRaw: string;
 }
 
+interface OpenOrderRow {
+  key: string;
+  marketId: string;
+  venue: 'HYBRID' | 'MINICLOB';
+  side: OffchainOrder['side'];
+  outcome: OffchainOrder['outcome'];
+  priceRaw: string;
+  sizeRaw: string;
+  remainingRaw: string;
+  status: string;
+  createdAt: number;
+}
+
 function averageCostRaw(position: Position) {
   const quantity = BigInt(position.qtyRaw);
   if (quantity === 0n) return '0';
@@ -152,17 +165,49 @@ export function PortfolioScreen() {
     });
   }, [account?.positions, marketById]);
 
-  const openOrders = useMemo(
-    () =>
-      (makerOrders?.orders ?? [])
-        .filter(
-          (order) =>
-            isOpenOrder(order) &&
-            order.maker.toLowerCase() === address?.toLowerCase(),
-        )
-        .sort((left, right) => right.createdAt - left.createdAt),
-    [address, makerOrders?.orders],
-  );
+  const openOrders = useMemo<OpenOrderRow[]>(() => {
+    const normalizedAddress = address?.toLowerCase();
+    const hybrid = (makerOrders?.orders ?? [])
+      .filter(
+        (order) =>
+          isOpenOrder(order) &&
+          order.maker.toLowerCase() === normalizedAddress,
+      )
+      .map((order): OpenOrderRow => ({
+        key: `hybrid:${order.orderHash}`,
+        marketId: order.marketId,
+        venue: 'HYBRID',
+        side: order.side,
+        outcome: order.outcome,
+        priceRaw: order.priceRaw,
+        sizeRaw: order.sizeRaw,
+        remainingRaw: order.remainingRaw,
+        status: orderStatusLabel(order.status),
+        createdAt: order.createdAt,
+      }));
+    const miniclob = (makerOrders?.onchainOrders ?? [])
+      .filter(
+        (order) =>
+          order.open &&
+          BigInt(order.remainingRaw) > 0n &&
+          order.maker.toLowerCase() === normalizedAddress,
+      )
+      .map((order): OpenOrderRow => ({
+        key: `miniclob:${order.orderId}`,
+        marketId: order.marketId,
+        venue: 'MINICLOB',
+        side: order.side,
+        outcome: order.outcome,
+        priceRaw: order.priceRaw,
+        sizeRaw: order.sizeRaw,
+        remainingRaw: order.remainingRaw,
+        status: BigInt(order.filledRaw) > 0n ? 'Partially filled' : 'Open',
+        createdAt: order.createdAt,
+      }));
+    return [...hybrid, ...miniclob].sort(
+      (left, right) => right.createdAt - left.createdAt,
+    );
+  }, [address, makerOrders?.onchainOrders, makerOrders?.orders]);
 
   const totalPositionValueRaw = positionRows
     .reduce((total, row) => total + BigInt(row.currentValueRaw), 0n)
@@ -358,13 +403,14 @@ export function PortfolioScreen() {
             <span className={styles.kicker}>Working liquidity</span>
             <h2 id="open-orders-heading">Open orders</h2>
           </div>
-          <p>Live signed orders are separate from historical placement events.</p>
+          <p>Live maker orders from Hybrid and MiniCLOB are shown together.</p>
         </div>
 
         <p className={styles.orderSafety}>
           <strong>Withdraw · free</strong> removes an order from this operator’s
           book only. <strong>Cancel on-chain · gas</strong> invalidates the
-          signature; otherwise it can remain valid until expiry.
+          signature; otherwise it can remain valid until expiry. MiniCLOB orders
+          hold escrow on-chain and can be managed from their market page.
         </p>
 
         {sessionLoading ? (
@@ -404,7 +450,7 @@ export function PortfolioScreen() {
           >
             <table aria-describedby="open-orders-safety">
               <caption className="sr-only">
-                Live Hybrid signed orders for the connected wallet
+                Live Hybrid and MiniCLOB maker orders for the connected wallet
               </caption>
               <thead>
                 <tr>
@@ -422,7 +468,7 @@ export function PortfolioScreen() {
                 {openOrders.map((order) => {
                   const orderMarket = marketById.get(order.marketId);
                   return (
-                    <tr key={order.orderHash}>
+                    <tr key={order.key}>
                       <td className={styles.marketCell} data-label="Market">
                         <Link href={`/market/${order.marketId}`}>
                           <strong>
@@ -434,7 +480,7 @@ export function PortfolioScreen() {
                         </Link>
                       </td>
                       <td data-label="Venue">
-                        <span className={styles.venue}>HYBRID</span>
+                        <span className={styles.venue}>{order.venue}</span>
                       </td>
                       <td data-label="Side">{order.side}</td>
                       <td data-label="Outcome">
@@ -457,7 +503,7 @@ export function PortfolioScreen() {
                       </td>
                       <td data-label="Status">
                         <span className={styles.orderStatus} title={order.status}>
-                          {orderStatusLabel(order.status)}
+                          {order.status}
                         </span>
                       </td>
                     </tr>

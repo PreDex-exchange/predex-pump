@@ -30,9 +30,11 @@ function mountStyles() {
     css('styles/base.css'),
     css('components/feed/FeedScreen.module.css'),
     css('components/layout/AppHeader.module.css'),
+    css('components/layout/WalletBar.module.css'),
   ]
     .join('\n')
-    .replaceAll(':focus-visible', '.__computedFocusVisible');
+    .replaceAll(':focus-visible', '.__computedFocusVisible')
+    .replaceAll(':hover:not(:disabled)', '.__computedHover:not(:disabled)');
   document.head.append(style);
 }
 
@@ -77,5 +79,15 @@ describe('chunky controls focus visibility', () => {
     expect(link).not.toBeNull();
 
     expectVisibleFocusWithoutShadowLoss(link as HTMLAnchorElement);
+  });
+
+  it('keeps a real outline when a pointer hover overrides the wallet control shadow', () => {
+    mountStyles();
+    document.body.innerHTML =
+      '<button class="auth __computedHover" type="button">Signed in</button>';
+    const button = document.querySelector<HTMLButtonElement>('button');
+    expect(button).not.toBeNull();
+
+    expectVisibleFocusWithoutShadowLoss(button as HTMLButtonElement);
   });
 });

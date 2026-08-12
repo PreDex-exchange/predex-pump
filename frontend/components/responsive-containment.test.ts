@@ -58,4 +58,15 @@ describe('responsive containment contracts', () => {
     expect(mobileBlock).toContain('max-width: 100%');
     expect(mobileBlock).toContain('overflow-wrap: anywhere');
   });
+
+  it('allows the Gateway amount flex group to shrink inside a 320px account card', () => {
+    const css = source('components/account/GatewayDepositPanel.module.css');
+
+    expect(rule(css, '.amountField')).toContain('min-width: 0');
+    expect(rule(css, '.amountInput')).toContain('width: 100%');
+    expect(rule(css, '.amountInput')).toContain('min-width: 0');
+    expect(rule(css, '.amountInput')).toContain('max-width: 100%');
+    expect(rule(css, '.amountInput input')).toContain('min-width: 0');
+    expect(rule(css, '.amountInput b')).toContain('flex: none');
+  });
 });

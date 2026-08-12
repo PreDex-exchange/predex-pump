@@ -84,6 +84,7 @@ export function WalletBar() {
     </button>
   ) : sessionMatchesWallet ? (
     <button
+      aria-label="Sign out"
       className={`${styles.auth} ${styles.signed}`}
       onClick={() => void signOut()}
       title="Signed in. Click to sign out."
@@ -94,6 +95,7 @@ export function WalletBar() {
     </button>
   ) : isSignedIn && !address ? (
     <button
+      aria-label="Sign out"
       className={`${styles.auth} ${styles.signed}`}
       onClick={() => void signOut()}
       title={`Signed in as ${session.address}. Click to sign out.`}
@@ -179,6 +181,9 @@ export function WalletBar() {
         Arc
       </span>
       <button
+        aria-label={`Disconnect wallet. ${shortAddress(address)}, ${
+          isBalanceLoading ? 'balance loading' : `${formatWalletBalance(usdcBalance)} USDC`
+        }`}
         className={styles.wallet}
         onClick={() => disconnect()}
         title="Disconnect wallet"

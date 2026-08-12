@@ -364,6 +364,7 @@ function hybridExecutor(): HybridTraderExecutor & {
   return {
     getMakerOrders: vi.fn(async () => ({
       orders: [],
+      onchainOrders: [],
       offchainWithdrawalIsOnchainCancellation: false,
       warning: 'Withdrawal is off-chain only.',
     })),
@@ -671,6 +672,7 @@ describe('TraderAgent', () => {
     const hybridActionExecutor = hybridExecutor();
     hybridActionExecutor.getMakerOrders.mockResolvedValue({
       orders: [resting],
+      onchainOrders: [],
       offchainWithdrawalIsOnchainCancellation: false,
       warning: 'Withdrawal is off-chain only.',
     });
@@ -739,6 +741,7 @@ describe('TraderAgent', () => {
     const hybridActionExecutor = hybridExecutor();
     hybridActionExecutor.getMakerOrders.mockResolvedValue({
       orders: [stale],
+      onchainOrders: [],
       offchainWithdrawalIsOnchainCancellation: false,
       warning: 'Withdrawal is off-chain only.',
     });

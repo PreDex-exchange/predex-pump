@@ -58,8 +58,8 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
+  outline: 4px solid rgb(62 143 224 / 32%);
+  outline-offset: 2px;
 }
 
 h1,

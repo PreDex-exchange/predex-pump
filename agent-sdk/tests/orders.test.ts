@@ -35,6 +35,7 @@ const request: IngestOrderRequest = {
 
 const makerOrders: MakerOrdersResponse = {
   orders: [],
+  onchainOrders: [],
   offchainWithdrawalIsOnchainCancellation: false,
   warning: 'Off-chain withdrawal does not cancel on-chain.',
 };

@@ -79,20 +79,49 @@ export function formatSignedUsdc(raw: Raw, digits = 2) {
   }
 }
 
-export function parseUsdcInput(value: string): Raw | null {
+export type UsdcInputFailure =
+  | 'EMPTY'
+  | 'NEGATIVE'
+  | 'NON_NUMERIC'
+  | 'INVALID_FORMAT'
+  | 'TOO_MANY_DECIMALS';
+
+export type UsdcInputParseResult =
+  | { ok: true; raw: Raw }
+  | { ok: false; reason: UsdcInputFailure };
+
+export function parseUsdcInputResult(value: string): UsdcInputParseResult {
   const normalized = value.trim();
-  if (!/^(?:\d+(?:\.\d{0,6})?|\.\d{1,6})$/.test(normalized)) return null;
+  if (normalized === '') return { ok: false, reason: 'EMPTY' };
+  if (normalized.startsWith('-')) return { ok: false, reason: 'NEGATIVE' };
+  if (/[^\d.]/u.test(normalized)) {
+    return { ok: false, reason: 'NON_NUMERIC' };
+  }
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/u.test(normalized)) {
+    return { ok: false, reason: 'INVALID_FORMAT' };
+  }
 
   const [whole = '0', fraction = ''] = normalized.split('.');
+  if (fraction.length > RAW_DECIMALS) {
+    return { ok: false, reason: 'TOO_MANY_DECIMALS' };
+  }
 
   try {
-    return (
-      BigInt(whole || '0') * 1_000_000n +
-      BigInt(fraction.padEnd(6, '0') || '0')
-    ).toString();
+    return {
+      ok: true,
+      raw: (
+        BigInt(whole || '0') * 1_000_000n +
+        BigInt(fraction.padEnd(6, '0') || '0')
+      ).toString(),
+    };
   } catch {
-    return null;
+    return { ok: false, reason: 'INVALID_FORMAT' };
   }
+}
+
+export function parseUsdcInput(value: string): Raw | null {
+  const result = parseUsdcInputResult(value);
+  return result.ok ? result.raw : null;
 }
 
 export function formatCompactUsdc(raw: Raw) {

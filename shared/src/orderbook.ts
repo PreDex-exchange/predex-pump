@@ -49,11 +49,30 @@ export function assertAllowedMinimumTickSizeRaw(
   }
 }
 
+export type PriceTickFailure =
+  | 'NON_POSITIVE'
+  | 'ABOVE_MAXIMUM'
+  | 'INVALID_TICK'
+  | 'OFF_TICK';
+
+/**
+ * Keep the independent price-policy checks observable to callers that need to
+ * explain a rejection. `isPriceOnTick` remains the compact boolean contract for
+ * transaction builders and backend validation.
+ */
+export function priceTickFailure(
+  priceRaw: bigint,
+  tickSizeRaw: bigint,
+): PriceTickFailure | null {
+  if (priceRaw <= 0n) return 'NON_POSITIVE';
+  if (priceRaw > ORDER_PRICE_SCALE_RAW) return 'ABOVE_MAXIMUM';
+  if (!isAllowedMinimumTickSizeRaw(tickSizeRaw)) return 'INVALID_TICK';
+  if (priceRaw % tickSizeRaw !== 0n) return 'OFF_TICK';
+  return null;
+}
+
 export function isPriceOnTick(priceRaw: bigint, tickSizeRaw: bigint): boolean {
-  return priceRaw > 0n &&
-    priceRaw <= ORDER_PRICE_SCALE_RAW &&
-    isAllowedMinimumTickSizeRaw(tickSizeRaw) &&
-    priceRaw % tickSizeRaw === 0n;
+  return priceTickFailure(priceRaw, tickSizeRaw) === null;
 }
 
 export function isOrderSizeGranular(sizeRaw: bigint): boolean {

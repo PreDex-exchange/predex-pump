@@ -210,6 +210,29 @@ describe('POST /orders validation', () => {
   it('serves the authenticated maker orders and protects local withdrawal', async () => {
     const { request, account } = await signedOrderRequest({ salt: 14n });
     expect((await submit(request)).statusCode).toBe(200);
+    await testPrisma.order.create({
+      data: {
+        orderId: '900',
+        marketId: '1',
+        conditionId: `0x${'1'.repeat(64)}`,
+        tokenId: '101',
+        outcome: 'YES',
+        maker: account.address.toLowerCase(),
+        side: 'ASK',
+        priceRaw: '650000',
+        sizeRaw: '1000000',
+        escrowRaw: '1000000',
+        filledRaw: '0',
+        remainingRaw: '1000000',
+        open: true,
+        isSeed: false,
+        txHash: `0x${'9'.repeat(64)}`,
+        logIndex: 9,
+        blockNumber: 99,
+        createdAt: BOOK_NOW,
+        updatedAt: BOOK_NOW,
+      },
+    });
     const token = 'throwaway-test-session';
     await testPrisma.userAccount.create({
       data: { address: account.address.toLowerCase() },
@@ -232,6 +255,7 @@ describe('POST /orders validation', () => {
     expect(own.json<MakerOrdersResponse>()).toMatchObject({
       offchainWithdrawalIsOnchainCancellation: false,
       orders: [{ orderHash: request.orderHash.toLowerCase() }],
+      onchainOrders: [{ orderId: '900', maker: account.address.toLowerCase() }],
     });
 
     expect(

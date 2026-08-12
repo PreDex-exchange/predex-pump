@@ -17,22 +17,11 @@ import styles from './PriceOverview.module.css';
 
 type Timeframe = '1h' | '1d' | '1w' | 'all';
 
-function chartPaths(points: PricePoint[], currentYesPriceRaw: string) {
-  const values =
-    points.length > 1
-      ? points
-      : [
-          { yesPriceRaw: currentYesPriceRaw },
-          { yesPriceRaw: currentYesPriceRaw },
-        ];
-  const rawValues = values.map((point) => Number(point.yesPriceRaw));
-  const minimum = Math.min(...rawValues);
-  const maximum = Math.max(...rawValues);
-  const range = Math.max(40_000, maximum - minimum);
-  const coordinates = values.map((point, index) => {
-    const x = (index / (values.length - 1)) * 600;
-    const value = (Number(point.yesPriceRaw) - minimum) / range;
-    return { x, y: 150 - value * 105 };
+function chartPaths(points: PricePoint[]) {
+  const coordinates = points.map((point, index) => {
+    const x = (index / (points.length - 1)) * 600;
+    const price = Math.max(0, Math.min(1, Number(point.yesPriceRaw) / 1_000_000));
+    return { x, y: 155 - price * 110 };
   });
   const line = coordinates.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
   return {
@@ -53,13 +42,20 @@ export function PriceOverview({
   const [timeframe, setTimeframe] = useState<Timeframe>('1d');
   const gradientId = useId().replaceAll(':', '');
   const settled = isMarketSettled(market, resolution);
+  const graduated =
+    market.phase === 'Graduated' || market.frozenYesPriceRaw !== null;
   const yesPriceRaw = marketPriceRaw(market, 'YES', resolution);
   const noPriceRaw = marketPriceRaw(market, 'NO', resolution);
   const visiblePoints = useMemo(() => {
     const count = timeframe === '1h' ? 3 : timeframe === '1d' ? 7 : points.length;
     return points.slice(-count);
   }, [points, timeframe]);
-  const paths = chartPaths(visiblePoints, yesPriceRaw);
+  const paths = visiblePoints.length >= 2 ? chartPaths(visiblePoints) : null;
+  const priceCaption = settled
+    ? 'payout · final'
+    : graduated
+      ? 'implied · frozen at graduation'
+      : 'implied · live marginal';
 
   return (
     <Card>
@@ -69,7 +65,7 @@ export function PriceOverview({
           <NumberDisplay size="price">{formatPrice(yesPriceRaw)}</NumberDisplay>
           <small className="numeric">
             {formatImpliedPercent(yesPriceRaw)}%{' '}
-            {settled ? 'payout · final' : 'implied · live marginal'}
+            {priceCaption}
           </small>
         </div>
         <div className={`${styles.price} ${styles.no}`}>
@@ -77,7 +73,7 @@ export function PriceOverview({
           <NumberDisplay size="price">{formatPrice(noPriceRaw)}</NumberDisplay>
           <small className="numeric">
             {formatImpliedPercent(noPriceRaw)}%{' '}
-            {settled ? 'payout · final' : 'implied · live marginal'}
+            {priceCaption}
           </small>
         </div>
       </div>
@@ -96,25 +92,32 @@ export function PriceOverview({
           value={timeframe}
         />
       </div>
-      <svg
-        aria-label="YES price history"
-        className={styles.chart}
-        preserveAspectRatio="none"
-        role="img"
-        viewBox="0 0 600 180"
-      >
-        <defs>
-          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0" stopColor="var(--yes)" stopOpacity=".22" />
-            <stop offset="1" stopColor="var(--yes)" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <line className={styles.gridLine} x1="0" x2="600" y1="45" y2="45" />
-        <line className={styles.gridLine} x1="0" x2="600" y1="100" y2="100" />
-        <line className={styles.gridLine} x1="0" x2="600" y1="155" y2="155" />
-        <path d={paths.area} fill={`url(#${gradientId})`} />
-        <path className={styles.line} d={paths.line} />
-      </svg>
+      {paths === null ? (
+        <div className={styles.emptyChart} role="status">
+          <strong>No price history yet</strong>
+          <span>At least two indexed price points are needed to draw a trend.</span>
+        </div>
+      ) : (
+        <svg
+          aria-label="YES price history on a 0 to 1 USDC scale"
+          className={styles.chart}
+          preserveAspectRatio="none"
+          role="img"
+          viewBox="0 0 600 180"
+        >
+          <defs>
+            <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0" stopColor="var(--yes)" stopOpacity=".22" />
+              <stop offset="1" stopColor="var(--yes)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <line className={styles.gridLine} x1="0" x2="600" y1="45" y2="45" />
+          <line className={styles.gridLine} x1="0" x2="600" y1="100" y2="100" />
+          <line className={styles.gridLine} x1="0" x2="600" y1="155" y2="155" />
+          <path d={paths.area} fill={`url(#${gradientId})`} />
+          <path className={styles.line} d={paths.line} />
+        </svg>
+      )}
     </Card>
   );
 }

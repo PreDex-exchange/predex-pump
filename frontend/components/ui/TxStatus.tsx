@@ -5,7 +5,10 @@ import styles from './TxStatus.module.css';
 
 export function TxStatus({ state }: { state: TxProgress }) {
   if (state.phase === 'idle') return null;
-  const failed = state.phase === 'rejected' || state.phase === 'reverted';
+  const failed =
+    state.phase === 'rejected' ||
+    state.phase === 'failed' ||
+    state.phase === 'reverted';
 
   return (
     <div

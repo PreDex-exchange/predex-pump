@@ -16,14 +16,15 @@ import {
 } from '@predex-pump/shared';
 import { useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
-import { useAccount } from 'wagmi';
+import { useAccount, useReadContract } from 'wagmi';
 
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Tabs } from '@/components/ui/Tabs';
 import { TxStatus } from '@/components/ui/TxStatus';
-import { arcTestnet } from '@/lib/chain/arc';
+import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
+import { collateralErc20Abi } from '@/lib/chain/contracts';
 import {
   cancelOrderOnArc,
   cumulativeMiniClobPaymentRaw,
@@ -45,6 +46,7 @@ import {
   ORDER_SIZE_STEP,
   ORDER_SIZE_STEP_ERROR,
   snappedOrderSizeInput,
+  validateOrderPriceInput,
 } from '@/lib/order-input';
 
 import { HybridOrderBookPanel } from './HybridOrderBookPanel';
@@ -208,6 +210,16 @@ function MiniClobOrderBookPanel({
   const [action, setAction] = useState<BookAction | null>(null);
   const [completion, setCompletion] = useState<string | null>(null);
   const { address, chainId, isConnected } = useAccount();
+  const collateralBalance = useReadContract({
+    address: arcAddresses.usdc,
+    abi: collateralErc20Abi,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    chainId: arcTestnet.id,
+    query: {
+      enabled: Boolean(address) && chainId === arcTestnet.id,
+    },
+  });
   const tx = useTxFlow();
   const settlement = useSettlementStatus(market, address);
   const sourceBook = outcome === 'YES' ? books.yes : books.no;
@@ -215,7 +227,9 @@ function MiniClobOrderBookPanel({
     () => orderBookForVenue(sourceBook, 'MINICLOB'),
     [sourceBook],
   );
-  const priceRaw = inputRaw(price);
+  const priceValidation = validateOrderPriceInput(price, minimumTickSizeRaw);
+  const priceRaw = priceValidation.raw;
+  const priceError = priceValidation.error;
   const sizeRaw = inputRaw(size);
   const fillSizeRaw = inputRaw(fillSize);
   const wrongNetwork = isConnected && chainId !== arcTestnet.id;
@@ -224,8 +238,8 @@ function MiniClobOrderBookPanel({
   const selectedPosition = positions.find(
     (position) => position.outcome === outcome,
   );
-  const validPrice =
-    priceRaw !== null && isPriceOnTick(priceRaw, minimumTickSizeRaw);
+  const outcomeBalanceRaw = BigInt(selectedPosition?.qtyRaw ?? '0');
+  const validPrice = priceRaw !== null && priceError === null;
   const validSize = sizeRaw !== null && isOrderSizeGranular(sizeRaw);
   const sizeError =
     sizeRaw === null || sizeRaw <= 0n
@@ -239,13 +253,39 @@ function MiniClobOrderBookPanel({
         ? cumulativeMiniClobPaymentRaw(priceRaw, sizeRaw)
         : sizeRaw
       : null;
+  const fundingError =
+    placeEscrowRaw === null
+      ? null
+      : orderSide === 'BID'
+        ? collateralBalance.error
+          ? 'Arc USDC balance is unavailable'
+          : collateralBalance.data !== undefined &&
+              placeEscrowRaw > collateralBalance.data
+            ? `Insufficient USDC balance: requires ${formatUsdc(placeEscrowRaw.toString(), 6)} USDC, wallet holds ${formatUsdc(collateralBalance.data.toString(), 6)} USDC`
+            : null
+        : placeEscrowRaw > outcomeBalanceRaw
+          ? `Insufficient ${outcome} balance: requires ${formatRaw(placeEscrowRaw.toString(), {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 6,
+            })} ${outcome}, wallet holds ${formatRaw(outcomeBalanceRaw.toString(), {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 6,
+            })} ${outcome}`
+          : null;
+  const fundingReady =
+    placeEscrowRaw !== null &&
+    fundingError === null &&
+    (orderSide === 'BID'
+      ? collateralBalance.data !== undefined
+      : placeEscrowRaw <= outcomeBalanceRaw);
   const canPlace =
     isConnected &&
     Boolean(address) &&
     !wrongNetwork &&
     conditionUnresolved &&
     validPrice &&
-    validSize;
+    validSize &&
+    fundingReady;
 
   const restingOrders = useMemo(
     () =>
@@ -409,10 +449,16 @@ function MiniClobOrderBookPanel({
           ? 'Condition read unavailable'
           : !conditionUnresolved
             ? 'Market resolved'
-            : !validPrice
-              ? 'Enter a price from 0 to 1'
+            : priceError
+              ? priceError
               : sizeError
                 ? sizeError
+                : orderSide === 'BID' && collateralBalance.isLoading
+                  ? 'Reading Arc USDC balance…'
+                  : fundingError
+                    ? fundingError
+                    : !fundingReady
+                      ? 'Funding balance unavailable'
                 : `Preview ${outcome} ${orderSide}`;
 
   const confirmDisabled =
@@ -526,13 +572,16 @@ function MiniClobOrderBookPanel({
               <span>Limit price</span>
               <span className={styles.input}>
                 <input
-                  aria-invalid={!validPrice}
+                  aria-describedby={
+                    priceError ? 'miniclob-order-price-error' : undefined
+                  }
+                  aria-invalid={priceError !== null}
                   inputMode="decimal"
                   onChange={(event) => setPrice(event.target.value)}
                   onBlur={() => {
                     if (
                       priceRaw !== null &&
-                      priceRaw >= 0n &&
+                      priceRaw > 0n &&
                       priceRaw <= PRICE_SCALE
                     ) {
                       setPrice(
@@ -550,6 +599,15 @@ function MiniClobOrderBookPanel({
                 <b>USDC/token</b>
               </span>
             </label>
+            {priceError && (
+              <p
+                className={styles.sizeError}
+                id="miniclob-order-price-error"
+                role="alert"
+              >
+                {priceError}
+              </p>
+            )}
             <p className={styles.onchainNote}>
               New-order price tick {formatUnits(minimumTickSizeRaw, 6)} USDC ·
               {' '}size step 0.001 token. Existing resting orders, including
@@ -560,9 +618,16 @@ function MiniClobOrderBookPanel({
               <span className={styles.input}>
                 <input
                   aria-describedby={
-                    sizeError ? 'miniclob-order-size-error' : undefined
+                    sizeError
+                      ? 'miniclob-order-size-error'
+                      : orderSide === 'ASK' && fundingError
+                        ? 'miniclob-order-funding-error'
+                        : undefined
                   }
-                  aria-invalid={sizeError !== null}
+                  aria-invalid={
+                    sizeError !== null ||
+                    (orderSide === 'ASK' && fundingError !== null)
+                  }
                   inputMode="decimal"
                   onChange={(event) => setSize(event.target.value)}
                   onBlur={() => {
@@ -602,15 +667,30 @@ function MiniClobOrderBookPanel({
               <div>
                 <dt>Wallet holds</dt>
                 <dd className="numeric">
-                  {selectedPosition
-                    ? `${formatRaw(selectedPosition.qtyRaw, {
+                  {orderSide === 'BID'
+                    ? collateralBalance.isLoading
+                      ? 'Loading Arc USDC…'
+                      : collateralBalance.data === undefined
+                        ? '— USDC'
+                        : `${formatUsdc(collateralBalance.data.toString(), 6)} USDC`
+                    : selectedPosition
+                      ? `${formatRaw(selectedPosition.qtyRaw, {
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 3,
                       })} ${outcome}`
-                    : `0 ${outcome}`}
+                      : `0 ${outcome}`}
                 </dd>
               </div>
             </dl>
+            {fundingError && (
+              <p
+                className={styles.sizeError}
+                id="miniclob-order-funding-error"
+                role="alert"
+              >
+                {fundingError}
+              </p>
+            )}
             <Button
               disabled={!canPlace}
               fullWidth
@@ -777,6 +857,27 @@ function MiniClobOrderBookPanel({
                 </dd>
               </div>
               <div>
+                <dt>
+                  {orderSide === 'BID'
+                    ? 'USDC escrow total'
+                    : `${outcome} escrow total`}
+                </dt>
+                <dd className="numeric">
+                  {placeEscrowRaw === null
+                    ? '—'
+                    : orderSide === 'BID'
+                      ? `${formatUsdc(placeEscrowRaw.toString(), 6)} USDC`
+                      : `${formatRaw(placeEscrowRaw.toString(), {
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 6,
+                        })} ${outcome}`}
+                </dd>
+              </div>
+              <div>
+                <dt>Expiry</dt>
+                <dd>No expiry · good till cancelled</dd>
+              </div>
+              <div>
                 <dt>Approval</dt>
                 <dd>
                   {orderSide === 'BID'
@@ -785,6 +886,10 @@ function MiniClobOrderBookPanel({
                 </dd>
               </div>
             </dl>
+            <p className={styles.onchainNote}>
+              A resting order can be filled by anyone until it is filled or
+              cancelled on-chain. This is a binding commitment, not a draft.
+            </p>
           </>
         )}
 

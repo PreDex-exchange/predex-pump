@@ -15,7 +15,6 @@ import type {
 } from '@predex-pump/shared/rest';
 import {
   isOrderSizeGranular,
-  isPriceOnTick,
   leavesRepresentableRemainder,
   quantizePriceRaw,
 } from '@predex-pump/shared';
@@ -26,7 +25,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
-import { useAccount } from 'wagmi';
+import { useAccount, useReadContract } from 'wagmi';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Button } from '@/components/ui/Button';
@@ -39,7 +38,8 @@ import {
   useMyOrders,
 } from '@/lib/api/hooks';
 import { backendRestClient } from '@/lib/api/rest-client';
-import { arcTestnet } from '@/lib/chain/arc';
+import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
+import { collateralErc20Abi } from '@/lib/chain/contracts';
 import {
   approveCtfExchangeCollateralOnArc,
   approveCtfExchangeTokensOnArc,
@@ -67,6 +67,7 @@ import {
   ORDER_SIZE_STEP,
   ORDER_SIZE_STEP_ERROR,
   snappedOrderSizeInput,
+  validateOrderPriceInput,
 } from '@/lib/order-input';
 
 import styles from './HybridOrderBookPanel.module.css';
@@ -243,6 +244,16 @@ export function HybridOrderBookPanel({
 }: HybridOrderBookPanelProps) {
   const queryClient = useQueryClient();
   const { address, chainId, isConnected } = useAccount();
+  const collateralBalance = useReadContract({
+    address: arcAddresses.usdc,
+    abi: collateralErc20Abi,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    chainId: arcTestnet.id,
+    query: {
+      enabled: Boolean(address) && chainId === arcTestnet.id,
+    },
+  });
   const { session, isLoading: sessionLoading, isSigningIn, signIn } = useAuth();
   const authenticated =
     session?.authenticated === true &&
@@ -294,27 +305,21 @@ export function HybridOrderBookPanel({
     () => orderBookForVenue(sourceBook, 'HYBRID'),
     [sourceBook],
   );
-  const priceRaw = rawInput(price);
+  const priceValidation = validateOrderPriceInput(price, minimumTickSizeRaw);
+  const priceRaw = priceValidation.raw;
+  const priceError = priceValidation.error;
   const sizeRaw = rawInput(size);
   const outcomeBalanceRaw = BigInt(
     positions.find((position) => position.outcome === outcome)?.qtyRaw ?? '0',
   );
-  const priceOnTick =
-    priceRaw !== null && isPriceOnTick(priceRaw, minimumTickSizeRaw);
   const sizeIsGranular =
     sizeRaw !== null && isOrderSizeGranular(sizeRaw);
-  const hasSufficientOutcomeBalance =
-    orderSide !== 'ASK' ||
-    sizeRaw === null ||
-    sizeRaw <= outcomeBalanceRaw;
   const sizeError =
     sizeRaw === null || sizeRaw <= 0n
       ? 'Enter an order size greater than zero'
       : !sizeIsGranular
         ? ORDER_SIZE_STEP_ERROR
-        : !hasSufficientOutcomeBalance
-          ? `Insufficient ${outcome} balance for this sell`
-          : null;
+        : null;
   const expiration = parseUtcInput(expiry);
   const validExpiration =
     expiration !== null &&
@@ -324,7 +329,7 @@ export function HybridOrderBookPanel({
       priceRaw === null ||
       sizeRaw === null ||
       expiration === null ||
-      !priceOnTick ||
+      priceError !== null ||
       !sizeIsGranular
     ) {
       return null;
@@ -341,6 +346,31 @@ export function HybridOrderBookPanel({
       return null;
     }
   })();
+  const fundingError =
+    commitment === null
+      ? null
+      : orderSide === 'BID'
+        ? collateralBalance.error
+          ? 'Arc USDC balance is unavailable'
+          : collateralBalance.data !== undefined &&
+              commitment.collateralRaw > collateralBalance.data
+            ? `Insufficient USDC balance: requires ${formatUsdc(commitment.collateralRaw.toString(), 6)} USDC, wallet holds ${formatUsdc(collateralBalance.data.toString(), 6)} USDC`
+            : null
+        : commitment.sizeRaw > outcomeBalanceRaw
+          ? `Insufficient ${outcome} balance: requires ${formatRaw(commitment.sizeRaw.toString(), {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 6,
+            })} ${outcome}, wallet holds ${formatRaw(outcomeBalanceRaw.toString(), {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 6,
+            })} ${outcome}`
+          : null;
+  const fundingReady =
+    commitment !== null &&
+    fundingError === null &&
+    (orderSide === 'BID'
+      ? collateralBalance.data !== undefined
+      : commitment.sizeRaw <= outcomeBalanceRaw);
   const effectiveApprovals = useMemo(
     () =>
       approvalStateWithConfirmed(
@@ -373,6 +403,7 @@ export function HybridOrderBookPanel({
     !wrongNetwork &&
     Boolean(commitment) &&
     sizeError === null &&
+    fundingReady &&
     validExpiration &&
     makerApprovalReady &&
     market.resolvedAt === null;
@@ -482,6 +513,7 @@ export function HybridOrderBookPanel({
       !commitment ||
       !makerApprovalReady ||
       sizeError !== null ||
+      !fundingReady ||
       !validExpiration
     ) {
       return;
@@ -632,23 +664,29 @@ export function HybridOrderBookPanel({
     ? 'Connect wallet in the header'
     : wrongNetwork
       ? 'Switch to Arc Testnet'
-      : approvals.isLoading
-        ? 'Reading indexed approvals…'
-        : approvals.error
-          ? 'Approval state unavailable'
-          : !priceOnTick
-            ? 'Enter a price on the shown tick'
-            : sizeError
-              ? sizeError
-            : !validExpiration
-              ? 'Choose a future expiry'
-              : !commitment
-                ? 'This order cannot be prepared'
-              : !makerApprovalReady
-                ? orderSide === 'BID'
-                  ? 'Approve exact collateral above'
-                  : 'Approve position transfers above'
-                : 'Review binding order';
+      : priceError
+        ? priceError
+        : sizeError
+          ? sizeError
+          : orderSide === 'BID' && collateralBalance.isLoading
+            ? 'Reading Arc USDC balance…'
+            : fundingError
+              ? fundingError
+              : !fundingReady
+                ? 'Funding balance unavailable'
+                : approvals.isLoading
+                  ? 'Reading indexed approvals…'
+                  : approvals.error
+                    ? 'Approval state unavailable'
+                    : !validExpiration
+                      ? 'Choose a future expiry'
+                      : !commitment
+                        ? 'This order cannot be prepared'
+                        : !makerApprovalReady
+                          ? orderSide === 'BID'
+                            ? 'Approve exact collateral above'
+                            : 'Approve position transfers above'
+                          : 'Review binding order';
 
   return (
     <>
@@ -752,15 +790,16 @@ export function HybridOrderBookPanel({
               <span>Limit price</span>
               <span className={styles.input}>
                 <input
-                  aria-invalid={
-                    !priceOnTick
+                  aria-describedby={
+                    priceError ? 'hybrid-order-price-error' : undefined
                   }
+                  aria-invalid={priceError !== null}
                   inputMode="decimal"
                   onChange={(event) => setPrice(event.target.value)}
                   onBlur={() => {
                     if (
                       priceRaw !== null &&
-                      priceRaw >= 0n &&
+                      priceRaw > 0n &&
                       priceRaw <= 1_000_000n
                     ) {
                       setPrice(
@@ -778,14 +817,30 @@ export function HybridOrderBookPanel({
                 <b>USDC/token</b>
               </span>
             </label>
+            {priceError && (
+              <p
+                className={styles.sizeError}
+                id="hybrid-order-price-error"
+                role="alert"
+              >
+                {priceError}
+              </p>
+            )}
             <label className={styles.field}>
               <span>Size</span>
               <span className={styles.input}>
                 <input
                   aria-describedby={
-                    sizeError ? 'hybrid-order-size-error' : undefined
+                    sizeError
+                      ? 'hybrid-order-size-error'
+                      : orderSide === 'ASK' && fundingError
+                        ? 'hybrid-order-funding-error'
+                        : undefined
                   }
-                  aria-invalid={sizeError !== null}
+                  aria-invalid={
+                    sizeError !== null ||
+                    (orderSide === 'ASK' && fundingError !== null)
+                  }
                   inputMode="decimal"
                   onChange={(event) => setSize(event.target.value)}
                   onBlur={() => {
@@ -850,7 +905,11 @@ export function HybridOrderBookPanel({
             </label>
             <dl className={styles.ticketRows}>
               <div>
-                <dt>Total collateral</dt>
+                <dt>
+                  {orderSide === 'BID'
+                    ? 'Total collateral'
+                    : 'Estimated proceeds'}
+                </dt>
                 <dd className="numeric">
                   {commitment
                     ? `${formatUsdc(commitment.collateralRaw.toString(), 6)} USDC`
@@ -860,14 +919,28 @@ export function HybridOrderBookPanel({
               <div>
                 <dt>Wallet holds</dt>
                 <dd className="numeric">
-                  {formatRaw(outcomeBalanceRaw.toString(), {
-                    minimumFractionDigits: 0,
-                    maximumFractionDigits: 6,
-                  })}{' '}
-                  {outcome}
+                  {orderSide === 'BID'
+                    ? collateralBalance.isLoading
+                      ? 'Loading Arc USDC…'
+                      : collateralBalance.data === undefined
+                        ? '— USDC'
+                        : `${formatUsdc(collateralBalance.data.toString(), 6)} USDC`
+                    : `${formatRaw(outcomeBalanceRaw.toString(), {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 6,
+                      })} ${outcome}`}
                 </dd>
               </div>
             </dl>
+            {fundingError && (
+              <p
+                className={styles.sizeError}
+                id="hybrid-order-funding-error"
+                role="alert"
+              >
+                {fundingError}
+              </p>
+            )}
 
             <section className={styles.approvals} aria-label="Exchange approvals">
               <div className={styles.approvalHeader}>
@@ -917,7 +990,9 @@ export function HybridOrderBookPanel({
                     {!effectiveApprovals.ctfApprovedForAll &&
                       orderSide === 'ASK' && (
                       <Button
-                        disabled={approvalTx.isBusy || wrongNetwork}
+                        disabled={
+                          approvalTx.isBusy || wrongNetwork || !fundingReady
+                        }
                         onClick={() => void approveTokens()}
                         size="small"
                         variant="neutral"
@@ -957,7 +1032,9 @@ export function HybridOrderBookPanel({
                         commitment.collateralRaw &&
                       orderSide === 'BID' && (
                         <Button
-                          disabled={approvalTx.isBusy || wrongNetwork}
+                          disabled={
+                            approvalTx.isBusy || wrongNetwork || !fundingReady
+                          }
                           onClick={() =>
                             void approveCollateral(commitment.collateralRaw)
                           }
@@ -1221,7 +1298,11 @@ export function HybridOrderBookPanel({
                 </dd>
               </div>
               <div>
-                <dt>Total collateral</dt>
+                <dt>
+                  {orderSide === 'BID'
+                    ? 'Total collateral'
+                    : 'Estimated proceeds'}
+                </dt>
                 <dd className="numeric">
                   {formatUsdc(commitment.collateralRaw.toString(), 6)} USDC
                 </dd>

@@ -57,12 +57,14 @@
 }
 
 .rejected,
+.failed,
 .reverted {
   border-color: var(--error);
   background: var(--error-soft);
 }
 
 .rejected .heading > span,
+.failed .heading > span,
 .reverted .heading > span {
   background: var(--error);
 }

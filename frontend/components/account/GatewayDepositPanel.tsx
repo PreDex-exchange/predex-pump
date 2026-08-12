@@ -15,7 +15,11 @@ import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
 import { collateralErc20Abi } from '@/lib/chain/contracts';
 import { depositToCircleGatewayOnArc } from '@/lib/chain/transactions';
 import { useTxFlow } from '@/lib/chain/useTxFlow';
-import { formatRaw, parseUsdcInput, shortAddress } from '@/lib/format';
+import {
+  formatRaw,
+  parseUsdcInputResult,
+  shortAddress,
+} from '@/lib/format';
 
 import styles from './GatewayDepositPanel.module.css';
 
@@ -64,20 +68,30 @@ export function GatewayDepositPanel({
     },
   });
 
-  const amountRawString = parseUsdcInput(amount);
-  const amountRaw = amountRawString === null ? null : BigInt(amountRawString);
+  const parsedAmount = parseUsdcInputResult(amount);
+  const amountRaw = parsedAmount.ok ? BigInt(parsedAmount.raw) : null;
   const walletMatchesSession =
     Boolean(address) &&
     address?.toLowerCase() === sessionAddress.toLowerCase();
   const wrongNetwork = isConnected && chainId !== arcTestnet.id;
+  const amountParseError = parsedAmount.ok
+    ? null
+    : {
+        EMPTY: 'Enter a USDC amount.',
+        NEGATIVE: 'USDC amount cannot be negative.',
+        NON_NUMERIC: 'Enter a numeric USDC amount.',
+        INVALID_FORMAT: 'Enter a USDC amount with one decimal point.',
+        TOO_MANY_DECIMALS: 'USDC supports at most six decimal places.',
+      }[parsedAmount.reason];
   const amountError =
-    amountRaw === null
-      ? 'Enter a USDC amount with at most six decimal places.'
-      : amountRaw <= 0n
+    amountParseError ??
+    (amountRaw !== null && amountRaw <= 0n
         ? 'Enter an amount greater than zero.'
-        : walletBalance.data !== undefined && amountRaw > walletBalance.data
+        : amountRaw !== null &&
+            walletBalance.data !== undefined &&
+            amountRaw > walletBalance.data
           ? 'Amount exceeds this wallet’s Arc USDC balance.'
-          : null;
+          : null);
   const canDeposit =
     Boolean(gatewayBalance) &&
     !gatewayLoading &&

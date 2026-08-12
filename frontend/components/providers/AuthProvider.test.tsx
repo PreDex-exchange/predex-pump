@@ -184,4 +184,18 @@ describe('AuthProvider', () => {
       /viem|Details:|Version:|2\.55\.8/u,
     );
   });
+
+  it('names destructive header controls by their actions', async () => {
+    mocks.getSession.mockResolvedValue(authenticated);
+    renderAuth(new QueryClient(), true);
+
+    await screen.findByText(`signed:${ADDRESS}`);
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', {
+        name: /Disconnect wallet\. 0x1212…212, 5\.00 USDC/u,
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Signed in' })).toBeNull();
+  });
 });

@@ -28,6 +28,7 @@ import {
   type Hex,
 } from 'viem';
 
+import { toOrderDto } from '../api/dto.js';
 import type { ServerEventBus } from '../events/bus.js';
 import { fillabilityForOrders, findSignedOrdersWithFillability } from './fillability.js';
 import { OrderIngestError } from './input.js';
@@ -396,19 +397,29 @@ export class OffchainOrderService {
 
   async listMakerOrders(maker: string): Promise<MakerOrdersResponse> {
     const now = this.now();
-    const rows = await findSignedOrdersWithFillability(
-      this.prisma,
-      {
-        maker,
-        status: { in: ['OPEN', 'PARTIALLY_FILLED'] },
-        withdrawnAt: null,
-      },
-      now,
-    );
+    const normalizedMaker = maker.toLowerCase();
+    const [rows, onchainRows] = await Promise.all([
+      findSignedOrdersWithFillability(
+        this.prisma,
+        {
+          maker: normalizedMaker,
+          status: { in: ['OPEN', 'PARTIALLY_FILLED'] },
+          withdrawnAt: null,
+        },
+        now,
+      ),
+      this.prisma.order.findMany({
+        where: { maker: normalizedMaker, open: true },
+        orderBy: [{ createdAt: 'desc' }, { orderId: 'desc' }],
+      }),
+    ]);
     return {
       orders: rows.map(({ order, fillability }) =>
         toOffchainOrderDto(order, fillability),
       ),
+      onchainOrders: onchainRows
+        .filter((order) => BigInt(order.remainingRaw) > 0n)
+        .map(toOrderDto),
       offchainWithdrawalIsOnchainCancellation: false,
       warning: OFFCHAIN_WITHDRAWAL_WARNING,
     };

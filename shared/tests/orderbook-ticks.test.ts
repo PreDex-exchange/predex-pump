@@ -5,6 +5,7 @@ import {
   isAllowedMinimumTickSizeRaw,
   fillSizePreservingRepresentableRemainder,
   leavesRepresentableRemainder,
+  priceTickFailure,
 } from '../src/orderbook.js';
 import {
   Side,
@@ -63,6 +64,20 @@ describe('per-market order-book ticks', () => {
     expect(isAllowedMinimumTickSizeRaw(100_000n)).toBe(true);
     expect(isAllowedMinimumTickSizeRaw(100n)).toBe(false);
   });
+
+  it.each([
+    [0n, 1_000n, 'NON_POSITIVE'],
+    [-500_000n, 1_000n, 'NON_POSITIVE'],
+    [1_001_000n, 1_000n, 'ABOVE_MAXIMUM'],
+    [500_000n, 100n, 'INVALID_TICK'],
+    [543_213n, 1_000n, 'OFF_TICK'],
+    [543_000n, 1_000n, null],
+  ] as const)(
+    'separates price %s with tick %s as %s',
+    (priceRaw, tickSizeRaw, expected) => {
+      expect(priceTickFailure(priceRaw, tickSizeRaw)).toBe(expected);
+    },
+  );
 
   it('allows only full fills or partial fills with a granular remainder', () => {
     expect(leavesRepresentableRemainder(450_123n, 123n)).toBe(true);

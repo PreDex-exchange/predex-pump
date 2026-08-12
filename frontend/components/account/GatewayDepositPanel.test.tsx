@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GatewayDepositPanel } from './GatewayDepositPanel';
@@ -107,5 +107,25 @@ describe('GatewayDepositPanel', () => {
 
     expect(screen.getAllByText('0.9997 USDC')).toHaveLength(3);
     expect(screen.queryByText('1.00 USDC')).toBeNull();
+  });
+
+  it.each([
+    ['', 'Enter a USDC amount.'],
+    ['-5', 'USDC amount cannot be negative.'],
+    ['abc', 'Enter a numeric USDC amount.'],
+    ['1.2.3', 'Enter a USDC amount with one decimal point.'],
+    ['0.0000001', 'USDC supports at most six decimal places.'],
+  ])('explains why %j is not a valid deposit amount', (amount, message) => {
+    render(<GatewayDepositPanel sessionAddress={mocks.address} />);
+
+    fireEvent.change(screen.getByLabelText(/Deposit amount/u), {
+      target: { value: amount },
+    });
+
+    expect(screen.getByRole('alert').textContent).toBe(message);
+    expect(
+      screen.getByRole('button', { name: 'Review two-step deposit' })
+        .hasAttribute('disabled'),
+    ).toBe(true);
   });
 });

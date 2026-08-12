@@ -96,6 +96,7 @@ export type TxPhase =
   | 'pending'
   | 'confirmed'
   | 'rejected'
+  | 'failed'
   | 'reverted';
 
 export interface TxProgress {
@@ -105,6 +106,13 @@ export interface TxProgress {
 }
 
 export type TxReporter = (progress: TxProgress) => void;
+
+export class OnchainTransactionRevertedError extends Error {
+  constructor(readonly hash: Hash) {
+    super('The submitted transaction reverted on Arc. Its state changes were not applied.');
+    this.name = 'OnchainTransactionRevertedError';
+  }
+}
 
 interface MarketParamsStruct {
   openingFeeRaw: bigint;
@@ -279,9 +287,7 @@ async function sendAndConfirm(
     confirmations: 1,
   });
   if (receipt.status !== 'success') {
-    throw new Error(
-      `${labels.pending} reverted on Arc. The RPC did not return a decoded contract reason (tx ${hash}).`,
-    );
+    throw new OnchainTransactionRevertedError(hash);
   }
   report({
     phase: labels.approval ? 'checking' : 'confirmed',

@@ -175,6 +175,7 @@ function restClient(
     getSession: vi.fn(async () => ({ authenticated: false as const })),
     getMakerOrders: vi.fn(async () => ({
       orders: [],
+      onchainOrders: [],
       offchainWithdrawalIsOnchainCancellation: false as const,
       warning: 'Withdrawal is off-chain only.',
     })),
@@ -605,6 +606,7 @@ describe('Hybrid fill, withdraw, cancel, and session handling', () => {
       .mockRejectedValueOnce(new PredexRestError(401, 'expired'))
       .mockResolvedValueOnce({
         orders: [],
+        onchainOrders: [],
         offchainWithdrawalIsOnchainCancellation: false,
         warning: 'Withdrawal is off-chain only.',
       });

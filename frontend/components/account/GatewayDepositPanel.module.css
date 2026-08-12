@@ -124,12 +124,16 @@
 
 .amountField {
   display: grid;
+  min-width: 0;
   gap: var(--space-2);
   margin: var(--space-6) 0 var(--space-4);
 }
 
 .amountInput {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   border: 2px solid var(--outline);
   border-radius: var(--radius-input);
@@ -150,6 +154,7 @@
 }
 
 .amountInput b {
+  flex: none;
   padding: 0 14px;
   color: var(--muted);
   font-size: var(--text-small);

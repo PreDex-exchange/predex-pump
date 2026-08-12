@@ -50,9 +50,16 @@ const mocks = vi.hoisted(() => ({
   myOrders: {
     data: {
       orders: [] as OffchainOrder[],
+      onchainOrders: [] as Order[],
       offchainWithdrawalIsOnchainCancellation: false as const,
       warning: 'Withdrawal is not cancellation.',
     },
+    isLoading: false,
+    error: null as Error | null,
+    refetch: vi.fn(),
+  },
+  collateralBalance: {
+    data: 5_000_000n as bigint | undefined,
     isLoading: false,
     error: null as Error | null,
     refetch: vi.fn(),
@@ -73,6 +80,7 @@ vi.mock('wagmi', () => ({
     chainId: 5_042_002,
     isConnected: true,
   }),
+  useReadContract: () => mocks.collateralBalance,
 }));
 
 vi.mock('@/components/providers/AuthProvider', () => ({
@@ -317,11 +325,15 @@ beforeEach(() => {
   mocks.approvals.error = null;
   mocks.myOrders.data = {
     orders: [],
+    onchainOrders: [],
     offchainWithdrawalIsOnchainCancellation: false,
     warning: 'Withdrawal is not cancellation.',
   } satisfies MakerOrdersResponse;
   mocks.myOrders.isLoading = false;
   mocks.myOrders.error = null;
+  mocks.collateralBalance.data = 5_000_000n;
+  mocks.collateralBalance.isLoading = false;
+  mocks.collateralBalance.error = null;
   for (const mock of [
     mocks.approvals.refetch,
     mocks.myOrders.refetch,
@@ -333,6 +345,7 @@ beforeEach(() => {
     mocks.submitCancel,
     mocks.postOrder,
     mocks.withdrawOrder,
+    mocks.collateralBalance.refetch,
   ]) {
     mock.mockReset();
   }
@@ -477,6 +490,110 @@ describe('Hybrid human trading surface', () => {
     ).toBeTruthy();
   });
 
+  it('explains a copied off-tick MiniCLOB ladder price with the nearest valid price', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'a5'));
+    response.liveVenue = 'MINICLOB';
+    response.yes.orders = [
+      {
+        ...miniOnlyOrder,
+        priceRaw: '543213',
+      },
+    ];
+    renderLivePanel(response);
+
+    fireEvent.change(screen.getByLabelText(/Limit price/u), {
+      target: { value: '0.543213' },
+    });
+
+    const message =
+      'Price must use 0.001 USDC ticks. Nearest valid price: 0.543000';
+    expect(screen.getByRole('alert').textContent).toBe(message);
+    expect(
+      screen.getByRole('button', { name: message }).hasAttribute('disabled'),
+    ).toBe(true);
+  });
+
+  it('renders distinct Hybrid price failures without claiming a satisfied condition', () => {
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'a6')));
+    const price = screen.getByLabelText(/Limit price/u);
+    const cases = [
+      ['1.001', 'Price must be at most 1 USDC'],
+      [
+        '0.0005',
+        'Price must use 0.001 USDC ticks. Nearest valid price: 0.001000',
+      ],
+      ['0.000', 'Price must be greater than 0 USDC'],
+      ['-0.5', 'Price cannot be negative'],
+      ['abc', 'Enter a numeric price'],
+    ] as const;
+
+    const rendered = cases.map(([value, expected]) => {
+      fireEvent.change(price, { target: { value } });
+      const message = screen.getByRole('alert').textContent;
+      expect(message).toBe(expected);
+      return message;
+    });
+    expect(new Set(rendered).size).toBe(cases.length);
+  });
+
+  it.each(['HYBRID', 'MINICLOB'] as const)(
+    'blocks an underfunded USDC bid before preview on %s',
+    (venue) => {
+      mocks.collateralBalance.data = 14_290_000n;
+      const response = books(offchainOrder(OTHER_MAKER, 'a7'));
+      response.liveVenue = venue;
+      renderLivePanel(response);
+
+      fireEvent.change(screen.getByLabelText(/^Size/u), {
+        target: { value: '999999999999' },
+      });
+
+      const action = screen.getByRole('button', {
+        name: /Insufficient USDC balance: requires .* wallet holds 14\.290000 USDC/u,
+      });
+      expect(action.hasAttribute('disabled')).toBe(true);
+      expect(screen.queryByRole('dialog')).toBeNull();
+    },
+  );
+
+  it('shows MiniCLOB escrow, expiry, and binding terms before placement', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'a8'));
+    response.liveVenue = 'MINICLOB';
+    renderLivePanel(response);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview YES BID' }));
+
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('USDC escrow total')).toBeTruthy();
+    expect(dialog.getByText('0.120000 USDC')).toBeTruthy();
+    expect(dialog.getByText('No expiry · good till cancelled')).toBeTruthy();
+    expect(dialog.getByText(/This is a binding commitment, not a draft/u)).toBeTruthy();
+  });
+
+  it('labels a Hybrid sell total as proceeds in the ticket and dialog', () => {
+    const position: Position = {
+      account: mocks.address,
+      marketId: market.id,
+      outcome: 'YES',
+      qtyRaw: '1000000',
+      costBasisRaw: '500000',
+      costBasisEstimated: true,
+      realizedPnlRaw: '0',
+      unrealizedPnlRaw: '0',
+      updatedAt: 1_900_000_000,
+    };
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'a9')), market, [position]);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Sell · ASK' }));
+    expect(screen.getByText('Estimated proceeds')).toBeTruthy();
+    expect(screen.queryByText('Total collateral')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Review binding order' }));
+
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('Estimated proceeds')).toBeTruthy();
+    expect(dialog.queryByText('Total collateral')).toBeNull();
+  });
+
   it('reads indexed approval state and offers one explained exact-amount prompt', async () => {
     mocks.approvals.data = {
       ...mocks.approvals.data,
@@ -609,11 +726,11 @@ describe('Hybrid human trading surface', () => {
 
     expect(size.getAttribute('aria-invalid')).toBe('true');
     expect(screen.getByRole('alert').textContent).toContain(
-      'Insufficient NO balance for this sell',
+      'Insufficient NO balance: requires 0.751 NO, wallet holds 0.75 NO',
     );
     expect(
       screen.getByRole('button', {
-        name: 'Insufficient NO balance for this sell',
+        name: 'Insufficient NO balance: requires 0.751 NO, wallet holds 0.75 NO',
       }).hasAttribute('disabled'),
     ).toBe(true);
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -655,6 +772,7 @@ describe('Hybrid human trading surface', () => {
     } satisfies WithdrawOrderResponse;
     mocks.myOrders.data = {
       orders: [ownOpen],
+      onchainOrders: [],
       offchainWithdrawalIsOnchainCancellation: false,
       warning: 'Withdrawal is not cancellation.',
     };

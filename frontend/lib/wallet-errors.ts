@@ -1,7 +1,7 @@
 export const WALLET_REQUEST_DECLINED_MESSAGE =
   'You declined the wallet request. Nothing was signed or sent.';
 
-function providerErrorCode(error: unknown): number | null {
+export function walletProviderErrorCode(error: unknown): number | null {
   const pending: unknown[] = [error];
   const seen = new Set<object>();
 
@@ -40,7 +40,7 @@ export function publicWalletErrorMessage(
   error: unknown,
   fallback: string,
 ): string {
-  switch (providerErrorCode(error)) {
+  switch (walletProviderErrorCode(error)) {
     case 4001:
       return WALLET_REQUEST_DECLINED_MESSAGE;
     case 4100:
