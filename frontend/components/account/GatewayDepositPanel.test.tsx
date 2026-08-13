@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GatewayDepositPanel } from './GatewayDepositPanel';
+import styles from './GatewayDepositPanel.module.css';
 
 const mocks = vi.hoisted(() => ({
   address: `0x${'12'.repeat(20)}` as const,
@@ -58,7 +61,10 @@ beforeEach(() => {
   mocks.wallet.error = null;
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  document.head.querySelector('[data-gateway-styles]')?.remove();
+});
 
 describe('GatewayDepositPanel', () => {
   it('makes the owner, destination, amount, balance, and two signatures explicit', () => {
@@ -85,6 +91,7 @@ describe('GatewayDepositPanel', () => {
     render(<GatewayDepositPanel sessionAddress={mocks.address} />);
 
     expect(screen.getByText('Gateway deposit unavailable')).toBeTruthy();
+    expect(screen.getByRole('alert')).toBeTruthy();
     expect(screen.getByText('Unavailable')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Check Gateway again' })).toBeTruthy();
     expect(
@@ -127,5 +134,28 @@ describe('GatewayDepositPanel', () => {
       screen.getByRole('button', { name: 'Review two-step deposit' })
         .hasAttribute('disabled'),
     ).toBe(true);
+  });
+
+  it('computes validation copy with the reserved error token', () => {
+    const style = document.createElement('style');
+    style.dataset.gatewayStyles = 'true';
+    const moduleCss = readFileSync(
+      `${process.cwd()}/components/account/GatewayDepositPanel.module.css`,
+      'utf8',
+    ).replace(/\.([A-Za-z_][\w-]*)/gu, (selector, localName: string) => {
+      const scopedName = (styles as Record<string, string>)[localName];
+      return scopedName ? `.${scopedName}` : selector;
+    });
+    style.textContent = `${readFileSync(`${process.cwd()}/styles/tokens.css`, 'utf8')}\n${moduleCss}`;
+    document.head.append(style);
+    render(<GatewayDepositPanel sessionAddress={mocks.address} />);
+
+    fireEvent.change(screen.getByLabelText(/Deposit amount/u), {
+      target: { value: '0' },
+    });
+
+    const computedColor = getComputedStyle(screen.getByRole('alert')).color;
+    expect(computedColor).toBe('var(--error)');
+    expect(computedColor).not.toBe('var(--muted)');
   });
 });

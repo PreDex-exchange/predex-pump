@@ -69,6 +69,7 @@ const mocks = vi.hoisted(() => ({
   approveTokens: vi.fn(),
   signOrder: vi.fn(),
   fillOrder: vi.fn(),
+  miniFillOrder: vi.fn(),
   submitCancel: vi.fn(),
   postOrder: vi.fn(),
   withdrawOrder: vi.fn(),
@@ -122,7 +123,7 @@ vi.mock('@/lib/chain/transactions', async () => {
     cumulativeMiniClobPaymentRaw: shared.cumulativeMiniClobPaymentRaw,
     miniClobFillPaymentRaw: shared.miniClobFillPaymentRaw,
     placeOrderOnArc: vi.fn(),
-    fillOrderOnArc: vi.fn(),
+    fillOrderOnArc: mocks.miniFillOrder,
     cancelOrderOnArc: vi.fn(),
   };
 });
@@ -353,6 +354,7 @@ beforeEach(() => {
     mocks.approveTokens,
     mocks.signOrder,
     mocks.fillOrder,
+    mocks.miniFillOrder,
     mocks.submitCancel,
     mocks.postOrder,
     mocks.withdrawOrder,
@@ -474,6 +476,30 @@ describe('Hybrid human trading surface', () => {
     expect(screen.getByText(/LMSR bonding curve is live/u)).toBeTruthy();
     expect(screen.queryByText('Live venue · On-chain MiniCLOB')).toBeNull();
   });
+
+  it.each(['HYBRID', 'MINICLOB'] as const)(
+    "labels and disables the connected maker's resting order on %s",
+    (venue) => {
+      const response = books(
+        offchainOrder(venue === 'HYBRID' ? mocks.address : OTHER_MAKER, 'b2'),
+      );
+      if (venue === 'MINICLOB') {
+        response.liveVenue = 'MINICLOB';
+        response.yes.orders = [{ ...miniOnlyOrder, maker: mocks.address }];
+      }
+      renderLivePanel(response);
+
+      const ownOrder = screen.getByRole('button', { name: 'Your order' });
+      expect(ownOrder.hasAttribute('disabled')).toBe(true);
+      fireEvent.click(ownOrder);
+
+      expect(screen.queryByRole('button', { name: 'Fill' })).toBeNull();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(
+        venue === 'HYBRID' ? mocks.fillOrder : mocks.miniFillOrder,
+      ).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps executable MiniCLOB price precision across ladder, table, and modal', () => {
     const response = books(offchainOrder(OTHER_MAKER, 'a4'));
@@ -643,6 +669,8 @@ describe('Hybrid human trading surface', () => {
         'Needed to buy; approvals use the exact reviewed total.',
       ),
     ).toBeTruthy();
+    expect(screen.getByText('Missing · 0.120000 USDC')).toBeTruthy();
+    expect(screen.queryByText('Missing · 0.000000 USDC')).toBeNull();
     fireEvent.click(
       screen.getByRole('button', { name: 'Approve exactly 0.120000 USDC' }),
     );
@@ -791,6 +819,24 @@ describe('Hybrid human trading surface', () => {
 
     expect(size.value).toBe('0.2');
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps a positive sub-step MiniCLOB size and its truthful error on blur', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'b1'));
+    response.liveVenue = 'MINICLOB';
+    renderLivePanel(response);
+
+    const size = screen.getByLabelText(/^Size/u) as HTMLInputElement;
+    fireEvent.change(size, { target: { value: '0.0005' } });
+    fireEvent.blur(size);
+
+    expect(size.value).toBe('0.0005');
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Size must use 0.001 token steps',
+    );
+    expect(
+      screen.queryByText('Enter an order size greater than zero'),
+    ).toBeNull();
   });
 
   it('keeps free withdrawal and gas cancellation as separate actions using API calldata', async () => {

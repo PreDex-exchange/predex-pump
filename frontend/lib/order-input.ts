@@ -67,5 +67,6 @@ export function validateOrderPriceInput(
 }
 
 export function snappedOrderSizeInput(sizeRaw: bigint): string {
-  return formatUnits(floorOrderSizeToGranularity(sizeRaw), 6);
+  const snapped = floorOrderSizeToGranularity(sizeRaw);
+  return formatUnits(snapped === 0n && sizeRaw > 0n ? sizeRaw : snapped, 6);
 }

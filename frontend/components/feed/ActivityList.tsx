@@ -1,6 +1,7 @@
 import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
 
 import { ActivityDescription } from '@/components/activity/ActivityDescription';
+import { Button } from '@/components/ui/Button';
 import {
   activityActorKind,
   dedupeActivityEvents,
@@ -19,6 +20,7 @@ interface ActivityListProps {
   error?: Error | null;
   isLoading?: boolean;
   limit?: number;
+  onRetry?: () => void;
   agentAddresses?: ReadonlySet<string>;
   sticky?: boolean;
 }
@@ -31,6 +33,7 @@ export function ActivityList({
   error = null,
   isLoading = false,
   limit,
+  onRetry,
   agentAddresses = parseAgentAddresses(
     process.env.NEXT_PUBLIC_AGENT_ADDRESSES,
   ),
@@ -47,9 +50,14 @@ export function ActivityList({
         {title}
       </h2>
       {error && (
-        <p className={styles.error} role="alert">
-          The indexed history is unavailable. Refresh to retry.
-        </p>
+        <div className={styles.error} role="alert">
+          <p>The indexed history is unavailable. This is not an empty activity state.</p>
+          {onRetry && (
+            <Button onClick={onRetry} size="small" variant="neutral">
+              Try activity again
+            </Button>
+          )}
+        </div>
       )}
       {!error && isLoading && visibleEvents.length === 0 && (
         <p className={styles.empty} role="status">

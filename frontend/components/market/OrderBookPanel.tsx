@@ -48,6 +48,7 @@ import {
   snappedOrderSizeInput,
   validateOrderPriceInput,
 } from '@/lib/order-input';
+import { isConnectedWalletMaker } from '@/lib/order-ownership';
 
 import { HybridOrderBookPanel } from './HybridOrderBookPanel';
 import styles from './OrderBookPanel.module.css';
@@ -303,6 +304,9 @@ function MiniClobOrderBookPanel({
   );
 
   const activeOrder = action && action.kind !== 'place' ? action.order : null;
+  const fillIsOwnOrder =
+    action?.kind === 'fill' &&
+    isConnectedWalletMaker(action.order.maker, address);
   const validFill =
     action?.kind === 'fill' &&
     fillSizeRaw !== null &&
@@ -337,6 +341,12 @@ function MiniClobOrderBookPanel({
   }
 
   function openAction(nextAction: BookAction) {
+    if (
+      nextAction.kind === 'fill' &&
+      isConnectedWalletMaker(nextAction.order.maker, address)
+    ) {
+      return;
+    }
     tx.reset();
     setCompletion(null);
     setAction(nextAction);
@@ -388,6 +398,7 @@ function MiniClobOrderBookPanel({
         !conditionUnresolved ||
         !validFill ||
         fillSizeRaw === null ||
+        fillIsOwnOrder ||
         wrongNetwork
       ) {
         return;
@@ -417,7 +428,7 @@ function MiniClobOrderBookPanel({
 
     if (
       wrongNetwork ||
-      action.order.maker.toLowerCase() !== address.toLowerCase()
+      !isConnectedWalletMaker(action.order.maker, address)
     ) {
       return;
     }
@@ -466,11 +477,11 @@ function MiniClobOrderBookPanel({
     tx.state.phase === 'confirmed' ||
     (action?.kind === 'place' && !canPlace) ||
     (action?.kind === 'fill' &&
-      (!validFill || !conditionUnresolved || wrongNetwork)) ||
+      (!validFill || fillIsOwnOrder || !conditionUnresolved || wrongNetwork)) ||
     (action?.kind === 'cancel' &&
       (wrongNetwork ||
         !address ||
-        action.order.maker.toLowerCase() !== address.toLowerCase()));
+        !isConnectedWalletMaker(action.order.maker, address)));
 
   const confirmLabel =
     tx.state.phase === 'confirmed'
@@ -700,8 +711,9 @@ function MiniClobOrderBookPanel({
               {placeButtonLabel}
             </Button>
             <p className={styles.onchainNote}>
-              Off-step sizes round down when the field loses focus. Escrow and
-              order state remain fully on-chain in MiniCLOB.
+              Positive sizes below 0.001 stay unchanged so their step error remains
+              visible. Larger off-step sizes round down on blur. Escrow and order
+              state remain fully on-chain in MiniCLOB.
             </p>
           </section>
         </div>
@@ -741,9 +753,7 @@ function MiniClobOrderBookPanel({
               </div>
             ) : (
               restingOrders.map((order) => {
-                const ownOrder =
-                  Boolean(address) &&
-                  order.maker.toLowerCase() === address?.toLowerCase();
+                const ownOrder = isConnectedWalletMaker(order.maker, address);
                 return (
                   <div className={styles.orderRow} key={order.orderId}>
                     <span className="numeric">
@@ -781,6 +791,7 @@ function MiniClobOrderBookPanel({
                       <button
                         className={styles.rowAction}
                         disabled={
+                          ownOrder ||
                           !isConnected ||
                           wrongNetwork ||
                           !conditionUnresolved ||
@@ -789,7 +800,7 @@ function MiniClobOrderBookPanel({
                         onClick={() => openAction({ kind: 'fill', order })}
                         type="button"
                       >
-                        Fill
+                        {ownOrder ? 'Your order' : 'Fill'}
                       </button>
                       {ownOrder && (
                         <button

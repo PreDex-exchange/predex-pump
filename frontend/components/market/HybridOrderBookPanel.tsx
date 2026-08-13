@@ -69,6 +69,7 @@ import {
   snappedOrderSizeInput,
   validateOrderPriceInput,
 } from '@/lib/order-input';
+import { isConnectedWalletMaker } from '@/lib/order-ownership';
 
 import styles from './HybridOrderBookPanel.module.css';
 
@@ -396,6 +397,15 @@ export function HybridOrderBookPanel({
           commitment.collateralRaw,
         )
       : null;
+  const collateralAllowanceRaw = effectiveApprovals
+    ? BigInt(effectiveApprovals.collateralAllowanceRaw)
+    : null;
+  const missingCollateralRaw =
+    commitment && orderSide === 'BID' && collateralAllowanceRaw !== null
+      ? commitment.collateralRaw > collateralAllowanceRaw
+        ? commitment.collateralRaw - collateralAllowanceRaw
+        : 0n
+      : null;
   const makerApprovalReady = makerRequirement?.ready === true;
   const canReview =
     isConnected &&
@@ -419,8 +429,7 @@ export function HybridOrderBookPanel({
     );
   const fillIsOwnOrder =
     fillTarget !== null &&
-    address !== undefined &&
-    fillTarget.maker.toLowerCase() === address.toLowerCase();
+    isConnectedWalletMaker(fillTarget.maker, address);
   const fillCollateralRaw =
     fillTarget && validFill && fillSizeRaw !== null
       ? ctfExchangeCollateralAmountForFill(
@@ -438,12 +447,10 @@ export function HybridOrderBookPanel({
       : null;
 
   const displayedMyOrders = useMemo(() => {
-    const connectedMaker = address?.toLowerCase();
     const byHash = new Map<string, OffchainOrder>();
     for (const order of myOrders.data?.orders ?? []) {
       if (
-        connectedMaker !== undefined &&
-        order.maker.toLowerCase() === connectedMaker &&
+        isConnectedWalletMaker(order.maker, address) &&
         !cancelled.has(order.orderHash)
       ) {
         byHash.set(order.orderHash, order);
@@ -451,8 +458,7 @@ export function HybridOrderBookPanel({
     }
     for (const response of withdrawn.values()) {
       if (
-        connectedMaker !== undefined &&
-        response.order.maker.toLowerCase() === connectedMaker &&
+        isConnectedWalletMaker(response.order.maker, address) &&
         !cancelled.has(response.order.orderHash)
       ) {
         byHash.set(response.order.orderHash, response.order);
@@ -555,6 +561,7 @@ export function HybridOrderBookPanel({
   }
 
   function openFill(order: OffchainOrder) {
+    if (isConnectedWalletMaker(order.maker, address)) return;
     actionTx.reset();
     approvalTx.reset();
     setCompletion(null);
@@ -625,7 +632,7 @@ export function HybridOrderBookPanel({
       !address ||
       !authenticated ||
       !cancelTarget ||
-      cancelTarget.maker.toLowerCase() !== address.toLowerCase() ||
+      !isConnectedWalletMaker(cancelTarget.maker, address) ||
       wrongNetwork
     ) {
       return;
@@ -1018,15 +1025,11 @@ export function HybridOrderBookPanel({
                       }`}
                     >
                       {commitment && orderSide === 'BID'
-                        ? `${
-                            BigInt(effectiveApprovals.collateralAllowanceRaw) >=
-                            commitment.collateralRaw
-                              ? 'Ready'
-                              : 'Missing'
-                          } · `
-                        : ''}
-                      {formatUsdc(effectiveApprovals.collateralAllowanceRaw, 6)} USDC
-                      {orderSide === 'ASK' ? ' · not needed for this sell' : ''}
+                        ? collateralAllowanceRaw !== null &&
+                          collateralAllowanceRaw >= commitment.collateralRaw
+                          ? `Ready · ${formatUsdc(collateralAllowanceRaw.toString(), 6)} USDC allowance`
+                          : `Missing · ${formatUsdc((missingCollateralRaw ?? 0n).toString(), 6)} USDC`
+                        : `${formatUsdc(effectiveApprovals.collateralAllowanceRaw, 6)} USDC allowance · not needed for this sell`}
                     </b>
                     {commitment &&
                       BigInt(effectiveApprovals.collateralAllowanceRaw) <
@@ -1102,9 +1105,7 @@ export function HybridOrderBookPanel({
               </div>
             ) : (
               book.offchainOrders.map((order) => {
-                const ownOrder =
-                  Boolean(address) &&
-                  order.maker.toLowerCase() === address?.toLowerCase();
+                const ownOrder = isConnectedWalletMaker(order.maker, address);
                 return (
                   <div className={styles.orderRow} key={order.orderHash}>
                     <code data-label="Order" title={order.orderHash}>
@@ -1447,7 +1448,7 @@ export function HybridOrderBookPanel({
           !isConnected ||
           !address ||
           !authenticated ||
-          cancelTarget.maker.toLowerCase() !== address.toLowerCase() ||
+          !isConnectedWalletMaker(cancelTarget.maker, address) ||
           wrongNetwork ||
           actionTx.isBusy ||
           actionTx.state.phase === 'confirmed'

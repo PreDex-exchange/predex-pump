@@ -6,6 +6,7 @@ export default function PortfolioLoading() {
       <StatePanel
         message="Loading indexed balances and positions."
         showMascot={false}
+        state="loading"
         title="Opening your portfolio…"
       />
     </main>

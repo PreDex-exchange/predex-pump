@@ -137,23 +137,16 @@ const wrappedControlFixtures = [
       '<span class="amountInput"><input aria-label="Deposit amount"></span>',
     wrapperSelector: '.amountInput',
   },
-  {
-    name: 'unreachable phase-panel book input',
-    stylesheet: 'components/market/PhasePanels.module.css',
-    markup:
-      '<label class="bookField"><span><input aria-label="Book amount"></span></label>',
-    wrapperSelector: '.bookField > span',
-  },
 ];
 
 describe('wrapped input focus visibility', () => {
-  it('covers the nine affected controls', () => {
+  it('covers the eight shipped affected controls', () => {
     const count = wrappedControlFixtures.reduce((total, fixture) => {
       document.body.innerHTML = fixture.markup;
       return total + document.querySelectorAll('input, select').length;
     }, 0);
 
-    expect(count).toBe(9);
+    expect(count).toBe(8);
   });
 
   it.each(wrappedControlFixtures)(

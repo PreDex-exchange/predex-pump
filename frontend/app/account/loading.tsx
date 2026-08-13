@@ -6,6 +6,7 @@ export default function AccountLoading() {
       <StatePanel
         message="Restoring the saved session and account snapshot."
         showMascot={false}
+        state="loading"
         title="Opening your account…"
       />
     </main>

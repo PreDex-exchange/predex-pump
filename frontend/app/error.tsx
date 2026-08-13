@@ -28,6 +28,7 @@ export default function ErrorPage({ reset }: ErrorPageProps) {
         }
         message="predex could not finish opening this page. Retry it, or return to the feed."
         showMascot={false}
+        state="error"
         title="Something cracked"
       />
     </main>

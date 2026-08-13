@@ -1,6 +1,6 @@
 import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ActivityList } from './ActivityList';
 
@@ -26,6 +26,26 @@ function event(
 afterEach(cleanup);
 
 describe('feed activity list', () => {
+  it('announces load failures, suppresses empty copy, and offers retry', () => {
+    const retry = vi.fn();
+    render(
+      <ActivityList
+        emptyMessage="No account activity yet."
+        error={new Error('activity unavailable')}
+        events={[]}
+        markets={[market]}
+        onRetry={retry}
+      />,
+    );
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'This is not an empty activity state',
+    );
+    expect(screen.queryByText('No account activity yet.')).toBeNull();
+    screen.getByRole('button', { name: 'Try activity again' }).click();
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it('renders one graduation row for its three same-transaction logs', () => {
     render(
       <ActivityList

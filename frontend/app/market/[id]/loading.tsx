@@ -6,6 +6,7 @@ export default function MarketLoading() {
       <StatePanel
         message="Loading the market snapshot."
         showMascot={false}
+        state="loading"
         title="Checking this market…"
       />
     </main>

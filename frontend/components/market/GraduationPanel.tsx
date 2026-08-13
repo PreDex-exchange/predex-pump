@@ -107,7 +107,7 @@ export function GraduationPanel({ market }: { market: Market }) {
               non-creator activity
             </span>
           </div>
-          <div className={styles.action}>
+          <div className={styles.action} role={status.error ? 'alert' : undefined}>
             <span>
               {status.error
                 ? 'Live graduation eligibility is temporarily unavailable.'

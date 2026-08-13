@@ -104,6 +104,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <StatePanel
           message="Loading the indexed market snapshot and recent activity."
           showMascot={false}
+          state="loading"
           title="Checking this egg…"
         />
       </main>
@@ -116,6 +117,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <StatePanel
           message="The indexed market snapshot could not load. Return to the feed and retry."
           showMascot={false}
+          state="error"
           title="This market would not open"
         />
       </main>
@@ -128,6 +130,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
         <StatePanel
           message="No MarketCreated event with that ID was found in the live deployment."
           showMascot={false}
+          state="empty"
           title="No egg with that number"
         />
         <Link className={styles.backLink} href="/">

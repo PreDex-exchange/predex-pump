@@ -137,6 +137,14 @@
   font-weight: 800;
 }
 
+.error p {
+  margin: 0;
+}
+
+.error button {
+  margin-top: var(--space-3);
+}
+
 @media (max-width: 1040px) {
   .activity {
     position: static;

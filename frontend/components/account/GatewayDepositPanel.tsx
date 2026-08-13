@@ -120,7 +120,7 @@ export function GatewayDepositPanel({
 
   if (gatewayError) {
     return (
-      <Card className={styles.unavailable} role="status">
+      <Card className={styles.unavailable} role="alert">
         <div className={styles.cardHeading}>
           <div>
             <span>Circle Gateway</span>

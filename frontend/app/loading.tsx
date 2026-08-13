@@ -6,6 +6,7 @@ export default function Loading() {
       <StatePanel
         message="The incubator is getting everything ready."
         showMascot={false}
+        state="loading"
         title="Warming the nest…"
       />
     </main>

@@ -41,6 +41,16 @@ function replaceFeedUrl(filter: FeedFilter, sort: FeedSort) {
   window.history.replaceState(window.history.state, '', url);
 }
 
+function emptyMarketMessage(filter: FeedFilter) {
+  if (filter === 'resolved') {
+    return 'Try another phase, or wait for an open market to resolve.';
+  }
+  if (filter === 'graduated') {
+    return 'Try another phase, or wait for a Bootstrap market to graduate.';
+  }
+  return 'Try another phase, or launch the first market in this view.';
+}
+
 export function matchesFilter(market: Market, filter: FeedFilter) {
   if (filter === 'all') return true;
   if (filter === 'resolved') return isMarketSettled(market);
@@ -63,6 +73,7 @@ export function FeedScreen() {
     data: activityPage,
     error: activityError,
     isLoading: activityIsLoading,
+    refetch: refetchActivity,
   } = useActivity({ limit: 20 });
 
   useEffect(() => {
@@ -132,6 +143,7 @@ export function FeedScreen() {
             <StatePanel
               message="Loading indexed markets and their latest prices."
               showMascot={false}
+              state="loading"
               title="Warming the nest…"
             />
           )}
@@ -139,13 +151,15 @@ export function FeedScreen() {
             <StatePanel
               message="The indexed API could not load the market feed. Refresh to retry."
               showMascot={false}
+              state="error"
               title="The nest needs a reset"
             />
           )}
           {!isLoading && !error && markets.length === 0 && (
             <StatePanel
-              message="Try another phase, or launch the first market in this view."
+              message={emptyMarketMessage(filter)}
               showMascot={false}
+              state="empty"
               title="No markets in this nest yet"
             />
           )}
@@ -173,6 +187,7 @@ export function FeedScreen() {
           isLoading={activityIsLoading}
           limit={5}
           markets={marketPage?.items ?? []}
+          onRetry={refetchActivity}
         />
       </div>
     </main>

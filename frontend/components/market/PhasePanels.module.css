@@ -110,42 +110,6 @@
   background: var(--no-soft);
 }
 
-.bookField {
-  display: block;
-  margin-bottom: var(--space-3);
-  font-size: 0.76rem;
-  font-weight: 800;
-}
-
-.bookField > span {
-  display: flex;
-  align-items: center;
-  margin-top: 5px;
-  padding: 9px 12px;
-  border: 2px solid var(--outline);
-  border-radius: var(--radius-input);
-}
-
-.bookField > span:focus-within {
-  box-shadow: var(--shadow-focus);
-}
-
-.bookField input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 1.25rem;
-  font-weight: 800;
-}
-
-.bookField b {
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-
 .orderTotal {
   display: flex;
   justify-content: space-between;

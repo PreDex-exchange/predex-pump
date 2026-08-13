@@ -31,6 +31,7 @@ export default function GlobalError({ reset }: GlobalErrorProps) {
             }
             message="predex hit a shell-wide error. Retry once, or reopen the feed."
             showMascot={false}
+            state="error"
             title="The incubator needs a reset"
           />
         </main>

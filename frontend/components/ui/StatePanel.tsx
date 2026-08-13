@@ -10,6 +10,7 @@ interface StatePanelProps {
   compact?: boolean;
   actions?: ReactNode;
   showMascot?: boolean;
+  state: 'empty' | 'error' | 'loading';
 }
 
 export function StatePanel({
@@ -18,12 +19,16 @@ export function StatePanel({
   compact = false,
   actions,
   showMascot = false,
+  state,
 }: StatePanelProps) {
   return (
     <div
       className={`${styles.panel} ${compact ? styles.compact : ''} ${
         showMascot ? '' : styles.withoutMascot
       }`}
+      role={
+        state === 'error' ? 'alert' : state === 'loading' ? 'status' : undefined
+      }
     >
       {showMascot && <HatchingChick className={styles.mascot} decorative />}
       <div className={styles.content}>

@@ -46,7 +46,9 @@ beforeEach(() => {
   mocks.markets.isLoading = false;
   mocks.markets.isLoadingMore = false;
   mocks.activity.loadMore.mockClear();
+  mocks.activity.refetch.mockClear();
   mocks.markets.loadMore.mockClear();
+  mocks.markets.refetch.mockClear();
 });
 
 afterEach(() => {
@@ -87,6 +89,7 @@ describe('FeedScreen failure states', () => {
     expect(statistics.textContent).not.toMatch(/0\s*markets/u);
     expect(screen.getByText('The nest needs a reset')).toBeTruthy();
     const marketSurface = screen.getByRole('region', { name: 'Markets' });
+    expect(within(marketSurface).getByRole('alert')).toBeTruthy();
     expect(marketSurface.querySelector('svg')).toBeNull();
   });
 
@@ -100,6 +103,10 @@ describe('FeedScreen failure states', () => {
       screen.getByRole('alert').textContent,
     ).toContain('The indexed history is unavailable');
     expect(screen.queryByText('Waiting for on-chain activity…')).toBeNull();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Try activity again' }),
+    );
+    expect(mocks.activity.refetch).toHaveBeenCalledOnce();
   });
 });
 
@@ -117,6 +124,17 @@ describe('FeedScreen filters', () => {
 
     expect(buttons[0]?.getAttribute('aria-pressed')).toBe('false');
     expect(buttons[2]?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('does not suggest launching into an empty Resolved filter', () => {
+    render(<FeedScreen />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resolved' }));
+
+    expect(
+      screen.getByText('Try another phase, or wait for an open market to resolve.'),
+    ).toBeTruthy();
+    expect(screen.queryByText(/launch the first market/iu)).toBeNull();
   });
 
   it('stores filter and sort in the URL and restores them after remount', async () => {

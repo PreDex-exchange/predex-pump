@@ -34,7 +34,8 @@ export function RecentTrades({ trades }: { trades: Trade[] }) {
                     maximumFractionDigits: 2,
                   })}
                 </span>{' '}
-                {trade.outcome} @ <span className="numeric">{formatPrice(trade.priceRaw)}</span>
+                {trade.outcome} @{' '}
+                <span className="numeric">{formatPrice(trade.priceRaw, 6)}</span>
               </span>
               <span className={`${styles.account} mono`}>{shortAddress(trade.account)}</span>
               <span className={styles.when}>

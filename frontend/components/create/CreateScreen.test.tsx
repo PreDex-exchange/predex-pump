@@ -187,6 +187,16 @@ describe('CreateScreen market launch guardrails', () => {
     expect(screen.getByText('Enter a market question to continue.')).toBeTruthy();
   });
 
+  it('gives the custom resolution duration spinbutton an accessible name', () => {
+    render(<CreateScreen />);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Custom' }));
+
+    expect(
+      screen.getByRole('spinbutton', { name: 'Custom resolution duration' }),
+    ).toBeTruthy();
+  });
+
   it('rejects a zero-width-only question as visually empty', () => {
     render(<CreateScreen />);
     const question = screen.getByPlaceholderText('Will…?');

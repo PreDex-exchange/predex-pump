@@ -62,7 +62,7 @@ export function PriceOverview({
       <div className={styles.prices}>
         <div className={`${styles.price} ${styles.yes}`}>
           <span>YES</span>
-          <NumberDisplay size="price">{formatPrice(yesPriceRaw)}</NumberDisplay>
+          <NumberDisplay size="price">{formatPrice(yesPriceRaw, 6)}</NumberDisplay>
           <small className="numeric">
             {formatImpliedPercent(yesPriceRaw)}%{' '}
             {priceCaption}
@@ -70,7 +70,7 @@ export function PriceOverview({
         </div>
         <div className={`${styles.price} ${styles.no}`}>
           <span>NO</span>
-          <NumberDisplay size="price">{formatPrice(noPriceRaw)}</NumberDisplay>
+          <NumberDisplay size="price">{formatPrice(noPriceRaw, 6)}</NumberDisplay>
           <small className="numeric">
             {formatImpliedPercent(noPriceRaw)}%{' '}
             {priceCaption}

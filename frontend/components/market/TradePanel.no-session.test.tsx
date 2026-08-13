@@ -127,6 +127,22 @@ describe('wallet-only core trade path', () => {
     );
   });
 
+  it('renders quote totals at enough precision to distinguish the slippage bound', () => {
+    render(<TradePanel market={market} />);
+
+    const maximum = screen.getByText('Max cost (0.5% slip)').parentElement;
+    const quoted = screen.getByText('Quoted cost').parentElement;
+    expect(maximum?.querySelector('strong')?.textContent).toBe(
+      '0.051255 USDC',
+    );
+    expect(quoted?.querySelector('strong')?.textContent).toBe(
+      '0.051000 USDC',
+    );
+    expect(maximum?.querySelector('strong')?.textContent).not.toBe(
+      quoted?.querySelector('strong')?.textContent,
+    );
+  });
+
   it('explains and visibly snaps an off-step curve-trade size on blur', () => {
     render(<TradePanel market={market} />);
 

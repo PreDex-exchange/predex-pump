@@ -691,6 +691,7 @@ export function CreateScreen() {
                   <input
                     aria-describedby="window-help window-error"
                     aria-invalid={Boolean(showWindowError)}
+                    aria-label="Custom resolution duration"
                     autoComplete="off"
                     inputMode="numeric"
                     min="1"

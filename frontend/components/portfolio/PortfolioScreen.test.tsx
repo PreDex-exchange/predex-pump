@@ -10,7 +10,13 @@ import type {
   Order,
   Position,
 } from '@predex-pump/shared/domain';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TradePanel } from '../market/TradePanel';
@@ -114,6 +120,9 @@ const mocks = vi.hoisted(() => ({
   accountError: null as Error | null,
   accountLoading: false,
   activity: { items: [], nextCursor: null } as ActivityResponse,
+  activityError: null as Error | null,
+  activityLoading: false,
+  activityRefetch: vi.fn(),
   markets: { items: [], nextCursor: null } as ListMarketsResponse,
   marketsError: null as Error | null,
   marketsLoading: false,
@@ -180,9 +189,9 @@ vi.mock('@/lib/api/hooks', () => ({
   }),
   useActivity: () => ({
     data: mocks.activity,
-    isLoading: false,
-    error: null,
-    refetch: vi.fn(),
+    isLoading: mocks.activityLoading,
+    error: mocks.activityError,
+    refetch: mocks.activityRefetch,
   }),
   useMarkets: () => ({
     data: mocks.markets,
@@ -204,6 +213,9 @@ vi.mock('@/lib/api/hooks', () => ({
 beforeEach(() => {
   mocks.accountError = null;
   mocks.accountLoading = false;
+  mocks.activityError = null;
+  mocks.activityLoading = false;
+  mocks.activityRefetch.mockReset();
   mocks.marketsError = null;
   mocks.marketsLoading = false;
   mocks.account = {
@@ -297,6 +309,22 @@ describe('Portfolio open orders', () => {
 });
 
 describe('Portfolio money states', () => {
+  it('renders an activity failure as an alert with retry, never as empty history', () => {
+    mocks.activity = { items: [], nextCursor: null };
+    mocks.activityError = new Error('activity unavailable');
+
+    render(<PortfolioScreen />);
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'This is not an empty activity state',
+    );
+    expect(screen.queryByText('No account activity yet.')).toBeNull();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Try activity again' }),
+    );
+    expect(mocks.activityRefetch).toHaveBeenCalledOnce();
+  });
+
   it('renders the same non-zero sub-raw-unit value on the portfolio and trade panel', () => {
     if (!mocks.account) throw new Error('account fixture missing');
     const tinyPosition: Position = {
@@ -360,12 +388,14 @@ describe('Portfolio money states', () => {
       prepare: () => {},
       state: 'empty',
     },
-  ])('renders the $state state without character art', ({ expectedTitle, prepare }) => {
+  ])('renders the $state state without character art', ({ expectedTitle, prepare, state }) => {
     prepare();
 
     const rendered = render(<PortfolioScreen />);
 
     expect(screen.getByText(expectedTitle)).toBeTruthy();
     expect(rendered.container.querySelector('svg')).toBeNull();
+    if (state === 'error') expect(screen.getByRole('alert')).toBeTruthy();
+    if (state === 'loading') expect(screen.getByRole('status')).toBeTruthy();
   });
 });

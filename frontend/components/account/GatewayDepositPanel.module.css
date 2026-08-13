@@ -215,6 +215,10 @@
   font-weight: 800;
 }
 
+.amountField small.error {
+  color: var(--error);
+}
+
 .notice {
   color: var(--muted);
 }

@@ -16,6 +16,7 @@ export default function NotFound() {
         }
         message="The address does not match a page in this incubator."
         showMascot={false}
+        state="empty"
         title="That page never hatched"
       />
     </main>

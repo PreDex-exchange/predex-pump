@@ -184,6 +184,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
               <NumberDisplay size="hero">
                 {formatPrice(
                   side === 'YES' ? market.yesPriceRaw : market.noPriceRaw,
+                  6,
                 )}
               </NumberDisplay>
             </button>
@@ -243,7 +244,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           <div>
             <span>Avg curve price</span>
             <strong className="numeric">
-              {quote ? formatPrice(quote.avgPriceRaw, 3) : '—'}
+              {quote ? formatPrice(quote.avgPriceRaw, 6) : '—'}
             </strong>
           </div>
           <div>
@@ -260,7 +261,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           <div>
             <span>Trade fees</span>
             <strong className="numeric">
-              {quote ? `${formatUsdc(quote.feeRaw)} USDC` : '—'}
+              {quote ? `${formatUsdc(quote.feeRaw, 6)} USDC` : '—'}
             </strong>
           </div>
           <div>
@@ -270,13 +271,13 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
                 : 'Min receive (0.5% slip)'}
             </span>
             <strong className="numeric">
-              {quote ? `${formatUsdc(quote.maxOrMinRaw)} USDC` : '—'}
+              {quote ? `${formatUsdc(quote.maxOrMinRaw, 6)} USDC` : '—'}
             </strong>
           </div>
           <div className={styles.total}>
             <span>{mode === 'buy' ? 'Quoted cost' : 'Quoted proceeds'}</span>
             <strong className="numeric">
-              {quote ? `${formatUsdc(quote.totalRaw)} USDC` : '—'}
+              {quote ? `${formatUsdc(quote.totalRaw, 6)} USDC` : '—'}
             </strong>
           </div>
           {quoteError && (
@@ -296,8 +297,8 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           {buttonLabel}
         </Button>
         <p className={styles.reassure}>
-          Size step 0.001 token · off-step sizes round down on blur · future
-          book price tick{' '}
+          Size step 0.001 token · sub-step positive sizes stay visible · larger
+          off-step sizes round down on blur · future book price tick{' '}
           {formatUnits(BigInt(market.params.minimumTickSizeRaw), 6)} USDC
         </p>
 
@@ -375,7 +376,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           <div>
             <dt>{mode === 'buy' ? 'Current max cost' : 'Current min receive'}</dt>
             <dd className="numeric">
-              {quote ? formatUsdc(quote.maxOrMinRaw) : '—'} USDC
+              {quote ? formatUsdc(quote.maxOrMinRaw, 6) : '—'} USDC
             </dd>
           </div>
           <div>

@@ -186,6 +186,7 @@ export function AccountScreen() {
             'One EIP-4361 signature creates an expiring session. It is not a transaction and does not grant spending authority.'
           }
           showMascot={false}
+          state={authError ? 'error' : 'empty'}
           title={isConnected ? 'Sign to open your profile' : 'Connect, then sign in'}
         />
       </main>

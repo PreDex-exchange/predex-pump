@@ -133,6 +133,7 @@ export function PortfolioScreen() {
     data: activityPage,
     isLoading: activityLoading,
     error: activityError,
+    refetch: refetchActivity,
   } = useActivity({ account: address, limit: 20 });
   const {
     data: makerOrders,
@@ -294,6 +295,7 @@ export function PortfolioScreen() {
               : 'Connect a wallet to load its indexed outcome-token positions and Arc activity.'
           }
           showMascot={false}
+          state={connectError ? 'error' : 'empty'}
           title="Connect to open your portfolio"
         />
       </main>
@@ -307,6 +309,7 @@ export function PortfolioScreen() {
         <StatePanel
           message="Loading indexed positions and marking them against current prices."
           showMascot={false}
+          state="loading"
           title="Counting your positions…"
         />
       </main>
@@ -331,6 +334,7 @@ export function PortfolioScreen() {
           }
           message="The indexed account snapshot could not load. Retry the backend reads."
           showMascot={false}
+          state="error"
           title="This portfolio would not open"
         />
       </main>
@@ -539,6 +543,7 @@ export function PortfolioScreen() {
             }
             message="This account holds no indexed outcome-token positions. Open orders, if any, remain listed above."
             showMascot={false}
+            state="empty"
             title="No positions yet"
           />
         ) : (
@@ -622,15 +627,12 @@ export function PortfolioScreen() {
 
       <section className={styles.history}>
         <ActivityList
-          emptyMessage={
-            activityLoading
-              ? 'Loading account history…'
-              : activityError
-                ? 'Account history is temporarily unavailable.'
-                : 'No account activity yet.'
-          }
+          emptyMessage="No account activity yet."
+          error={activityError}
           events={activityEvents}
+          isLoading={activityLoading}
           markets={marketsPage.items}
+          onRetry={refetchActivity}
           sticky={false}
           title="Activity & history"
         />
