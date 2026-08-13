@@ -112,11 +112,11 @@ export function GraduationPanel({ market }: { market: Market }) {
               {status.error
                 ? 'Live graduation eligibility is temporarily unavailable.'
                 : qualified
-                  ? 'Live graduationStatus: qualified'
+                  ? 'Live graduation eligibility is confirmed.'
                   : timeGateBoundary
                     ? `Gates pending · earliest time ${formatDateTime(timeGateBoundary)}`
                     : status.isLoading
-                      ? 'Reading live graduationStatus…'
+                      ? 'Checking live graduation eligibility…'
                       : 'Activity or time gate is not yet satisfied'}
             </span>
             <Button

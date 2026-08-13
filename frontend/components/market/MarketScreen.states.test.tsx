@@ -4,6 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MarketScreen } from './MarketScreen';
+import { internalIdentifiersInRenderedOutput } from './user-facing-copy.test-utils';
 
 const mocks = vi.hoisted(() => ({
   market: {
@@ -90,5 +91,6 @@ describe('MarketScreen money states', () => {
 
     expect(screen.getByText(expectedTitle)).toBeTruthy();
     expect(rendered.container.querySelector('svg')).toBeNull();
+    expect(internalIdentifiersInRenderedOutput(rendered.container)).toEqual([]);
   });
 });

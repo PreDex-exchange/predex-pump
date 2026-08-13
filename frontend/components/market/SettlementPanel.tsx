@@ -251,7 +251,7 @@ export function SettlementPanel({
         <p>
           This re-reads the CTF payout denominator, then calls{' '}
           <code>observeResolution({market.id})</code>. Anyone may advance the
-          market to ResolvedObserved.
+          market into the observed-resolution phase.
         </p>
       );
     }
@@ -271,7 +271,7 @@ export function SettlementPanel({
     if (action.kind === 'closeout') {
       return (
         <p>
-          This re-checks ResolvedObserved state, then calls{' '}
+          This confirms that the resolution has been observed, then calls{' '}
           <code>closeout({market.id})</code>. LMSR terminal accounting becomes
           final.
         </p>
@@ -355,9 +355,9 @@ export function SettlementPanel({
               <th>Phase</th>
               <td>
                 {live.lifecycleState === 5
-                  ? 'ClosedOut'
+                  ? 'Closed out'
                   : live.lifecycleState === 4
-                    ? 'ResolvedObserved'
+                    ? 'Resolution observed'
                     : live.oracleResolved
                       ? 'Oracle resolved'
                       : 'Awaiting committee'}

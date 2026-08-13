@@ -1,10 +1,11 @@
 import type { Market } from '@predex-pump/shared/domain';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SettlementStatus } from '@/lib/chain/useSettlementStatus';
 
 import { SettlementPanel } from './SettlementPanel';
+import { internalIdentifiersInRenderedOutput } from './user-facing-copy.test-utils';
 
 const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
@@ -170,7 +171,7 @@ describe('SettlementPanel reads', () => {
   it('offers payout redemption before the incubator phase is observed', () => {
     mocks.status.data = settledStatus();
 
-    render(<SettlementPanel market={market} />);
+    const rendered = render(<SettlementPanel market={market} />);
 
     expect(screen.getByText('Resolution ready to observe')).toBeTruthy();
     expect(screen.getByText('Wallet positions')).toBeTruthy();
@@ -178,5 +179,39 @@ describe('SettlementPanel reads', () => {
     expect(redeemButtons).toHaveLength(2);
     expect(redeemButtons[0]?.hasAttribute('disabled')).toBe(false);
     expect(redeemButtons[1]?.hasAttribute('disabled')).toBe(true);
+    expect(internalIdentifiersInRenderedOutput(rendered.container)).toEqual([]);
+  });
+
+  it.each([
+    [4, 'Resolution observed'],
+    [5, 'Closed out'],
+  ])('renders lifecycle state %i as prose', (lifecycleState, expectedPhase) => {
+    mocks.status.data = {
+      ...settledStatus(),
+      lifecycleState,
+    };
+
+    const rendered = render(<SettlementPanel market={market} />);
+
+    expect(screen.getByText(expectedPhase)).toBeTruthy();
+    expect(internalIdentifiersInRenderedOutput(rendered.container)).toEqual([]);
+  });
+
+  it('keeps lifecycle identifiers out of action explanations', () => {
+    mocks.status.data = settledStatus();
+    const observe = render(<SettlementPanel market={market} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Observe resolution' }));
+    expect(internalIdentifiersInRenderedOutput(observe.container)).toEqual([]);
+
+    observe.unmount();
+    mocks.status.data = {
+      ...settledStatus(),
+      lifecycleState: 4,
+    };
+    const closeout = render(<SettlementPanel market={market} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close out market' }));
+    expect(internalIdentifiersInRenderedOutput(closeout.container)).toEqual([]);
   });
 });

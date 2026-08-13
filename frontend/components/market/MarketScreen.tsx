@@ -128,7 +128,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     return (
       <main className={styles.state}>
         <StatePanel
-          message="No MarketCreated event with that ID was found in the live deployment."
+          message="No market-creation event with that ID was found in the live deployment."
           showMascot={false}
           state="empty"
           title="No egg with that number"

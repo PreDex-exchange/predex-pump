@@ -368,6 +368,51 @@ describe('Portfolio money states', () => {
     );
   });
 
+  it('groups every positions-table money value and unit in one element', () => {
+    if (!mocks.account) throw new Error('account fixture missing');
+    mocks.account = {
+      ...mocks.account,
+      positions: [
+        {
+          account: ADDRESS,
+          marketId: market.id,
+          outcome: 'YES',
+          qtyRaw: '1000000',
+          costBasisRaw: '500000',
+          costBasisEstimated: true,
+          realizedPnlRaw: '0',
+          unrealizedPnlRaw: '44000',
+          updatedAt: 1_900_004_300,
+        },
+      ],
+    };
+
+    render(<PortfolioScreen />);
+
+    const table = screen.getByRole('table', {
+      name: /Indexed outcome-token positions/u,
+    });
+    const row = within(table).getByText(market.question).closest('tr');
+    expect(row).not.toBeNull();
+
+    for (const label of ['Avg. cost', 'Current value', 'PnL (est.)']) {
+      const cell = (row as HTMLElement).querySelector(
+        `[data-label="${label}"]`,
+      );
+      expect(cell).not.toBeNull();
+      expect(cell?.children).toHaveLength(1);
+      expect(cell?.firstElementChild?.tagName).toBe('SPAN');
+      expect(
+        cell?.firstElementChild?.querySelector(':scope > small')?.textContent,
+      ).toBe('USDC');
+      expect(
+        [...(cell?.childNodes ?? [])].filter(
+          (node) => node.nodeType === 3 && node.textContent?.trim(),
+        ),
+      ).toEqual([]);
+    }
+  });
+
   it.each([
     {
       expectedTitle: 'Counting your positions…',

@@ -606,7 +606,9 @@ export function PortfolioScreen() {
                       </span>
                     </td>
                     <td className={styles.numericCell} data-label="Current value">
-                      {formatUsdc(row.currentValueRaw)} <small>USDC</small>
+                      <span>
+                        {formatUsdc(row.currentValueRaw)} <small>USDC</small>
+                      </span>
                     </td>
                     <td className={styles.numericCell} data-label="PnL (est.)">
                       <span
