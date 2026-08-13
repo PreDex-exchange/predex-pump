@@ -141,6 +141,10 @@
   box-shadow: var(--shadow-chunky);
 }
 
+.amountInput:focus-within {
+  box-shadow: var(--shadow-focus);
+}
+
 .amountInput input {
   min-width: 0;
   flex: 1;

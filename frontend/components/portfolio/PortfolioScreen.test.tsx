@@ -4,10 +4,16 @@ import type {
   ListMarketsResponse,
   MakerOrdersResponse,
 } from '@predex-pump/shared/rest';
-import type { Market, OffchainOrder, Order } from '@predex-pump/shared/domain';
+import type {
+  Market,
+  OffchainOrder,
+  Order,
+  Position,
+} from '@predex-pump/shared/domain';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TradePanel } from '../market/TradePanel';
 import { PortfolioScreen } from './PortfolioScreen';
 
 const ADDRESS = `0x${'12'.repeat(20)}` as const;
@@ -126,6 +132,29 @@ vi.mock('wagmi', () => ({
     connectors: [],
     error: null,
     isPending: false,
+  }),
+}));
+
+vi.mock('@/lib/chain/useQuote', () => ({
+  useQuote: () => ({
+    quote: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+
+vi.mock('@/lib/chain/transactions', () => ({
+  buyOnArc: vi.fn(),
+  sellOnArc: vi.fn(),
+}));
+
+vi.mock('@/lib/chain/useTxFlow', () => ({
+  useTxFlow: () => ({
+    state: { phase: 'idle', message: 'Ready.' },
+    execute: vi.fn(),
+    reset: vi.fn(),
+    isBusy: false,
   }),
 }));
 
@@ -268,26 +297,25 @@ describe('Portfolio open orders', () => {
 });
 
 describe('Portfolio money states', () => {
-  it('renders non-zero sub-display quantities and values with explicit floors', () => {
+  it('renders the same non-zero sub-raw-unit value on the portfolio and trade panel', () => {
     if (!mocks.account) throw new Error('account fixture missing');
+    const tinyPosition: Position = {
+      account: ADDRESS,
+      marketId: market.id,
+      outcome: 'YES',
+      qtyRaw: '1',
+      costBasisRaw: '1',
+      costBasisEstimated: true,
+      realizedPnlRaw: '0',
+      unrealizedPnlRaw: '0',
+      updatedAt: 1_900_004_300,
+    };
     mocks.account = {
       ...mocks.account,
-      positions: [
-        {
-          account: ADDRESS,
-          marketId: market.id,
-          outcome: 'YES',
-          qtyRaw: '1',
-          costBasisRaw: '1',
-          costBasisEstimated: true,
-          realizedPnlRaw: '0',
-          unrealizedPnlRaw: '0',
-          updatedAt: 1_900_004_300,
-        },
-      ],
+      positions: [tinyPosition],
     };
 
-    render(<PortfolioScreen />);
+    const portfolio = render(<PortfolioScreen />);
 
     const table = screen.getByRole('table', {
       name: /Indexed outcome-token positions/u,
@@ -297,10 +325,19 @@ describe('Portfolio money states', () => {
     expect(
       (row as HTMLElement).querySelector('[data-label="Quantity"]')?.textContent,
     ).toBe('<0.01');
-    expect(
-      (row as HTMLElement).querySelector('[data-label="Current value"]')
-        ?.textContent,
-    ).toBe('<0.01 USDC');
+    const portfolioValue = (row as HTMLElement).querySelector(
+      '[data-label="Current value"]',
+    )?.textContent;
+    expect(portfolioValue).toBe('<0.01 USDC');
+
+    portfolio.unmount();
+    render(<TradePanel market={market} positions={[tinyPosition]} />);
+
+    const markedValue = screen.getByText('Marked value').parentElement;
+    expect(markedValue).not.toBeNull();
+    expect(markedValue?.querySelector('strong')?.textContent).toBe(
+      portfolioValue,
+    );
   });
 
   it.each([

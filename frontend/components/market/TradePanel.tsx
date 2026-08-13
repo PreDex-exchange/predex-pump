@@ -27,6 +27,7 @@ import {
   ORDER_SIZE_STEP_ERROR,
   snappedOrderSizeInput,
 } from '@/lib/order-input';
+import { positionCurrentValueRaw } from '@/lib/market-state';
 
 import styles from './TradePanel.module.css';
 
@@ -38,16 +39,6 @@ function inputToRaw(value: string) {
   } catch {
     return '0';
   }
-}
-
-function markedValue(position: Position | undefined, market: Market) {
-  if (!position) return null;
-  const priceRaw =
-    position.outcome === 'YES' ? market.yesPriceRaw : market.noPriceRaw;
-  return (
-    (BigInt(position.qtyRaw) * BigInt(priceRaw)) /
-    1_000_000n
-  ).toString();
 }
 
 interface TradePanelProps {
@@ -75,7 +66,10 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
     (position) => position.outcome === outcome,
   );
   const positionValueRaw = useMemo(
-    () => markedValue(selectedPosition, market),
+    () =>
+      selectedPosition
+        ? positionCurrentValueRaw(selectedPosition, market)
+        : null,
     [market, selectedPosition],
   );
   const {

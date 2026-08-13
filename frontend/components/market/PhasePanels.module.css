@@ -126,6 +126,10 @@
   border-radius: var(--radius-input);
 }
 
+.bookField > span:focus-within {
+  box-shadow: var(--shadow-focus);
+}
+
 .bookField input {
   width: 100%;
   min-width: 0;

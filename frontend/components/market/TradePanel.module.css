@@ -93,6 +93,10 @@
   border-color: var(--error);
 }
 
+.input:focus-within {
+  box-shadow: var(--shadow-focus);
+}
+
 .input input {
   width: 100%;
   min-width: 0;
