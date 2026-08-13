@@ -95,14 +95,17 @@ export function WalletBar() {
     </button>
   ) : isSignedIn && !address ? (
     <button
-      aria-label="Sign out"
+      aria-label={`Sign out saved session for ${session.address}`}
       className={`${styles.auth} ${styles.signed}`}
       onClick={() => void signOut()}
-      title={`Signed in as ${session.address}. Click to sign out.`}
+      title="The server session stays saved while the wallet is disconnected. Click to sign out."
       type="button"
     >
       <span aria-hidden="true">✓</span>
-      {shortAddress(session.address)}
+      <span>
+        Session saved ·{' '}
+        <span className={styles.sessionAddress}>{shortAddress(session.address)}</span>
+      </span>
     </button>
   ) : (
     <button
@@ -143,10 +146,20 @@ export function WalletBar() {
           className={styles.wallet}
           disabled={!connector || isConnecting}
           onClick={() => connector && connect({ connector })}
-          title="Connect an injected wallet"
+          title={
+            isSignedIn
+              ? 'Reconnect a wallet to the saved server session'
+              : 'Connect an injected wallet'
+          }
           type="button"
         >
-          {isConnecting ? 'Connecting…' : connector ? 'Connect wallet' : 'No wallet found'}
+          {isConnecting
+            ? 'Connecting…'
+            : connector
+              ? isSignedIn
+                ? 'Reconnect wallet'
+                : 'Connect wallet'
+              : 'No wallet found'}
         </button>
         {authControl}
       </WalletControls>

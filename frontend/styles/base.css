@@ -30,10 +30,10 @@ body::before {
   z-index: -1;
   inset: 0;
   background:
-    radial-gradient(42vw 42vw at 6% -6%, rgb(255 194 75 / 20%), transparent 60%),
-    radial-gradient(38vw 38vw at 102% 6%, rgb(255 107 87 / 16%), transparent 58%),
-    radial-gradient(46vw 46vw at 96% 104%, rgb(23 184 144 / 14%), transparent 60%),
-    radial-gradient(40vw 40vw at -4% 102%, rgb(62 143 224 / 13%), transparent 60%);
+    radial-gradient(42vw 42vw at 6% -6%, var(--reward-20), transparent 60%),
+    radial-gradient(38vw 38vw at 102% 6%, var(--brand-16), transparent 58%),
+    radial-gradient(46vw 46vw at 96% 104%, var(--yes-14), transparent 60%),
+    radial-gradient(40vw 40vw at -4% 102%, var(--no-13), transparent 60%);
   content: '';
   pointer-events: none;
 }
@@ -60,7 +60,7 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 4px solid rgb(62 143 224 / 32%);
+  outline: 4px solid var(--no-32);
   outline-offset: 2px;
 }
 

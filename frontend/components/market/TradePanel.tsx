@@ -18,7 +18,7 @@ import { useQuote } from '@/lib/chain/useQuote';
 import { useTxFlow } from '@/lib/chain/useTxFlow';
 import {
   formatPrice,
-  formatRaw,
+  formatShareQuantity,
   formatSignedUsdc,
   formatUsdc,
 } from '@/lib/format';
@@ -256,7 +256,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
             <span>Shares ({outcome})</span>
             <strong className="numeric">
               {quote
-                ? formatRaw(quote.sharesRaw, {
+                ? formatShareQuantity(quote.sharesRaw, {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
                   })
@@ -314,7 +314,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
               <div>
                 <span>{outcome} held</span>
                 <strong className="numeric">
-                  {formatRaw(selectedPosition.qtyRaw, {
+                  {formatShareQuantity(selectedPosition.qtyRaw, {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
                   })}
@@ -375,7 +375,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           <div>
             <dt>Shares</dt>
             <dd className="numeric">
-              {formatRaw(amountRaw)} {outcome}
+              {formatShareQuantity(amountRaw)} {outcome}
             </dd>
           </div>
           <div>

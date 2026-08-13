@@ -297,7 +297,7 @@
   border: 2px solid var(--reward);
   border-radius: var(--radius-input);
   background: var(--reward-pale);
-  box-shadow: 0 5px 18px rgb(83 57 26 / 7%);
+  box-shadow: 0 5px 18px var(--warm-shadow-7);
 }
 
 .dedupPending {
@@ -356,7 +356,7 @@
 
 .dedupCandidates li {
   padding-top: var(--space-2);
-  border-top: 1px solid rgb(83 57 26 / 14%);
+  border-top: 1px solid var(--warm-divider-14);
 }
 
 .dedupCandidateQuestion {
@@ -525,7 +525,7 @@
 }
 
 .rulesCard {
-  background: rgb(255 255 255 / 84%);
+  background: var(--surface-84);
 }
 
 .liveDot {
@@ -690,7 +690,7 @@
   width: min(100%, 720px);
   overflow: hidden;
   background:
-    radial-gradient(circle at 15% 25%, rgb(255 194 75 / 24%), transparent 36%),
+    radial-gradient(circle at 15% 25%, var(--reward-24), transparent 36%),
     var(--surface);
 }
 

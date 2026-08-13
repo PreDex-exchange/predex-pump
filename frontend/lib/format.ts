@@ -72,7 +72,25 @@ export function formatImpliedPercent(raw: Raw, digits = 0) {
     decimals: 4,
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
+    nonZeroFloor: true,
     useGrouping: false,
+  });
+}
+
+export function formatShareQuantity(
+  raw: Raw,
+  {
+    minimumFractionDigits = 2,
+    maximumFractionDigits = 2,
+  }: Pick<
+    RawFormatOptions,
+    'minimumFractionDigits' | 'maximumFractionDigits'
+  > = {},
+) {
+  return formatRaw(raw, {
+    minimumFractionDigits,
+    maximumFractionDigits,
+    nonZeroFloor: true,
   });
 }
 
@@ -207,5 +225,7 @@ export function formatDateTime(timestamp: number) {
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
   }).format(timestamp * 1000);
 }

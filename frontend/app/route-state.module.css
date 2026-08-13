@@ -1,0 +1,19 @@
+.page {
+  width: calc(100% - 32px);
+  max-width: 960px;
+  margin: 48px auto;
+}
+
+.globalBody {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-nunito), system-ui, sans-serif;
+}
+
+@media (max-width: 520px) {
+  .page {
+    margin-block: 24px;
+  }
+}

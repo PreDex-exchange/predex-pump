@@ -268,6 +268,41 @@ describe('Portfolio open orders', () => {
 });
 
 describe('Portfolio money states', () => {
+  it('renders non-zero sub-display quantities and values with explicit floors', () => {
+    if (!mocks.account) throw new Error('account fixture missing');
+    mocks.account = {
+      ...mocks.account,
+      positions: [
+        {
+          account: ADDRESS,
+          marketId: market.id,
+          outcome: 'YES',
+          qtyRaw: '1',
+          costBasisRaw: '1',
+          costBasisEstimated: true,
+          realizedPnlRaw: '0',
+          unrealizedPnlRaw: '0',
+          updatedAt: 1_900_004_300,
+        },
+      ],
+    };
+
+    render(<PortfolioScreen />);
+
+    const table = screen.getByRole('table', {
+      name: /Indexed outcome-token positions/u,
+    });
+    const row = within(table).getByText(market.question).closest('tr');
+    expect(row).not.toBeNull();
+    expect(
+      (row as HTMLElement).querySelector('[data-label="Quantity"]')?.textContent,
+    ).toBe('<0.01');
+    expect(
+      (row as HTMLElement).querySelector('[data-label="Current value"]')
+        ?.textContent,
+    ).toBe('<0.01 USDC');
+  });
+
   it.each([
     {
       expectedTitle: 'Counting your positions…',

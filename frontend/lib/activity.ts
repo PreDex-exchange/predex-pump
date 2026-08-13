@@ -2,7 +2,7 @@ import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
 
 import {
   formatDateTime,
-  formatRaw,
+  formatShareQuantity,
   formatUsd,
   formatUsdc,
   relativeTime,
@@ -93,7 +93,7 @@ function marketSegment(
 
 function quantity(event: ActivityEvent) {
   if (event.amountRaw === undefined) return null;
-  return formatRaw(event.amountRaw, {
+  return formatShareQuantity(event.amountRaw, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });

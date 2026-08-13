@@ -46,7 +46,7 @@
   padding: 8px 12px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-input);
-  background: rgb(255 255 255 / 72%);
+  background: var(--surface-72);
   color: var(--muted);
   font-size: 0.72rem;
 }
@@ -63,7 +63,7 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-2);
-  background: rgb(255 255 255 / 84%);
+  background: var(--surface-84);
 }
 
 .summaryCard > span:first-child {
@@ -207,7 +207,7 @@
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  background: rgb(255 255 255 / 88%);
+  background: var(--surface-88);
 }
 
 .tableCard table {

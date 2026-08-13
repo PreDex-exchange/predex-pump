@@ -30,7 +30,7 @@ import {
 import { useTxFlow } from '@/lib/chain/useTxFlow';
 import {
   formatDateTime,
-  formatRaw,
+  formatShareQuantity,
   formatUsdc,
   shortAddress,
 } from '@/lib/format';
@@ -499,7 +499,7 @@ export function SettlementPanel({
                       <tr key={outcome}>
                         <th>{outcome}</th>
                         <td className="numeric">
-                          {formatRaw(held.toString(), {
+                          {formatShareQuantity(held.toString(), {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}

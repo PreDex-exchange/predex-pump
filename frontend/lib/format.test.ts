@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatCompactUsdc, formatPrice, formatUsd, formatUsdc } from './format';
+import {
+  formatCompactUsdc,
+  formatDateTime,
+  formatImpliedPercent,
+  formatPrice,
+  formatShareQuantity,
+  formatUsd,
+  formatUsdc,
+} from './format';
 
 describe('fixed-precision money formatting', () => {
   it.each([
@@ -27,5 +35,25 @@ describe('fixed-precision money formatting', () => {
   it('does not collapse non-zero compact money to zero', () => {
     expect(formatCompactUsdc('0')).toBe('0');
     expect(formatCompactUsdc('1')).toBe('<1');
+  });
+
+  it('does not describe a non-zero implied probability as impossible', () => {
+    expect(formatImpliedPercent('0')).toBe('0');
+    expect(formatImpliedPercent('1')).toBe('<1');
+  });
+
+  it('does not describe a non-zero share quantity as empty', () => {
+    expect(formatShareQuantity('0')).toBe('0.00');
+    expect(formatShareQuantity('1')).toBe('<0.01');
+  });
+});
+
+describe('absolute date formatting', () => {
+  it('renders the instant in UTC and names the zone', () => {
+    const formatted = formatDateTime(0);
+
+    expect(formatted).toContain('Jan 1, 1970');
+    expect(formatted).toContain('12:00 AM');
+    expect(formatted).toMatch(/\bUTC$/u);
   });
 });

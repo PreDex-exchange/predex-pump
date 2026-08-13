@@ -17,6 +17,7 @@ import { AuthProvider, useAuth } from './AuthProvider';
 const SIGNATURE = `0x${'34'.repeat(65)}` as const;
 const mocks = vi.hoisted(() => ({
   address: `0x${'12'.repeat(20)}` as const,
+  isConnected: true,
   getSession: vi.fn(),
   getSiweNonce: vi.fn(),
   verifySiwe: vi.fn(),
@@ -44,9 +45,9 @@ vi.mock('@/lib/api/rest-client', () => ({
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({
-    address: mocks.address,
+    address: mocks.isConnected ? mocks.address : undefined,
     chainId: 5_042_002,
-    isConnected: true,
+    isConnected: mocks.isConnected,
   }),
   useConnect: () => ({
     connect: mocks.connect,
@@ -83,18 +84,29 @@ function Consumer() {
   );
 }
 
-function renderAuth(queryClient = new QueryClient(), showHeader = false) {
-  return render(
+function AuthTree({
+  queryClient,
+  showHeader,
+}: {
+  queryClient: QueryClient;
+  showHeader: boolean;
+}) {
+  return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <Consumer />
         {showHeader && <WalletBar />}
       </AuthProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
 }
 
+function renderAuth(queryClient = new QueryClient(), showHeader = false) {
+  return render(<AuthTree queryClient={queryClient} showHeader={showHeader} />);
+}
+
 beforeEach(() => {
+  mocks.isConnected = true;
   mocks.getSession.mockReset();
   mocks.getSiweNonce.mockReset();
   mocks.verifySiwe.mockReset();
@@ -197,5 +209,39 @@ describe('AuthProvider', () => {
       }),
     ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Signed in' })).toBeNull();
+  });
+
+  it('states that the saved session survives a wallet disconnect', async () => {
+    const queryClient = new QueryClient();
+    mocks.getSession.mockResolvedValue(authenticated);
+    mocks.disconnect.mockImplementation(() => {
+      mocks.isConnected = false;
+    });
+    const rendered = renderAuth(queryClient, true);
+    await screen.findByText(`signed:${ADDRESS}`);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Disconnect wallet/u }),
+    );
+    rendered.rerender(
+      <AuthTree queryClient={queryClient} showHeader />,
+    );
+
+    expect(mocks.disconnect).toHaveBeenCalledOnce();
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('button', { name: 'Reconnect wallet' }),
+    ).toBeTruthy();
+    expect(screen.getByText(/Session saved/u).textContent).toContain(
+      '0x1212…212',
+    );
+    expect(
+      screen.getByRole('button', {
+        name: `Sign out saved session for ${ADDRESS}`,
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: 'Connect wallet' }),
+    ).toBeNull();
   });
 });

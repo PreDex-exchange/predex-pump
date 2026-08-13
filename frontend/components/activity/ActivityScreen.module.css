@@ -168,7 +168,7 @@
   align-items: center;
   min-height: 112px;
   padding: 18px 20px 18px 26px;
-  border-bottom: 2px dashed rgb(43 36 64 / 16%);
+  border-bottom: 2px dashed var(--ink-16);
   animation: eventArrives 420ms var(--ease-enter) both;
 }
 
@@ -257,7 +257,7 @@
 
 .marketLink {
   text-decoration: underline;
-  text-decoration-color: rgb(255 107 87 / 50%);
+  text-decoration-color: var(--brand-50);
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
 }
@@ -334,7 +334,7 @@
 
 @keyframes livePulse {
   50% {
-    box-shadow: 0 0 0 7px rgb(23 184 144 / 15%);
+    box-shadow: 0 0 0 7px var(--yes-15);
   }
 }
 

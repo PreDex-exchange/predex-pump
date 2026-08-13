@@ -6,7 +6,7 @@
   place-items: center;
   padding: var(--space-4);
   overflow: hidden;
-  background: rgb(43 36 64 / 48%);
+  background: var(--ink-48);
   backdrop-filter: blur(4px);
 }
 
@@ -21,7 +21,7 @@
   border: 2px solid var(--outline);
   border-radius: var(--radius-sheet);
   background: var(--surface);
-  box-shadow: 0 8px 0 rgb(43 36 64 / 28%);
+  box-shadow: 0 8px 0 var(--ink-28);
 }
 
 .kicker {

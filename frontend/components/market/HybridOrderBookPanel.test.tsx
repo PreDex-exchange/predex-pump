@@ -588,8 +588,8 @@ describe('Hybrid human trading surface', () => {
     response.liveVenue = 'MINICLOB';
     renderLivePanel(response);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'NO' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Sell · ASK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'NO' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sell · ASK' }));
     fireEvent.change(screen.getByLabelText(/^Size/u), {
       target: { value: '1.000' },
     });
@@ -616,7 +616,7 @@ describe('Hybrid human trading surface', () => {
     };
     renderPanel(books(offchainOrder(OTHER_MAKER, 'a9')), market, [position]);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Sell · ASK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sell · ASK' }));
     expect(screen.getByText('Estimated proceeds')).toBeTruthy();
     expect(screen.queryByText('Total collateral')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Review binding order' }));
@@ -711,7 +711,7 @@ describe('Hybrid human trading surface', () => {
     fireEvent.blur(price);
     expect(price.value).toBe('0.6');
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Sell · ASK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sell · ASK' }));
     fireEvent.change(price, { target: { value: '0.604' } });
     fireEvent.blur(price);
     expect(price.value).toBe('0.61');
@@ -752,8 +752,8 @@ describe('Hybrid human trading surface', () => {
     };
     renderPanel(books(offchainOrder(OTHER_MAKER, 'bf')), market, [position]);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'NO' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Sell · ASK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'NO' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sell · ASK' }));
     const size = screen.getByLabelText(/^Size/u) as HTMLInputElement;
     fireEvent.change(size, { target: { value: '0.751' } });
 

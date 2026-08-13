@@ -27,6 +27,7 @@ import {
 import {
   formatPrice,
   formatRaw,
+  formatShareQuantity,
   formatSignedUsdc,
   formatUsdc,
   phaseLabel,
@@ -589,7 +590,7 @@ export function PortfolioScreen() {
                       <OutcomeBadge outcome={row.position.outcome} />
                     </td>
                     <td className={styles.numericCell} data-label="Quantity">
-                      {formatRaw(row.position.qtyRaw, {
+                      {formatShareQuantity(row.position.qtyRaw, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}

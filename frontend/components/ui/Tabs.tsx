@@ -28,15 +28,14 @@ export function Tabs<T extends string>({
     <div
       aria-label={ariaLabel}
       className={`${styles.tabs} ${compact ? styles.compact : ''} ${className}`}
-      role="tablist"
+      role="group"
     >
       {options.map((option) => (
         <button
-          aria-selected={option.value === value}
+          aria-pressed={option.value === value}
           className={`${styles.tab} ${option.value === value ? styles.active : ''}`}
           key={option.value}
           onClick={() => onChange(option.value)}
-          role="tab"
           type="button"
         >
           {option.label}

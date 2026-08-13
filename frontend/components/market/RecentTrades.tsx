@@ -1,7 +1,12 @@
 import type { Trade } from '@predex-pump/shared/domain';
 
 import { Card } from '@/components/ui/Card';
-import { formatPrice, formatRaw, relativeTime, shortAddress } from '@/lib/format';
+import {
+  formatPrice,
+  formatShareQuantity,
+  relativeTime,
+  shortAddress,
+} from '@/lib/format';
 
 import styles from './RecentTrades.module.css';
 
@@ -24,7 +29,7 @@ export function RecentTrades({ trades }: { trades: Trade[] }) {
               </span>
               <span className={styles.summary}>
                 <span className="numeric">
-                  {formatRaw(trade.sizeRaw, {
+                  {formatShareQuantity(trade.sizeRaw, {
                     minimumFractionDigits: 0,
                     maximumFractionDigits: 2,
                   })}

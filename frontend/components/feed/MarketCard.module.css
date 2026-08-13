@@ -160,7 +160,7 @@
   border: 2px solid var(--outline);
   border-radius: 50%;
   background: inherit;
-  box-shadow: 0 2px 0 rgb(43 36 64 / 20%);
+  box-shadow: 0 2px 0 var(--ink-20);
   color: var(--text-on-accent);
   content: '✓';
   font-size: 0.7rem;
@@ -191,7 +191,7 @@
   gap: 10px 14px;
   margin-top: 15px;
   padding-top: 14px;
-  border-top: 2px dashed rgb(43 36 64 / 14%);
+  border-top: 2px dashed var(--ink-14);
 }
 
 .volume {

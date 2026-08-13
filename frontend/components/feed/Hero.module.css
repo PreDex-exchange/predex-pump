@@ -89,7 +89,7 @@
   width: 78%;
   border-radius: 50%;
   aspect-ratio: 1;
-  background: radial-gradient(circle, rgb(255 194 75 / 30%), rgb(23 184 144 / 14%) 55%, transparent 72%);
+  background: radial-gradient(circle, var(--reward-30), var(--yes-14) 55%, transparent 72%);
   content: '';
   filter: blur(4px);
 }

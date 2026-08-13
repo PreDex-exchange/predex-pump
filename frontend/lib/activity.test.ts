@@ -75,6 +75,21 @@ describe('activity descriptions', () => {
     expect(description.text).toContain('for about <0.01 USDC');
   });
 
+  it('keeps a sub-display share quantity distinguishable from zero', () => {
+    const description = describeActivityEvent(
+      event('Trade', {
+        amountRaw: '1',
+        outcome: 'YES',
+        priceRaw: '500000',
+        side: 'BID',
+      }),
+      [market],
+    );
+
+    expect(description.text).toContain('bought <0.01 YES shares');
+    expect(description.text).not.toContain('bought 0 YES shares');
+  });
+
   it('names BookSeeded independently from graduation', () => {
     const description = describeActivityEvent(event('BookSeeded'), [market]);
 

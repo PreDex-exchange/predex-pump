@@ -41,7 +41,7 @@
   align-items: center;
   gap: 10px;
   padding: 11px 0;
-  border-bottom: 2px dashed rgb(43 36 64 / 12%);
+  border-bottom: 2px dashed var(--ink-12);
 }
 
 .activity li:last-child {
@@ -107,7 +107,7 @@
 
 .marketLink {
   text-decoration: underline;
-  text-decoration-color: rgb(255 107 87 / 50%);
+  text-decoration-color: var(--brand-50);
   text-decoration-thickness: 2px;
   text-underline-offset: 2px;
 }

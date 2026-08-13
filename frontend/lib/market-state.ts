@@ -9,6 +9,13 @@ import type {
 
 const RAW_SCALE = 1_000_000n;
 
+function scaledPositionValueRaw(quantityRaw: string, priceRaw: string): string {
+  const product = BigInt(quantityRaw) * BigInt(priceRaw);
+  const value = product / RAW_SCALE;
+  if (value !== 0n || product === 0n) return value.toString();
+  return product > 0n ? '1' : '-1';
+}
+
 export function indexedResolution(
   market: Market,
   detailResolution?: Resolution | null,
@@ -93,10 +100,7 @@ export function positionCurrentValueRaw(
   if (market === undefined) return '0';
   const payoutPrice = resolutionPriceRaw(market, position.outcome);
   if (payoutPrice !== null) {
-    return (
-      (BigInt(position.qtyRaw) * BigInt(payoutPrice)) /
-      RAW_SCALE
-    ).toString();
+    return scaledPositionValueRaw(position.qtyRaw, payoutPrice);
   }
   if (isMarketSettled(market)) {
     // The indexer marks unrealized PnL at the final payout. This fallback keeps
@@ -108,8 +112,5 @@ export function positionCurrentValueRaw(
   }
   const marginalPrice =
     position.outcome === 'YES' ? market.yesPriceRaw : market.noPriceRaw;
-  return (
-    (BigInt(position.qtyRaw) * BigInt(marginalPrice)) /
-    RAW_SCALE
-  ).toString();
+  return scaledPositionValueRaw(position.qtyRaw, marginalPrice);
 }

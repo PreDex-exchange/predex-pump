@@ -124,17 +124,17 @@
 .level {
   position: relative;
   padding: 8px 10px;
-  border-top: 1px solid rgb(239 231 218 / 70%);
+  border-top: 1px solid var(--hairline-70);
   font-size: 0.78rem;
   font-weight: 700;
 }
 
 .askLevel {
-  background: linear-gradient(90deg, transparent, rgb(255 247 238 / 75%));
+  background: linear-gradient(90deg, transparent, var(--bg-75));
 }
 
 .bidLevel {
-  background: linear-gradient(90deg, transparent, rgb(248 244 237 / 75%));
+  background: linear-gradient(90deg, transparent, var(--surface-sunken-75));
 }
 
 .spread {

@@ -25,9 +25,39 @@
   --info: #3e8fe0;
 
   /* Derived colors */
+  --bg-75: rgb(255 247 238 / 75%);
+  --surface-66: rgb(255 255 255 / 66%);
+  --surface-72: rgb(255 255 255 / 72%);
+  --surface-84: rgb(255 255 255 / 84%);
+  --surface-88: rgb(255 255 255 / 88%);
+  --surface-94: rgb(255 255 255 / 94%);
+  --hairline-70: rgb(239 231 218 / 70%);
+  --ink-10: rgb(43 36 64 / 10%);
+  --ink-12: rgb(43 36 64 / 12%);
+  --ink-14: rgb(43 36 64 / 14%);
+  --ink-16: rgb(43 36 64 / 16%);
+  --ink-20: rgb(43 36 64 / 20%);
+  --ink-28: rgb(43 36 64 / 28%);
+  --ink-48: rgb(43 36 64 / 48%);
   --ink-70: rgb(43 36 64 / 70%);
   --ink-55: rgb(43 36 64 / 55%);
   --ink-40: rgb(43 36 64 / 40%);
+  --brand-16: rgb(255 107 87 / 16%);
+  --brand-50: rgb(255 107 87 / 50%);
+  --reward-20: rgb(255 194 75 / 20%);
+  --reward-24: rgb(255 194 75 / 24%);
+  --reward-30: rgb(255 194 75 / 30%);
+  --yes-0: rgb(23 184 144 / 0%);
+  --yes-14: rgb(23 184 144 / 14%);
+  --yes-15: rgb(23 184 144 / 15%);
+  --yes-24: rgb(23 184 144 / 24%);
+  --yes-55: rgb(23 184 144 / 55%);
+  --no-13: rgb(62 143 224 / 13%);
+  --no-22: rgb(62 143 224 / 22%);
+  --no-32: rgb(62 143 224 / 32%);
+  --warm-shadow-7: rgb(83 57 26 / 7%);
+  --warm-divider-14: rgb(83 57 26 / 14%);
+  --reward-shadow-24: rgb(201 138 31 / 24%);
   --yes-ink: #0f785e;
   --no-ink: #2869aa;
   --reward-soft: #fff2d8;
@@ -41,6 +71,7 @@
   --surface-track-warm: #f3ece1;
   --surface-muted: #fbf7f0;
   --surface-sunken: #f8f4ed;
+  --surface-sunken-75: rgb(248 244 237 / 75%);
   --surface-table-head: #fbf8f3;
   --surface-hover: #fffcf7;
   --surface-disabled: #fbf9f5;
@@ -93,15 +124,15 @@
   --radius-sheet: 24px;
 
   /* Shadows */
-  --shadow-chunky: 0 4px 0 rgb(43 36 64 / 10%);
+  --shadow-chunky: 0 4px 0 var(--ink-10);
   --shadow-card:
-    0 4px 0 rgb(43 36 64 / 10%),
+    0 4px 0 var(--ink-10),
     0 18px 32px -20px rgb(43 36 64 / 34%);
   --shadow-card-hover:
-    0 8px 0 rgb(43 36 64 / 10%),
+    0 8px 0 var(--ink-10),
     0 24px 38px -20px rgb(43 36 64 / 38%);
   --shadow-button: 0 4px 0 var(--outline);
-  --shadow-focus: 0 0 0 4px rgb(62 143 224 / 22%);
+  --shadow-focus: 0 0 0 4px var(--no-22);
 
   /* Motion */
   --duration-micro: 80ms;

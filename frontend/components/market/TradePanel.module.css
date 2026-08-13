@@ -51,7 +51,7 @@
 .yes.selected {
   border-color: var(--yes);
   background: var(--yes-soft);
-  box-shadow: 0 3px 0 rgb(23 184 144 / 24%);
+  box-shadow: 0 3px 0 var(--yes-24);
 }
 
 .no {
@@ -65,7 +65,7 @@
 .no.selected {
   border-color: var(--no);
   background: var(--no-soft);
-  box-shadow: 0 3px 0 rgb(62 143 224 / 22%);
+  box-shadow: 0 3px 0 var(--no-22);
 }
 
 .field {

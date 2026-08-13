@@ -183,6 +183,21 @@ describe('ActivityScreen', () => {
     ).toBeTruthy();
   });
 
+  it('renders absolute activity timestamps with an explicit UTC zone', () => {
+    mocks.activityData = {
+      items: [trade('timestamped-event', HUMAN, TX_A)],
+      nextCursor: null,
+    };
+
+    const rendered = render(
+      <ActivityScreen agentAddresses={new Set([AGENT])} />,
+    );
+    const timestamp = rendered.container.querySelector('time');
+
+    expect(timestamp?.dateTime).toBe('2026-07-31T12:15:00.000Z');
+    expect(timestamp?.textContent).toMatch(/\bUTC$/u);
+  });
+
   it('shows a clear waiting state when the indexed snapshot is empty', () => {
     const rendered = render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
 

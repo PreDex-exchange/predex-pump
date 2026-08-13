@@ -148,17 +148,22 @@
   background: var(--surface);
 }
 
+.sessionAddress {
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 0.72rem;
+}
+
 @keyframes pulse {
   0% {
-    box-shadow: 0 0 0 0 rgb(23 184 144 / 55%);
+    box-shadow: 0 0 0 0 var(--yes-55);
   }
 
   70% {
-    box-shadow: 0 0 0 7px rgb(23 184 144 / 0%);
+    box-shadow: 0 0 0 7px var(--yes-0);
   }
 
   100% {
-    box-shadow: 0 0 0 0 rgb(23 184 144 / 0%);
+    box-shadow: 0 0 0 0 var(--yes-0);
   }
 }
 

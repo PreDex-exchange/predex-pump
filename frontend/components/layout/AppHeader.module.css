@@ -13,7 +13,7 @@
   padding: 12px 20px;
   border: 2px solid var(--outline);
   border-radius: 22px;
-  background: rgb(255 255 255 / 94%);
+  background: var(--surface-94);
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(14px);
 }
@@ -32,7 +32,7 @@
 .brandMark {
   width: 36px;
   height: 36px;
-  filter: drop-shadow(0 3px 0 rgb(43 36 64 / 16%));
+  filter: drop-shadow(0 3px 0 var(--ink-16));
 }
 
 .nav {
@@ -59,12 +59,12 @@
 
 .navLink.active {
   background: var(--reward-soft);
-  box-shadow: 0 3px 0 rgb(201 138 31 / 24%);
+  box-shadow: 0 3px 0 var(--reward-shadow-24);
   color: var(--ink);
 }
 
 .navLink.active:focus-visible {
-  outline: 4px solid rgb(62 143 224 / 32%);
+  outline: 4px solid var(--no-32);
   outline-offset: 2px;
 }
 

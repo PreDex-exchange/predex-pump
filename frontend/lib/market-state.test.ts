@@ -121,4 +121,16 @@ describe('settled market projection', () => {
       ),
     ).toBe('1000000');
   });
+
+  it('preserves a non-zero position value below one raw USDC unit', () => {
+    const tinyPosition = { ...winningPosition, qtyRaw: '1' };
+    const openMarket = market({
+      phase: 'Opened',
+      graduatedAt: null,
+      resolvedAt: null,
+      resolution: undefined,
+    });
+
+    expect(positionCurrentValueRaw(tinyPosition, openMarket)).toBe('1');
+  });
 });
