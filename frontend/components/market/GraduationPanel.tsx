@@ -14,6 +14,7 @@ import { useGraduationStatus } from '@/lib/chain/useGraduationStatus';
 import { useTxFlow } from '@/lib/chain/useTxFlow';
 import {
   formatDateTime,
+  formatUsd,
   formatUsdc,
   graduationPercent,
 } from '@/lib/format';
@@ -98,8 +99,8 @@ export function GraduationPanel({ market }: { market: Market }) {
           <div className={styles.row}>
             <strong className="numeric">{progress}% to graduation</strong>
             <span className="numeric">
-              ${formatUsdc(liveMarket.graduationActivityRaw, 0)} of $
-              {formatUsdc(
+              {formatUsd(liveMarket.graduationActivityRaw, 0)} of{' '}
+              {formatUsd(
                 liveMarket.params.graduationMoneyInThresholdRaw,
                 0,
               )}{' '}

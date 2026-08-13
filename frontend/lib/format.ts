@@ -6,7 +6,13 @@ interface RawFormatOptions {
   decimals?: number;
   minimumFractionDigits?: number;
   maximumFractionDigits?: number;
+  nonZeroFloor?: boolean;
   useGrouping?: boolean;
+}
+
+function smallestDisplayedMagnitude(maximumFractionDigits: number) {
+  if (maximumFractionDigits === 0) return '1';
+  return `0.${'0'.repeat(maximumFractionDigits - 1)}1`;
 }
 
 export function formatRaw(
@@ -15,6 +21,7 @@ export function formatRaw(
     decimals = RAW_DECIMALS,
     minimumFractionDigits = 2,
     maximumFractionDigits = 2,
+    nonZeroFloor = false,
     useGrouping = true,
   }: RawFormatOptions = {},
 ) {
@@ -31,6 +38,12 @@ export function formatRaw(
   const scale = 10n ** BigInt(decimals);
   const precisionScale = 10n ** BigInt(maximumFractionDigits);
   const rounded = (absolute * precisionScale + scale / 2n) / scale;
+
+  if (nonZeroFloor && absolute > 0n && rounded === 0n) {
+    const threshold = smallestDisplayedMagnitude(maximumFractionDigits);
+    return negative ? `>−${threshold}` : `<${threshold}`;
+  }
+
   const whole = rounded / precisionScale;
   let fraction = (rounded % precisionScale).toString().padStart(maximumFractionDigits, '0');
 
@@ -49,6 +62,7 @@ export function formatPrice(raw: Raw, digits = 2) {
   return formatRaw(raw, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
+    nonZeroFloor: true,
     useGrouping: false,
   });
 }
@@ -66,7 +80,17 @@ export function formatUsdc(raw: Raw, digits = 2) {
   return formatRaw(raw, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
+    nonZeroFloor: true,
   });
+}
+
+export function formatUsd(raw: Raw, digits = 2) {
+  const formatted = formatUsdc(raw, digits);
+  if (formatted === '—') return formatted;
+  if (formatted.startsWith('<')) return `<$${formatted.slice(1)}`;
+  if (formatted.startsWith('>−')) return `>−$${formatted.slice(2)}`;
+  if (formatted.startsWith('−')) return `−$${formatted.slice(1)}`;
+  return `$${formatted}`;
 }
 
 export function formatSignedUsdc(raw: Raw, digits = 2) {
@@ -131,12 +155,18 @@ export function formatCompactUsdc(raw: Raw) {
   } catch {
     return '—';
   }
-  const wholeUsdc = (value + 500_000n) / 1_000_000n;
-  return new Intl.NumberFormat('en-US', {
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  const wholeUsdc = (absolute + 500_000n) / 1_000_000n;
+  if (absolute > 0n && wholeUsdc === 0n) {
+    return negative ? '>−1' : '<1';
+  }
+  const formatted = new Intl.NumberFormat('en-US', {
     notation: wholeUsdc >= 10_000n ? 'compact' : 'standard',
     minimumFractionDigits: 0,
     maximumFractionDigits: wholeUsdc >= 10_000n ? 1 : 0,
   }).format(wholeUsdc);
+  return negative ? `−${formatted}` : formatted;
 }
 
 export function shortAddress(address: string, leading = 4, trailing = 3) {

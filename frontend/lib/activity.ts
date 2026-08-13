@@ -2,8 +2,9 @@ import type { ActivityEvent, Market } from '@predex-pump/shared/domain';
 
 import {
   formatDateTime,
-  formatPrice,
   formatRaw,
+  formatUsd,
+  formatUsdc,
   relativeTime,
   shortAddress,
 } from './format';
@@ -140,7 +141,7 @@ export function describeActivityEvent(
 ): ActivityDescription {
   const amount = quantity(event);
   const price =
-    event.priceRaw === undefined ? null : `$${formatPrice(event.priceRaw)}`;
+    event.priceRaw === undefined ? null : formatUsd(event.priceRaw);
   const notional = estimatedNotional(event);
   const market = marketSegment(event, markets);
   const outcomeAmount = `${amount ?? '—'}${
@@ -168,7 +169,7 @@ export function describeActivityEvent(
         market,
         ...(price ? [text(' at '), value(price)] : []),
         ...(notional
-          ? [text(' for about '), value(`${formatRaw(notional)} USDC`)]
+          ? [text(' for about '), value(`${formatUsdc(notional)} USDC`)]
           : []),
         text('.'),
       ]);
@@ -197,7 +198,7 @@ export function describeActivityEvent(
         market,
         ...(price ? [text(' at '), value(price)] : []),
         ...(notional
-          ? [text(' for about '), value(`${formatRaw(notional)} USDC`)]
+          ? [text(' for about '), value(`${formatUsdc(notional)} USDC`)]
           : []),
         text('.'),
       ]);

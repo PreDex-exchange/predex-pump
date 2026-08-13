@@ -17,7 +17,7 @@ export function StatePanel({
   message,
   compact = false,
   actions,
-  showMascot = true,
+  showMascot = false,
 }: StatePanelProps) {
   return (
     <div

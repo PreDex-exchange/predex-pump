@@ -65,6 +65,14 @@ describe('FeedScreen failure states', () => {
     expect(marketSurface.querySelector('svg')).toBeNull();
   });
 
+  it('keeps character art out of the empty market-price surface', () => {
+    render(<FeedScreen />);
+
+    const marketSurface = screen.getByRole('region', { name: 'Markets' });
+    expect(within(marketSurface).getByText('No markets in this nest yet')).toBeTruthy();
+    expect(marketSurface.querySelector('svg')).toBeNull();
+  });
+
   it('renders unknown hero statistics when the markets query fails', () => {
     mocks.markets.data = null as never;
     mocks.markets.error = new Error('markets unavailable');
@@ -78,6 +86,8 @@ describe('FeedScreen failure states', () => {
     expect(statistics.textContent).not.toContain('$0');
     expect(statistics.textContent).not.toMatch(/0\s*markets/u);
     expect(screen.getByText('The nest needs a reset')).toBeTruthy();
+    const marketSurface = screen.getByRole('region', { name: 'Markets' });
+    expect(marketSurface.querySelector('svg')).toBeNull();
   });
 
   it('renders an activity error instead of the empty state when activity fails', () => {

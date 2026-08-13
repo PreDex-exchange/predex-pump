@@ -138,12 +138,14 @@ export function FeedScreen() {
           {!isLoading && error && (
             <StatePanel
               message="The indexed API could not load the market feed. Refresh to retry."
+              showMascot={false}
               title="The nest needs a reset"
             />
           )}
           {!isLoading && !error && markets.length === 0 && (
             <StatePanel
               message="Try another phase, or launch the first market in this view."
+              showMascot={false}
               title="No markets in this nest yet"
             />
           )}

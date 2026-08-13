@@ -105,8 +105,12 @@ const openMiniClobOrder: Order = {
 const mocks = vi.hoisted(() => ({
   address: `0x${'12'.repeat(20)}` as const,
   account: null as AccountResponse | null,
+  accountError: null as Error | null,
+  accountLoading: false,
   activity: { items: [], nextCursor: null } as ActivityResponse,
   markets: { items: [], nextCursor: null } as ListMarketsResponse,
+  marketsError: null as Error | null,
+  marketsLoading: false,
   makerOrders: null as MakerOrdersResponse | null,
   useMyOrders: vi.fn(),
 }));
@@ -141,8 +145,8 @@ vi.mock('@/components/providers/AuthProvider', () => ({
 vi.mock('@/lib/api/hooks', () => ({
   useAccount: () => ({
     data: mocks.account,
-    isLoading: false,
-    error: null,
+    isLoading: mocks.accountLoading,
+    error: mocks.accountError,
     refetch: vi.fn(),
   }),
   useActivity: () => ({
@@ -153,8 +157,8 @@ vi.mock('@/lib/api/hooks', () => ({
   }),
   useMarkets: () => ({
     data: mocks.markets,
-    isLoading: false,
-    error: null,
+    isLoading: mocks.marketsLoading,
+    error: mocks.marketsError,
     refetch: vi.fn(),
   }),
   useMyOrders: (address: string | undefined, enabled: boolean) => {
@@ -169,6 +173,10 @@ vi.mock('@/lib/api/hooks', () => ({
 }));
 
 beforeEach(() => {
+  mocks.accountError = null;
+  mocks.accountLoading = false;
+  mocks.marketsError = null;
+  mocks.marketsLoading = false;
   mocks.account = {
     account: {
       address: ADDRESS,
@@ -256,5 +264,36 @@ describe('Portfolio open orders', () => {
     expect(within(section).getByText('Cancel on-chain · gas')).toBeTruthy();
     expect(section.textContent).toContain('removes an order from this operator’s book only');
     expect(section.textContent).toContain('invalidates the signature');
+  });
+});
+
+describe('Portfolio money states', () => {
+  it.each([
+    {
+      expectedTitle: 'Counting your positions…',
+      prepare: () => {
+        mocks.accountLoading = true;
+      },
+      state: 'loading',
+    },
+    {
+      expectedTitle: 'This portfolio would not open',
+      prepare: () => {
+        mocks.accountError = new Error('account unavailable');
+      },
+      state: 'error',
+    },
+    {
+      expectedTitle: 'No positions yet',
+      prepare: () => {},
+      state: 'empty',
+    },
+  ])('renders the $state state without character art', ({ expectedTitle, prepare }) => {
+    prepare();
+
+    const rendered = render(<PortfolioScreen />);
+
+    expect(screen.getByText(expectedTitle)).toBeTruthy();
+    expect(rendered.container.querySelector('svg')).toBeNull();
   });
 });

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { HatchingChick } from '@/components/mascot/HatchingChick';
 import { buttonClassName } from '@/components/ui/Button';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
-import { formatUsdc } from '@/lib/format';
+import { formatUsd } from '@/lib/format';
 
 import styles from './Hero.module.css';
 
@@ -52,7 +52,7 @@ export function Hero({ markets }: { markets: Market[] | null }) {
           </li>
           <li>
             <NumberDisplay size="hero" tone="no">
-              {volumeRaw === null ? '—' : `$${formatUsdc(volumeRaw, 2)}`}
+              {volumeRaw === null ? '—' : formatUsd(volumeRaw, 2)}
             </NumberDisplay>
             volume
           </li>

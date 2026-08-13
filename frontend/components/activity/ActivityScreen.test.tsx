@@ -184,20 +184,22 @@ describe('ActivityScreen', () => {
   });
 
   it('shows a clear waiting state when the indexed snapshot is empty', () => {
-    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+    const rendered = render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
 
     expect(screen.getByText('Waiting for activity…')).toBeTruthy();
     expect(screen.getByText(/will appear here live/u)).toBeTruthy();
+    expect(rendered.container.querySelector('svg')).toBeNull();
   });
 
   it('distinguishes indexed-history loading from a successful empty tape', () => {
     mocks.activityLoading = true;
 
-    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+    const rendered = render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
 
     expect(screen.getByText('Loading indexed history…')).toBeTruthy();
     expect(screen.queryByText('Waiting for activity…')).toBeNull();
     expect(screen.getByText(/before deciding whether this tape is empty/u)).toBeTruthy();
+    expect(rendered.container.querySelector('svg')).toBeNull();
   });
 
   it('shows the stream reconnecting state', () => {
@@ -214,13 +216,14 @@ describe('ActivityScreen', () => {
   it('renders a load failure distinctly from a successful empty tape', () => {
     mocks.activityError = new Error('activity unavailable');
 
-    render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
+    const rendered = render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
 
     expect(screen.getByRole('alert').textContent).toContain(
       'Activity history could not load',
     );
     expect(screen.queryByText('Waiting for activity…')).toBeNull();
     expect(screen.getByText(/this is not an empty activity tape/u)).toBeTruthy();
+    expect(rendered.container.querySelector('svg')).toBeNull();
   });
 
   it('exposes the next cursor through a load-older control', () => {

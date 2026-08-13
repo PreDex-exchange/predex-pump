@@ -53,7 +53,10 @@ afterEach(cleanup);
 describe('feed volume display', () => {
   it.each([
     ['0', '$0.00'],
-    ['130410', '$0.13'],
+    ['1', '<$0.01'],
+    ['4000', '<$0.01'],
+    ['5000', '$0.01'],
+    ['999999', '$1.00'],
     ['123456789012', '$123,456.79'],
   ])('renders raw volume %s at its real magnitude', (volumeRaw, expected) => {
     const snapshot = market(volumeRaw);

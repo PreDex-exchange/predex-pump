@@ -60,6 +60,21 @@ describe('activity descriptions', () => {
     expect(description.text).toContain('cancelled a 0.25 NO bid');
   });
 
+  it('keeps sub-cent prices and notionals distinguishable from zero', () => {
+    const description = describeActivityEvent(
+      event('Trade', {
+        amountRaw: '1000000',
+        outcome: 'YES',
+        priceRaw: '4000',
+        side: 'BID',
+      }),
+      [market],
+    );
+
+    expect(description.text).toContain('at <$0.01');
+    expect(description.text).toContain('for about <0.01 USDC');
+  });
+
   it('names BookSeeded independently from graduation', () => {
     const description = describeActivityEvent(event('BookSeeded'), [market]);
 
