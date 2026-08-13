@@ -1,17 +1,21 @@
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 
 import { HatchingChick } from '@/components/mascot/HatchingChick';
 
 import styles from './StatePanel.module.css';
 
-interface StatePanelProps {
+interface StatePanelBaseProps {
   title: string;
   message: string;
   compact?: boolean;
-  actions?: ReactNode;
   showMascot?: boolean;
-  state: 'empty' | 'error' | 'loading';
 }
+
+type StatePanelProps = StatePanelBaseProps &
+  (
+    | { actions: ReactElement; state: 'error' }
+    | { actions?: ReactNode; state: 'empty' | 'loading' }
+  );
 
 export function StatePanel({
   title,

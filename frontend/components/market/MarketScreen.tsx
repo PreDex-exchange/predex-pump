@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { useAccount as useWalletAccount } from 'wagmi';
 
-import { Button } from '@/components/ui/Button';
+import { Button, buttonClassName } from '@/components/ui/Button';
 import { PhaseBadge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { StatePanel } from '@/components/ui/StatePanel';
@@ -49,7 +49,12 @@ export function MarketScreen({ marketId }: { marketId: string }) {
   const { address } = useWalletAccount();
   const { session, isSigningIn, signIn } = useAuth();
   const authenticated = session?.authenticated === true;
-  const { data: detail, isLoading, error } = useMarket(marketId);
+  const {
+    data: detail,
+    isLoading,
+    error,
+    refetch: refetchMarket,
+  } = useMarket(marketId);
   const { data: priceHistory } = usePriceHistory(marketId);
   const {
     data: book,
@@ -115,7 +120,17 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     return (
       <main className={styles.state}>
         <StatePanel
-          message="The indexed market snapshot could not load. Return to the feed and retry."
+          actions={
+            <>
+              <Button onClick={refetchMarket} variant="coral">
+                Try again
+              </Button>
+              <Link className={buttonClassName('neutral')} href="/">
+                Return to feed
+              </Link>
+            </>
+          }
+          message="The indexed market snapshot could not load. Try again here, or return to the feed."
           showMascot={false}
           state="error"
           title="This market would not open"

@@ -7,6 +7,7 @@ import { ActivityList } from './ActivityList';
 const TX = `0x${'1'.repeat(64)}` as const;
 const ACCOUNT = `0x${'a'.repeat(40)}` as const;
 const market = { id: '7', question: 'Will one event produce one row?' } as Market;
+const originalInnerWidth = window.innerWidth;
 
 function event(
   type: ActivityEvent['type'],
@@ -23,7 +24,13 @@ function event(
   };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    value: originalInnerWidth,
+  });
+});
 
 describe('feed activity list', () => {
   it('announces load failures, suppresses empty copy, and offers retry', () => {
@@ -140,5 +147,30 @@ describe('feed activity list', () => {
     render(<ActivityList events={events} limit={5} markets={[market]} />);
 
     expect(screen.getAllByRole('listitem')).toHaveLength(5);
+  });
+
+  it('keeps the market destination in the activity row at 390px', () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 390,
+    });
+    const longQuestionMarket = {
+      ...market,
+      question:
+        'Will this deliberately long market question still preserve its navigation?',
+    };
+
+    render(
+      <ActivityList
+        events={[event('Trade')]}
+        markets={[longQuestionMarket]}
+      />,
+    );
+
+    const marketLink = screen.getByRole('link', {
+      name: `“${longQuestionMarket.question}”`,
+    });
+    expect(marketLink.getAttribute('href')).toBe('/market/7');
+    expect(marketLink.className).toContain('marketLink');
   });
 });

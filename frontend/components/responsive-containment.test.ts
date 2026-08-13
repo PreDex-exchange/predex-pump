@@ -87,4 +87,15 @@ describe('responsive containment contracts', () => {
     expect(rule(css, '.amountInput input')).toContain('min-width: 0');
     expect(rule(css, '.amountInput b')).toContain('flex: none');
   });
+
+  it('keeps the feed activity market link reachable at a 390px viewport', () => {
+    const css = source('components/feed/ActivityList.module.css');
+    const mobileBlock = css.slice(css.indexOf('@media (max-width: 480px)'));
+
+    expect(mobileBlock).toContain('.text');
+    expect(mobileBlock).toContain('white-space: normal');
+    expect(mobileBlock).toContain('overflow: visible');
+    expect(mobileBlock).toContain('.marketLink');
+    expect(mobileBlock).toContain('overflow-wrap: anywhere');
+  });
 });

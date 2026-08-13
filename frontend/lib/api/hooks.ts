@@ -30,13 +30,33 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { backendRestClient as apiClient } from './rest-client';
+import {
+  backendRestClient as apiClient,
+  MARKET_DETAIL_REQUEST_TIMEOUT_MS,
+} from './rest-client';
 import { backendWsClient } from './websocket';
 
 const MARKET_BACKGROUND_REFRESH_MS = 60_000;
 const MARKET_DETAIL_FALLBACK_REFRESH_MS = 15_000;
 const HEALTH_REFRESH_MS = 15_000;
+export const MARKET_DETAIL_RETRY_COUNT = 3;
+const API_RETRY_BASE_DELAY_MS = 1_000;
+const API_RETRY_MAX_DELAY_MS = 30_000;
 export const DEDUP_CHECK_DEBOUNCE_MS = 500;
+
+export function apiRetryDelayMs(failureCount: number) {
+  return Math.min(
+    API_RETRY_BASE_DELAY_MS * 2 ** failureCount,
+    API_RETRY_MAX_DELAY_MS,
+  );
+}
+
+export const MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS =
+  MARKET_DETAIL_REQUEST_TIMEOUT_MS * (MARKET_DETAIL_RETRY_COUNT + 1) +
+  Array.from(
+    { length: MARKET_DETAIL_RETRY_COUNT },
+    (_, failureCount) => apiRetryDelayMs(failureCount),
+  ).reduce((total, delay) => total + delay, 0);
 
 interface ResourceState<T> {
   data: T | null;
@@ -49,6 +69,7 @@ interface ResourceOptions {
   refetchInterval?: number;
   enabled?: boolean;
   retry?: boolean | number;
+  retryDelay?: number | ((failureCount: number, error: Error) => number);
 }
 
 function useApiResource<T>(
@@ -64,6 +85,7 @@ function useApiResource<T>(
     refetchIntervalInBackground: false,
     enabled: options.enabled,
     retry: options.retry,
+    retryDelay: options.retryDelay,
   });
 
   return {
@@ -168,6 +190,8 @@ export function useMarket(id: string) {
 
   return useApiResource<MarketDetailResponse | null>(['market', id], load, {
     refetchInterval: MARKET_DETAIL_FALLBACK_REFRESH_MS,
+    retry: MARKET_DETAIL_RETRY_COUNT,
+    retryDelay: apiRetryDelayMs,
   });
 }
 

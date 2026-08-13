@@ -1,7 +1,5 @@
-const CODE_IDENTIFIER_PATTERN =
-  /\b(?:[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+)\b/gu;
+import { internalIdentifiersInText } from '../../scripts/user-facing-copy-guard.mjs';
 
-const ALLOWED_USER_FACING_TERMS = new Set(['MiniCLOB', 'PnL']);
 const USER_FACING_ATTRIBUTES = [
   'alt',
   'aria-label',
@@ -35,8 +33,7 @@ export function internalIdentifiersInRenderedOutput(container: HTMLElement) {
   return [
     ...new Set(
       renderedStrings
-        .flatMap((value) => value.match(CODE_IDENTIFIER_PATTERN) ?? [])
-        .filter((identifier) => !ALLOWED_USER_FACING_TERMS.has(identifier)),
+        .flatMap((value) => internalIdentifiersInText(value)),
     ),
   ].sort();
 }

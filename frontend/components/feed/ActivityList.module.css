@@ -150,3 +150,15 @@
     position: static;
   }
 }
+
+@media (max-width: 480px) {
+  .text {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .marketLink {
+    overflow-wrap: anywhere;
+  }
+}

@@ -171,7 +171,7 @@ export function ActivityScreen({
       {activity.error && events.length > 0 && (
         <p className={styles.warning} role="alert">
           The indexed history is unavailable, but live events will still appear
-          while the WebSocket is connected.
+          while the live connection remains open.
         </p>
       )}
 

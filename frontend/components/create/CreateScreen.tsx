@@ -844,7 +844,8 @@ export function CreateScreen() {
                 'Ready to review; duplicates will be checked again before signing.'}
             </p>
             <p className={styles.stubNote}>
-              Uses ERC-20 USDC only. The wallet may request a Registry approval before createMarket.
+              Uses ERC-20 USDC only. The wallet may ask you to approve Registry spending
+              before creating the market.
             </p>
           </form>
         </Card>
@@ -1023,7 +1024,7 @@ export function CreateScreen() {
         </dl>
         <p className={styles.confirmNote}>
           Transaction state is re-read immediately before signing. If needed, approve Registry
-          spending first; then sign createMarket. No native value is sent.
+          spending first; then sign the market-creation transaction. No native value is sent.
         </p>
         <TxStatus state={tx.state} />
       </ConfirmModal>

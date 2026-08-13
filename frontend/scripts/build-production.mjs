@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assertQaProductionBuild } from './assert-qa-production-build.mjs';
+import { assertUserFacingCopy } from './user-facing-copy-guard.mjs';
 
 const frontendRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -20,6 +21,9 @@ const buildEnv = {
   QA_WALLET_SCRIPT_URL: qaScriptUrl,
 };
 delete buildEnv.QA_WALLET_PRIVATE_KEY;
+
+assertUserFacingCopy(frontendRoot);
+console.info('User-facing copy guard verified.');
 
 const result = spawnSync(process.execPath, [nextBin, 'build'], {
   cwd: frontendRoot,

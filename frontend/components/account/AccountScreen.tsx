@@ -145,7 +145,7 @@ export function AccountScreen() {
       <main className={styles.page}>
         {header}
         <InlineState
-          message="Checking the saved HttpOnly session for this browser."
+          message="Checking the saved secure session for this browser."
           title="Restoring sign-in…"
         />
       </main>
@@ -336,7 +336,7 @@ export function AccountScreen() {
         title="Watchlist"
       />
       <MarketSection
-        description="Created by this address, read from MarketCreated events."
+        description="Created by this address, based on indexed market-creation events."
         empty="This address has not created an indexed market."
         markets={data.createdMarkets}
         title="Created"

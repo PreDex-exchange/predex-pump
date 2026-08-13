@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { StatePanel } from './StatePanel';
@@ -31,10 +31,17 @@ describe('StatePanel mascot control', () => {
 
   it('announces errors assertively without treating empty states as failures', () => {
     const rendered = render(
-      <StatePanel message="The request failed." state="error" title="Unavailable" />,
+      <StatePanel
+        actions={<button type="button">Retry request</button>}
+        message="The request failed."
+        state="error"
+        title="Unavailable"
+      />,
     );
 
-    expect(screen.getByRole('alert').textContent).toContain('The request failed.');
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('The request failed.');
+    expect(within(alert).getByRole('button', { name: 'Retry request' })).toBeTruthy();
     rendered.rerender(
       <StatePanel message="Nothing here yet." state="empty" title="Empty state" />,
     );

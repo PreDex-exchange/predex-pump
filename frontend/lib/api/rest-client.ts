@@ -36,6 +36,7 @@ import {
 } from './order-errors';
 
 const DEFAULT_API_URL = 'http://localhost:3001';
+export const MARKET_DETAIL_REQUEST_TIMEOUT_MS = 1_250;
 
 type QueryValue = string | number | undefined;
 
@@ -43,6 +44,7 @@ interface RequestOptions {
   notFoundAsNull?: boolean;
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
+  timeoutMs?: number;
 }
 
 interface ErrorDetails {
@@ -112,6 +114,12 @@ async function request<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   let response: Response;
+  const controller = options.timeoutMs === undefined
+    ? undefined
+    : new AbortController();
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), options.timeoutMs)
+    : undefined;
   const headers: Record<string, string> = {
     accept: 'application/json',
   };
@@ -127,15 +135,23 @@ async function request<T>(
       ...(options.body === undefined
         ? {}
         : { body: JSON.stringify(options.body) }),
+      ...(controller === undefined ? {} : { signal: controller.signal }),
     });
   } catch {
     const method = options.method ?? 'GET';
+    if (controller?.signal.aborted && options.timeoutMs !== undefined) {
+      throw new Error(
+        `The indexed API did not respond within ${options.timeoutMs / 1_000} seconds.`,
+      );
+    }
     if (method === 'GET') {
       throw new Error(`The indexed API at ${backendApiUrl} could not be reached.`);
     }
     throw new Error(
       `The indexed API did not complete the ${method} request. The browser may have blocked this method, or the connection may have failed.`,
     );
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 
   if (response.status === 404 && options.notFoundAsNull) {
@@ -226,6 +242,7 @@ export const backendRestClient: BackendApiClient = {
   getMarket(id: string): Promise<MarketDetailResponse | null> {
     return request(routes.market(encodeURIComponent(id)), {
       notFoundAsNull: true,
+      timeoutMs: MARKET_DETAIL_REQUEST_TIMEOUT_MS,
     });
   },
 
