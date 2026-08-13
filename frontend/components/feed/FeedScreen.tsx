@@ -3,6 +3,7 @@
 import type { Market } from '@predex-pump/shared/domain';
 import { useEffect, useMemo, useState } from 'react';
 
+import { Button } from '@/components/ui/Button';
 import { StatePanel } from '@/components/ui/StatePanel';
 import { useActivity, useMarkets } from '@/lib/api/hooks';
 import { isMarketSettled } from '@/lib/market-state';
@@ -68,6 +69,7 @@ export function FeedScreen() {
     isLoadingMore,
     error,
     loadMore,
+    refetch: refetchMarkets,
   } = useMarkets();
   const {
     data: activityPage,
@@ -149,7 +151,16 @@ export function FeedScreen() {
           )}
           {!isLoading && error && (
             <StatePanel
-              message="The indexed API could not load the market feed. Refresh to retry."
+              actions={
+                <Button
+                  onClick={refetchMarkets}
+                  size="small"
+                  variant="neutral"
+                >
+                  Try again
+                </Button>
+              }
+              message="The indexed API could not load the market feed."
               showMascot={false}
               state="error"
               title="The nest needs a reset"

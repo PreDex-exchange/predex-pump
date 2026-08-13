@@ -228,17 +228,25 @@ describe('ActivityScreen', () => {
     expect(screen.getByText('Live')).toBeTruthy();
   });
 
-  it('renders a load failure distinctly from a successful empty tape', () => {
+  it('renders a load failure distinctly and refetches it in place', () => {
     mocks.activityError = new Error('activity unavailable');
 
     const rendered = render(<ActivityScreen agentAddresses={new Set([AGENT])} />);
 
-    expect(screen.getByRole('alert').textContent).toContain(
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain(
       'Activity history could not load',
     );
     expect(screen.queryByText('Waiting for activity…')).toBeNull();
-    expect(screen.getByText(/this is not an empty activity tape/u)).toBeTruthy();
+    expect(screen.getByText(/this is not an empty activity state/iu)).toBeTruthy();
+    expect(alert.textContent).not.toMatch(/refresh/u);
     expect(rendered.container.querySelector('svg')).toBeNull();
+
+    within(alert)
+      .getByRole('button', { name: 'Try activity again' })
+      .click();
+
+    expect(mocks.refetch).toHaveBeenCalledOnce();
   });
 
   it('exposes the next cursor through a load-older control', () => {

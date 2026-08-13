@@ -109,8 +109,7 @@
 }
 
 .field textarea,
-.amountField,
-.selectField {
+.amountField {
   width: 100%;
   border: 2px solid var(--outline);
   border-radius: var(--radius-input);
@@ -132,48 +131,34 @@
   resize: vertical;
 }
 
-.amountField,
-.selectField {
+.amountField {
   display: flex;
   align-items: center;
   min-height: 52px;
   padding: 8px 13px;
 }
 
-.amountField input,
-.selectField select {
+.amountField input {
   width: 100%;
   min-width: 0;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--ink);
-}
-
-.amountField input {
   font-size: 1.35rem;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
 }
 
-.amountField b,
-.selectField > span {
+.amountField b {
   flex: none;
   color: var(--muted);
   font-size: var(--text-small);
   font-weight: 800;
 }
 
-.selectField select {
-  cursor: pointer;
-  font-size: var(--text-small);
-  font-weight: 800;
-  appearance: none;
-}
-
 .field textarea:focus,
-.amountField:focus-within,
-.selectField:focus-within {
+.amountField:focus-within {
   box-shadow: var(--shadow-focus);
 }
 

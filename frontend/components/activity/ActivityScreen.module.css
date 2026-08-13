@@ -314,6 +314,10 @@
   color: var(--muted);
 }
 
+.empty p + button {
+  margin-top: var(--space-4);
+}
+
 .waitingDot {
   width: 22px;
   height: 22px;

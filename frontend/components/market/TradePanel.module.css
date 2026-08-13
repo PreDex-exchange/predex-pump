@@ -220,15 +220,6 @@
   font-size: 0.65rem;
 }
 
-.gain {
-  color: var(--yes-ink);
-}
-
-.unknown {
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-
 .noPosition {
   margin-bottom: 0;
   color: var(--muted);

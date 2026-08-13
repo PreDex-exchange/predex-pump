@@ -12,6 +12,7 @@ import {
 } from 'react';
 
 import { ActivityDescription } from '@/components/activity/ActivityDescription';
+import { Button } from '@/components/ui/Button';
 import {
   activityActorKind,
   dedupeActivityEvents,
@@ -197,9 +198,15 @@ export function ActivityScreen({
             <div>
               <strong>Activity history could not load</strong>
               <p>
-                The indexed request failed. Refresh the page to retry; this is not
-                an empty activity tape.
+                The indexed request failed. This is not an empty activity state.
               </p>
+              <Button
+                onClick={activity.refetch}
+                size="small"
+                variant="neutral"
+              >
+                Try activity again
+              </Button>
             </div>
           </div>
         ) : events.length === 0 ? (

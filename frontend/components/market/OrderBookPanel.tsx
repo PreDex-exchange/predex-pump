@@ -105,7 +105,7 @@ function Ladder({
   }
 
   return (
-    <div className={styles.levels}>
+    <div>
       {levels.map((level) => {
         const hasExactOffTickSeed = book.orders.some(
           (order) =>

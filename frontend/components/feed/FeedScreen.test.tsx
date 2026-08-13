@@ -89,8 +89,13 @@ describe('FeedScreen failure states', () => {
     expect(statistics.textContent).not.toMatch(/0\s*markets/u);
     expect(screen.getByText('The nest needs a reset')).toBeTruthy();
     const marketSurface = screen.getByRole('region', { name: 'Markets' });
-    expect(within(marketSurface).getByRole('alert')).toBeTruthy();
+    const alert = within(marketSurface).getByRole('alert');
+    expect(alert.textContent).not.toMatch(/refresh/u);
     expect(marketSurface.querySelector('svg')).toBeNull();
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+
+    expect(mocks.markets.refetch).toHaveBeenCalledOnce();
   });
 
   it('renders an activity error instead of the empty state when activity fails', () => {

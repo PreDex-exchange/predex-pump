@@ -359,62 +359,6 @@
   margin-top: var(--space-8);
 }
 
-.redeemIntro {
-  margin-bottom: var(--space-3);
-}
-
-.redeemList {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.redeemList li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: 12px 0;
-  border-bottom: 1px solid var(--hairline);
-}
-
-.redeemList li > div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.redeemList li > div > span:last-child {
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.redeemList li > span {
-  flex: none;
-}
-
-.redeemTotal {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding-top: var(--space-4);
-  color: var(--ink);
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.redeemNote {
-  margin: var(--space-4) 0 0;
-  color: var(--muted);
-  font-size: 0.7rem;
-}
-
 @media (max-width: 980px) {
   .summary {
     grid-template-columns: repeat(2, 1fr);
