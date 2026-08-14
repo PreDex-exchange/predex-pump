@@ -60,23 +60,38 @@ class FakeSubscriptionTransport implements IndexerSubscriptionTransport {
     return { unsubscribe };
   }
 
-  emitHead(blockNumber: number): void {
+  emitHead(
+    blockNumber: number,
+    timestamp = 1_700_000_000 + blockNumber,
+  ): void {
     const subscription = this.subscriptions.find(
       ({ parameters }) => parameters[0] === 'newHeads',
     );
     if (subscription === undefined) throw new Error('newHeads is not subscribed');
     subscription.handlers.onData({
-      result: { number: `0x${blockNumber.toString(16)}` },
+      result: {
+        number: `0x${blockNumber.toString(16)}`,
+        timestamp: `0x${timestamp.toString(16)}`,
+      },
     });
   }
 
-  emitLog(blockNumber: number): void {
+  emitLog(
+    log: ReturnType<typeof registeredMarketTypeLog>,
+    removed = log.removed,
+  ): void {
     const subscription = this.subscriptions.find(
       ({ parameters }) => parameters[0] === 'logs',
     );
     if (subscription === undefined) throw new Error('logs are not subscribed');
     subscription.handlers.onData({
-      result: { blockNumber: `0x${blockNumber.toString(16)}` },
+      result: {
+        ...log,
+        blockNumber: `0x${log.blockNumber.toString(16)}`,
+        logIndex: `0x${log.logIndex.toString(16)}`,
+        removed,
+        transactionIndex: `0x${log.transactionIndex.toString(16)}`,
+      },
     });
   }
 
@@ -315,15 +330,15 @@ describe('WebSocket-driven indexer', () => {
     return active;
   }
 
-  it('runs once for one pushed log and coalesces a burst into one catch-up', async () => {
-    const coreRanges: Array<[bigint | undefined, bigint | undefined]> = [];
+  it('decodes and persists a pushed log without any steady-state HTTP call', async () => {
     const transport = new FakeSubscriptionTransport();
+    const getBlockNumber = vi.fn(async () => 99n);
+    const getLogs = vi.fn(async () => []);
+    const getBlock = vi.fn(async () => ({ timestamp: 1_700_000_100n }));
     const client = asClient({
-      getBlockNumber: async () => 99n,
-      getLogs: async ({ address, fromBlock, toBlock }) => {
-        if (Array.isArray(address)) coreRanges.push([fromBlock, toBlock]);
-        return [];
-      },
+      getBlockNumber,
+      getLogs,
+      getBlock,
     });
     start(testConfig(), client, () => transport);
 
@@ -334,43 +349,46 @@ describe('WebSocket-driven indexer', () => {
         }))?.status === 'connected',
       'the subscription to become trusted',
     );
-    transport.emitLog(100);
+    getBlockNumber.mockClear();
+    getLogs.mockClear();
+    getBlock.mockClear();
+
+    transport.emitLog(registeredMarketTypeLog(100));
+    transport.emitHead(100, 1_700_000_100);
 
     await waitUntil(
       async () =>
-        (await testPrisma.indexerState.findUnique({ where: { id: 1 } }))
-          ?.lastBlock === 100,
-      'the single pushed-log catch-up',
+        (await testPrisma.registeredMarketType.findUnique({
+          where: { version: 7 },
+        })) !== null,
+      'the pushed event to be decoded and persisted',
     );
-    expect(coreRanges).toEqual([[100n, 100n]]);
-
-    coreRanges.length = 0;
-    transport.emitHead(103);
-    transport.emitLog(101);
-    transport.emitLog(102);
-    transport.emitLog(103);
-    await waitUntil(
-      async () =>
-        (await testPrisma.indexerState.findUnique({ where: { id: 1 } }))
-          ?.lastBlock === 103,
-      'the coalesced pushed-log burst',
-    );
-    expect(coreRanges).toEqual([[101n, 103n]]);
+    expect(
+      await testPrisma.activityEvent.findUnique({
+        where: { id: `${`0x${'c'.repeat(64)}`}:0` },
+      }),
+    ).toMatchObject({
+      eventName: 'MarketTypeVersionRegistered',
+      blockNumber: 100,
+      ts: 1_700_000_100,
+    });
+    expect(
+      await testPrisma.indexerState.findUniqueOrThrow({ where: { id: 1 } }),
+    ).toMatchObject({ lastBlock: 100, headBlock: 100 });
+    expect(getBlockNumber).not.toHaveBeenCalled();
+    expect(getLogs).not.toHaveBeenCalled();
+    expect(getBlock).not.toHaveBeenCalled();
   });
 
-  it('uses high-frequency newHeads only as a watermark, never as a getLogs trigger', async () => {
-    const coreRanges: Array<[bigint | undefined, bigint | undefined]> = [];
-    let headCalls = 0;
+  it('advances a quiet authoritative cursor from newHeads with zero HTTP calls', async () => {
     const transport = new FakeSubscriptionTransport();
+    const getBlockNumber = vi.fn(async () => 99n);
+    const getLogs = vi.fn(async () => []);
+    const getBlock = vi.fn(async () => ({ timestamp: 1_700_000_100n }));
     const client = asClient({
-      getBlockNumber: async () => {
-        headCalls += 1;
-        return 99n;
-      },
-      getLogs: async ({ address, fromBlock, toBlock }) => {
-        if (Array.isArray(address)) coreRanges.push([fromBlock, toBlock]);
-        return [];
-      },
+      getBlockNumber,
+      getLogs,
+      getBlock,
     });
     start(testConfig(), client, () => transport);
 
@@ -381,17 +399,74 @@ describe('WebSocket-driven indexer', () => {
         }))?.status === 'connected',
       'the subscription to become trusted',
     );
+    getBlockNumber.mockClear();
+    getLogs.mockClear();
+    getBlock.mockClear();
     for (let block = 100; block <= 109; block += 1) transport.emitHead(block);
 
     await waitUntil(
       async () =>
+        (await testPrisma.indexerState.findUnique({ where: { id: 1 } }))
+          ?.lastBlock === 109,
+      'the quiet pushed-head cursor',
+    );
+    expect(getBlockNumber).not.toHaveBeenCalled();
+    expect(getLogs).not.toHaveBeenCalled();
+    expect(getBlock).not.toHaveBeenCalled();
+  });
+
+  it('suppresses an added log that is removed before its head is committed', async () => {
+    const transport = new FakeSubscriptionTransport();
+    const getLogs = vi.fn(async ({ address }: FakeGetLogsParameters) =>
+      Array.isArray(address) ? [registeredMarketTypeLog(100)] : [],
+    );
+    const client = asClient({
+      getBlockNumber: async () => 99n,
+      getLogs,
+      getBlock: async () => ({ timestamp: 1_700_000_100n }),
+    });
+    start(
+      testConfig({
+        fallbackPollMs: 1_000,
+        webSocketReconnectBaseMs: 1_000,
+        webSocketReconnectMaxMs: 1_000,
+      }),
+      client,
+      () => transport,
+    );
+
+    await waitUntil(
+      async () =>
         (await testPrisma.indexerSubscriptionState.findUnique({
           where: { id: 1 },
-        }))?.headBlock === 109,
-      'the throttled newHeads watermark',
+        }))?.status === 'connected',
+      'the subscription to become trusted',
     );
-    expect(coreRanges).toEqual([]);
-    expect(headCalls).toBe(2);
+    getLogs.mockClear();
+
+    const log = registeredMarketTypeLog(100);
+    transport.emitLog(log);
+    transport.emitLog(log, true);
+    transport.emitHead(100, 1_700_000_100);
+
+    await waitUntil(
+      () => transport.close.mock.calls.length === 1,
+      'the removed-log session to be revoked',
+    );
+    expect(
+      await testPrisma.activityEvent.count({
+        where: { txHash: log.transactionHash },
+      }),
+    ).toBe(0);
+    expect(
+      await testPrisma.registeredMarketType.findUnique({
+        where: { version: 7 },
+      }),
+    ).toBeNull();
+    expect(
+      await testPrisma.indexerState.findUniqueOrThrow({ where: { id: 1 } }),
+    ).toMatchObject({ lastBlock: 99 });
+    expect(getLogs).not.toHaveBeenCalled();
   });
 
   it('installs only the four static log subscriptions', async () => {
@@ -417,8 +492,9 @@ describe('WebSocket-driven indexer', () => {
         markConnected();
       },
       onDisconnected: async () => undefined,
+      onInvalidated: () => undefined,
       onHead: () => undefined,
-      onActivity: () => undefined,
+      onLog: () => undefined,
       onHeartbeat: async () => undefined,
     });
 
@@ -532,6 +608,61 @@ describe('WebSocket-driven indexer', () => {
     });
   });
 
+  it('keeps advancing from pushes while a safety getLogs request is blocked', async () => {
+    let head = 99n;
+    let markSafetyStarted!: () => void;
+    let releaseSafety!: () => void;
+    const safetyStarted = new Promise<void>((resolve) => {
+      markSafetyStarted = resolve;
+    });
+    const safetyRelease = new Promise<void>((resolve) => {
+      releaseSafety = resolve;
+    });
+    const transport = new FakeSubscriptionTransport();
+    const client = asClient({
+      getBlockNumber: async () => head,
+      getLogs: async ({ address }) => {
+        if (Array.isArray(address)) {
+          markSafetyStarted();
+          await safetyRelease;
+        }
+        return [];
+      },
+    });
+    start(
+      testConfig({ pollMs: 25, webSocketStallMs: 1_000 }),
+      client,
+      () => transport,
+    );
+
+    try {
+      await waitUntil(
+        async () =>
+          (await testPrisma.indexerSubscriptionState.findUnique({
+            where: { id: 1 },
+          }))?.status === 'connected',
+        'the subscription to become trusted',
+      );
+      head = 100n;
+      await safetyStarted;
+
+      transport.emitLog(registeredMarketTypeLog(101));
+      transport.emitHead(101, 1_700_000_101);
+      await waitUntil(
+        async () =>
+          (await testPrisma.registeredMarketType.findUnique({
+            where: { version: 7 },
+          })) !== null,
+        'the push path while safety HTTP is blocked',
+      );
+      expect(
+        await testPrisma.indexerState.findUniqueOrThrow({ where: { id: 1 } }),
+      ).toMatchObject({ lastBlock: 101, headBlock: 101 });
+    } finally {
+      releaseSafety();
+    }
+  });
+
   it('backfills the disconnected gap before trusting a replacement subscription', async () => {
     const owner =
       '0x1111111111111111111111111111111111111111' as Address;
@@ -543,12 +674,25 @@ describe('WebSocket-driven indexer', () => {
       bigint | undefined,
       bigint | undefined,
     ]> = [];
+    let holdReconnectGap = false;
+    let markReconnectGapStarted!: () => void;
+    let releaseReconnectGap!: () => void;
+    const reconnectGapStarted = new Promise<void>((resolve) => {
+      markReconnectGapStarted = resolve;
+    });
+    const reconnectGapRelease = new Promise<void>((resolve) => {
+      releaseReconnectGap = resolve;
+    });
     const transports: FakeSubscriptionTransport[] = [];
     const client = asClient({
       getBlockNumber: async () => head,
       getLogs: async ({ address, event, args, fromBlock, toBlock }) => {
         if (Array.isArray(address)) {
           coreRanges.push([fromBlock, toBlock]);
+          if (holdReconnectGap && fromBlock === 100n) {
+            markReconnectGapStarted();
+            await reconnectGapRelease;
+          }
           return fromBlock === 100n ? [registeredMarketTypeLog()] : [];
         }
         if (event?.name === 'Transfer' && args?.from !== undefined) {
@@ -583,7 +727,23 @@ describe('WebSocket-driven indexer', () => {
     );
     await seedTrackedMaker(owner);
     head = 101n;
+    holdReconnectGap = true;
     transports[0]?.fail();
+
+    await reconnectGapStarted;
+    expect(transports).toHaveLength(2);
+    transports[1]?.emitLog(registeredMarketTypeLog(101));
+    transports[1]?.emitHead(101, 1_700_000_101);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(
+      await testPrisma.indexerState.findUniqueOrThrow({ where: { id: 1 } }),
+    ).toMatchObject({ lastBlock: 99 });
+    expect(
+      await testPrisma.indexerSubscriptionState.findUniqueOrThrow({
+        where: { id: 1 },
+      }),
+    ).toMatchObject({ status: 'backfilling' });
+    releaseReconnectGap();
 
     await waitUntil(
       async () =>
@@ -638,6 +798,13 @@ describe('WebSocket-driven indexer', () => {
         }))?.status === 'connected',
       'the subscription to become trusted',
     );
+    transport.emitHead(100, 1_700_000_100);
+    await waitUntil(
+      async () =>
+        (await testPrisma.indexerState.findUnique({ where: { id: 1 } }))
+          ?.lastBlock === 100,
+      'the last live subscription watermark',
+    );
     await waitUntil(
       async () =>
         transport.close.mock.calls.length === 1 &&
@@ -650,13 +817,18 @@ describe('WebSocket-driven indexer', () => {
     expect(await getHealth(testPrisma, 1_000)).toMatchObject({
       ok: true,
       indexerStatus: 'degraded',
+      indexedBlock: 100,
     });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      await testPrisma.indexerState.findUniqueOrThrow({ where: { id: 1 } }),
+    ).toMatchObject({ lastBlock: 100 });
     expect(warning).toHaveBeenCalledWith(
       expect.stringContaining('newHeads subscription was silent'),
     );
   });
 
-  it.each(['connection unavailable', 'eth_subscribe rejected'])(
+  it.each(['disabled', 'connection unavailable', 'eth_subscribe rejected'])(
     'falls back to polling when WebSocket is %s',
     async (failureMode) => {
       let headCalls = 0;
@@ -671,21 +843,23 @@ describe('WebSocket-driven indexer', () => {
             : [],
         getBlock: async () => ({ timestamp: 1_700_000_000n }),
       });
+      const createTransport = vi.fn(() => {
+        if (failureMode === 'connection unavailable') {
+          throw new Error('connect ECONNREFUSED');
+        }
+        return new FakeSubscriptionTransport(
+          new Error('eth_subscribe is not supported'),
+        );
+      });
       start(
         testConfig({
+          ...(failureMode === 'disabled' ? { webSocketRpcUrls: [] } : {}),
           fallbackPollMs: 20,
           webSocketReconnectBaseMs: 10,
           webSocketReconnectMaxMs: 20,
         }),
         client,
-        () => {
-          if (failureMode === 'connection unavailable') {
-            throw new Error('connect ECONNREFUSED');
-          }
-          return new FakeSubscriptionTransport(
-            new Error('eth_subscribe is not supported'),
-          );
-        },
+        createTransport,
       );
 
       await waitUntil(
@@ -703,20 +877,15 @@ describe('WebSocket-driven indexer', () => {
       expect(warning).toHaveBeenCalledWith(
         expect.stringContaining('mode=polling'),
       );
+      if (failureMode === 'disabled') {
+        expect(createTransport).not.toHaveBeenCalled();
+      }
     },
   );
 
-  it('applies an event once when a pushed wake-up overlaps the safety poll', async () => {
+  it('applies the same event exactly once when both push and safety sweep deliver it', async () => {
     let head = 99n;
     let headCalls = 0;
-    let releaseRange!: () => void;
-    let markRangeStarted!: () => void;
-    const rangeStarted = new Promise<void>((resolve) => {
-      markRangeStarted = resolve;
-    });
-    const rangeRelease = new Promise<void>((resolve) => {
-      releaseRange = resolve;
-    });
     const coreRanges: Array<[bigint | undefined, bigint | undefined]> = [];
     const transport = new FakeSubscriptionTransport();
     const onEvents = vi.fn(async () => undefined);
@@ -728,14 +897,12 @@ describe('WebSocket-driven indexer', () => {
       getLogs: async ({ address, fromBlock, toBlock }) => {
         if (!Array.isArray(address)) return [];
         coreRanges.push([fromBlock, toBlock]);
-        markRangeStarted();
-        await rangeRelease;
         return [registeredMarketTypeLog()];
       },
       getBlock: async () => ({ timestamp: 1_700_000_000n }),
     });
     start(
-      testConfig({ pollMs: 25, webSocketCoalesceMs: 5 }),
+      testConfig({ pollMs: 150, webSocketCoalesceMs: 5 }),
       client,
       () => transport,
       onEvents,
@@ -749,12 +916,20 @@ describe('WebSocket-driven indexer', () => {
       'the subscription to become trusted',
     );
     head = 100n;
-    transport.emitLog(100);
-    await rangeStarted;
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    releaseRange();
+    transport.emitLog(registeredMarketTypeLog(100));
+    transport.emitHead(100, 1_700_000_000);
 
-    await waitUntil(() => headCalls >= 3, 'the overlapping safety poll');
+    await waitUntil(
+      async () =>
+        (await testPrisma.activityEvent.count({
+          where: { txHash: `0x${'c'.repeat(64)}` },
+        })) === 1,
+      'the pushed event',
+    );
+    await waitUntil(
+      () => coreRanges.length === 1 && headCalls >= 3,
+      'the overlapping safety sweep',
+    );
     expect(coreRanges).toEqual([[100n, 100n]]);
     expect(onEvents).toHaveBeenCalledTimes(1);
     expect(

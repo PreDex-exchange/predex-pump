@@ -225,21 +225,102 @@ function objectValue(value: unknown, key: string): unknown {
   return (value as Record<string, unknown>)[key];
 }
 
-function hexBlockNumber(data: unknown, path: readonly string[]): number {
+function hexQuantity(
+  data: unknown,
+  path: readonly string[],
+  label: string,
+): number {
   let value = data;
   for (const key of path) value = objectValue(value, key);
   if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) {
-    throw new Error('WebSocket subscription payload omitted a block number');
+    throw new Error(`WebSocket subscription payload omitted ${label}`);
   }
-  return toDbInt(BigInt(value), 'subscription.blockNumber');
+  return toDbInt(BigInt(value), `subscription.${label}`);
 }
 
-function headBlockNumber(data: unknown): number {
-  return hexBlockNumber(data, ['result', 'number']);
+function requiredHex(
+  value: unknown,
+  label: string,
+  byteLength?: number,
+): Hex {
+  const lengthPattern =
+    byteLength === undefined ? '[0-9a-f]*' : `[0-9a-f]{${String(byteLength * 2)}}`;
+  if (
+    typeof value !== 'string' ||
+    !new RegExp(`^0x${lengthPattern}$`, 'i').test(value)
+  ) {
+    throw new Error(`WebSocket subscription payload omitted ${label}`);
+  }
+  return value as Hex;
 }
 
-function logBlockNumber(data: unknown): number {
-  return hexBlockNumber(data, ['result', 'blockNumber']);
+export interface IndexerSubscriptionHead {
+  blockNumber: number;
+  timestamp: number;
+}
+
+export interface IndexerSubscriptionLog {
+  address: Address;
+  blockHash: Hex;
+  blockNumber: number;
+  data: Hex;
+  logIndex: number;
+  removed: boolean;
+  topics: readonly Hex[];
+  transactionHash: Hex;
+  transactionIndex: number;
+}
+
+function subscriptionHead(data: unknown): IndexerSubscriptionHead {
+  return {
+    blockNumber: hexQuantity(data, ['result', 'number'], 'blockNumber'),
+    timestamp: hexQuantity(data, ['result', 'timestamp'], 'blockTimestamp'),
+  };
+}
+
+function subscriptionLog(data: unknown): IndexerSubscriptionLog {
+  const result = objectValue(data, 'result');
+  const address = requiredHex(objectValue(result, 'address'), 'log.address', 20);
+  const topicsValue = objectValue(result, 'topics');
+  if (!Array.isArray(topicsValue) || topicsValue.length === 0) {
+    throw new Error('WebSocket subscription payload omitted log.topics');
+  }
+  const removed = objectValue(result, 'removed');
+  if (typeof removed !== 'boolean') {
+    throw new Error('WebSocket subscription payload omitted log.removed');
+  }
+
+  return {
+    address: address as Address,
+    blockHash: requiredHex(
+      objectValue(result, 'blockHash'),
+      'log.blockHash',
+      32,
+    ),
+    blockNumber: hexQuantity(data, ['result', 'blockNumber'], 'blockNumber'),
+    data: requiredHex(objectValue(result, 'data'), 'log.data'),
+    logIndex: hexQuantity(data, ['result', 'logIndex'], 'logIndex'),
+    removed,
+    topics: topicsValue.map((topic, index) =>
+      requiredHex(topic, `log.topics[${String(index)}]`, 32),
+    ),
+    transactionHash: requiredHex(
+      objectValue(result, 'transactionHash'),
+      'log.transactionHash',
+      32,
+    ),
+    transactionIndex: hexQuantity(
+      data,
+      ['result', 'transactionIndex'],
+      'transactionIndex',
+    ),
+  };
+}
+
+export function subscriptionLogId(
+  log: Pick<IndexerSubscriptionLog, 'transactionHash' | 'logIndex'>,
+): string {
+  return `${log.transactionHash.toLowerCase()}:${String(log.logIndex)}`;
 }
 
 function errorFrom(value: unknown): Error {
@@ -318,8 +399,14 @@ export interface SubscriptionSupervisorOptions {
     error: Error;
     retryInMs: number;
   }) => Promise<void>;
-  onHead: (blockNumber: number) => void;
-  onActivity: (blockNumber: number, generation: number) => void;
+  onInvalidated: (details: {
+    generation: number | undefined;
+    error: Error;
+  }) => void;
+  onHead: (
+    head: IndexerSubscriptionHead & { generation: number },
+  ) => void;
+  onLog: (log: IndexerSubscriptionLog, generation: number) => void;
   onHeartbeat: (details: {
     blockNumber: number;
     generation: number;
@@ -349,6 +436,10 @@ export async function runSubscriptionSupervisor(
     const failSession = (error: unknown): void => {
       if (!active || sessionError !== undefined) return;
       sessionError = errorFrom(error);
+      options.onInvalidated({
+        generation: connectedGeneration,
+        error: sessionError,
+      });
       sessionWake.notify();
     };
 
@@ -369,10 +460,13 @@ export async function runSubscriptionSupervisor(
               onData(data) {
                 try {
                   if (!active) return;
+                  const head = subscriptionHead(data);
                   const firstHead = latestHead === undefined;
-                  latestHead = Math.max(latestHead ?? 0, headBlockNumber(data));
+                  latestHead = Math.max(latestHead ?? 0, head.blockNumber);
                   lastHeadAt = options.now().getTime();
-                  options.onHead(latestHead);
+                  if (connectedGeneration !== undefined) {
+                    options.onHead({ ...head, generation: connectedGeneration });
+                  }
                   failureCount = 0;
                   if (
                     firstHead ||
@@ -405,10 +499,20 @@ export async function runSubscriptionSupervisor(
                 onData(data) {
                   try {
                     if (!active || connectedGeneration === undefined) return;
-                    options.onActivity(
-                      logBlockNumber(data),
-                      connectedGeneration,
-                    );
+                    const log = subscriptionLog(data);
+                    options.onLog(log, connectedGeneration);
+                    if (log.removed) {
+                      // Arc exposes finalized blocks, so removal contradicts
+                      // this session's authority. The runner tombstones the
+                      // buffered add above; then the supervisor forces a fresh
+                      // canonical gap-fill instead of treating removal as data.
+                      failSession(
+                        new Error(
+                          `subscription removed canonical log ${subscriptionLogId(log)} ` +
+                            `at block ${String(log.blockNumber)}`,
+                        ),
+                      );
+                    }
                   } catch (error) {
                     failSession(error);
                   }

@@ -46,7 +46,9 @@ import {
 import {
   createViemSubscriptionTransport,
   runSubscriptionSupervisor,
+  subscriptionLogId,
   subscriptionEndpointLabel,
+  type IndexerSubscriptionLog,
   type IndexerSubscriptionTransportFactory,
 } from './subscriptions.js';
 import type { DecodedEvent, EventArgs } from './types.js';
@@ -72,6 +74,13 @@ export interface RangeResult {
   toBlock: number;
   decodedLogs: number;
   newlyAppliedLogs: number;
+}
+
+class SubscriptionAuthorityRevokedError extends Error {
+  constructor() {
+    super('WebSocket subscription authority was revoked before cursor commit');
+    this.name = 'SubscriptionAuthorityRevokedError';
+  }
 }
 
 function createArcClient(rpcUrls: readonly string[]): PublicClient {
@@ -105,6 +114,91 @@ function createArcClient(rpcUrls: readonly string[]): PublicClient {
         shouldThrow: (error) => inspectRpcError(error)?.kind === 'rate-limit',
       },
     ),
+  });
+}
+
+type IndexerEventLog = Pick<
+  IndexerSubscriptionLog,
+  | 'address'
+  | 'blockNumber'
+  | 'data'
+  | 'logIndex'
+  | 'topics'
+  | 'transactionHash'
+>;
+
+interface RpcEventLog {
+  address: Address;
+  blockNumber: bigint | null;
+  data: Hex;
+  logIndex: number | null;
+  topics: readonly Hex[];
+  transactionHash: Hex | null;
+}
+
+function normalizeRpcLog(log: RpcEventLog): IndexerEventLog {
+  if (
+    log.blockNumber === null ||
+    log.transactionHash === null ||
+    log.logIndex === null ||
+    log.topics[0] === undefined
+  ) {
+    throw new Error('Confirmed getLogs response omitted canonical log coordinates');
+  }
+  return {
+    address: log.address,
+    blockNumber: toDbInt(log.blockNumber, 'blockNumber'),
+    data: log.data,
+    logIndex: log.logIndex,
+    topics: log.topics,
+    transactionHash: log.transactionHash,
+  };
+}
+
+function decodeIndexerLogs(
+  logs: readonly IndexerEventLog[],
+  timestampByBlock: ReadonlyMap<number, number>,
+): DecodedEvent[] {
+  const uniqueLogs = [
+    ...new Map(logs.map((log) => [subscriptionLogId(log), log])).values(),
+  ];
+  uniqueLogs.sort((left, right) => {
+    const blockDelta = left.blockNumber - right.blockNumber;
+    return blockDelta !== 0 ? blockDelta : left.logIndex - right.logIndex;
+  });
+
+  return uniqueLogs.map((log) => {
+    const contract = CONTRACT_BY_ADDRESS.get(log.address.toLowerCase());
+    if (contract === undefined) {
+      throw new Error(`Received a log from untracked address ${log.address}`);
+    }
+
+    const decoded = decodeEventLog({
+      abi: contract.abi,
+      data: log.data,
+      topics: log.topics as [Hex, ...Hex[]],
+      strict: true,
+    });
+    if (typeof decoded.eventName !== 'string') {
+      throw new Error(
+        `Decoded log ${log.transactionHash}:${String(log.logIndex)} without an event name`,
+      );
+    }
+    const timestamp = timestampByBlock.get(log.blockNumber);
+    if (timestamp === undefined) {
+      throw new Error(`Missing timestamp for block ${String(log.blockNumber)}`);
+    }
+
+    return {
+      source: contract.source,
+      address: log.address,
+      eventName: decoded.eventName,
+      args: (decoded.args ?? {}) as EventArgs,
+      txHash: log.transactionHash,
+      logIndex: log.logIndex,
+      blockNumber: log.blockNumber,
+      ts: timestamp,
+    };
   });
 }
 
@@ -160,36 +254,14 @@ async function decodedEventsForRange(
           ...range,
         });
   const logs = [
-    ...new Map(
-      [
-        ...coreLogs,
-        ...ctfLogs,
-        ...ctfApprovalLogs,
-        ...collateralApprovalLogs,
-        ...collateralIncomingLogs,
-        ...collateralOutgoingLogs,
-      ].map((log) => [
-        `${log.address}:${String(log.transactionHash)}:${String(log.logIndex)}`,
-        log,
-      ]),
-    ).values(),
-  ];
-
-  logs.sort((left, right) => {
-    const blockDelta = Number((left.blockNumber ?? 0n) - (right.blockNumber ?? 0n));
-    return blockDelta !== 0 ? blockDelta : (left.logIndex ?? 0) - (right.logIndex ?? 0);
-  });
-
-  const blockNumbers = [
-    ...new Set(
-      logs.map((log) => {
-        if (log.blockNumber === null) {
-          throw new Error('Confirmed getLogs response omitted blockNumber');
-        }
-        return log.blockNumber.toString();
-      }),
-    ),
-  ];
+    ...coreLogs,
+    ...ctfLogs,
+    ...ctfApprovalLogs,
+    ...collateralApprovalLogs,
+    ...collateralIncomingLogs,
+    ...collateralOutgoingLogs,
+  ].map((log) => normalizeRpcLog(log as RpcEventLog));
+  const blockNumbers = [...new Set(logs.map((log) => log.blockNumber))];
   const blocks = await Promise.all(
     blockNumbers.map(async (blockNumber) => {
       const block = await client.getBlock({ blockNumber: BigInt(blockNumber) });
@@ -197,46 +269,7 @@ async function decodedEventsForRange(
     }),
   );
   const timestampByBlock = new Map(blocks);
-
-  return logs.map((log) => {
-    if (
-      log.blockNumber === null ||
-      log.transactionHash === null ||
-      log.logIndex === null ||
-      log.topics[0] === undefined
-    ) {
-      throw new Error('Confirmed getLogs response omitted canonical log coordinates');
-    }
-    const contract = CONTRACT_BY_ADDRESS.get(log.address.toLowerCase());
-    if (contract === undefined) {
-      throw new Error(`Received a log from untracked address ${log.address}`);
-    }
-
-    const decoded = decodeEventLog({
-      abi: contract.abi,
-      data: log.data,
-      topics: log.topics as [Hex, ...Hex[]],
-      strict: true,
-    });
-    if (typeof decoded.eventName !== 'string') {
-      throw new Error(`Decoded log ${log.transactionHash}:${log.logIndex} without an event name`);
-    }
-    const timestamp = timestampByBlock.get(log.blockNumber.toString());
-    if (timestamp === undefined) {
-      throw new Error(`Missing timestamp for block ${log.blockNumber}`);
-    }
-
-    return {
-      source: contract.source,
-      address: log.address as Address,
-      eventName: decoded.eventName,
-      args: (decoded.args ?? {}) as EventArgs,
-      txHash: log.transactionHash,
-      logIndex: log.logIndex,
-      blockNumber: toDbInt(log.blockNumber, 'blockNumber'),
-      ts: timestamp,
-    };
-  });
+  return decodeIndexerLogs(logs, timestampByBlock);
 }
 
 export async function applyDecodedEvents(
@@ -247,6 +280,7 @@ export async function applyDecodedEvents(
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>,
   marketDedupIndexer?: MarketDedupIndexer,
   successfulPollAt = new Date(),
+  cursorGuard?: () => boolean,
 ): Promise<number> {
   const newlyAppliedEvents = await prisma.$transaction(
     async (tx) => {
@@ -257,6 +291,10 @@ export async function applyDecodedEvents(
         if (await handleDecodedEvent(tx, event)) {
           applied.push(event);
         }
+      }
+
+      if (cursorGuard !== undefined && !cursorGuard()) {
+        throw new SubscriptionAuthorityRevokedError();
       }
 
       await tx.indexerState.update({
@@ -323,6 +361,7 @@ async function applyRange(
   onEvents?: (events: readonly DecodedEvent[]) => Promise<void>,
   marketDedupIndexer?: MarketDedupIndexer,
   successfulPollAt = new Date(),
+  cursorGuard?: () => boolean,
 ): Promise<RangeResult> {
   const newlyAppliedLogs = await applyDecodedEvents(
     prisma,
@@ -332,6 +371,7 @@ async function applyRange(
     onEvents,
     marketDedupIndexer,
     successfulPollAt,
+    cursorGuard,
   );
 
   return {
@@ -895,8 +935,110 @@ export async function runIndexer(
       const wake = new IndexerWakeSignal();
       let activeGeneration: number | undefined;
       let trustedGeneration: number | undefined;
-      let latestHeadWatermark = head;
-      let pendingActivityBlock: number | undefined;
+      interface SubscriptionSessionBuffer {
+        generation: number;
+        authorityStartBlock: number | undefined;
+        latestHead: number | undefined;
+        timestampByBlock: Map<number, number>;
+        logsById: Map<string, IndexerSubscriptionLog>;
+        removedLogIds: Set<string>;
+        dirty: boolean;
+      }
+      interface SafetySweepBatch {
+        fromBlock: number;
+        toBlock: number;
+        headBlock: number;
+        events: readonly DecodedEvent[];
+        failures: number;
+      }
+
+      let session: SubscriptionSessionBuffer | undefined;
+      // This pointer deliberately does not follow the push cursor. It preserves
+      // an overlapping canonical HTTP sweep as a backstop for static filters
+      // and the tracked-owner transfer filters that are not subscribed.
+      let safetySweepNextBlock = nextBlock;
+      let safetySweepConfirmedBlock = nextBlock - 1;
+      let pendingSafetySweep: SafetySweepBatch | undefined;
+      let safetyFetchController: AbortController | undefined;
+      let safetyFetchRun: Promise<void> | undefined;
+
+      const cancelSafetyFetch = (): void => {
+        safetyFetchController?.abort();
+      };
+
+      const launchSafetyFetch = (): void => {
+        if (
+          safetyFetchRun !== undefined ||
+          pendingSafetySweep !== undefined ||
+          stopController.signal.aborted
+        ) {
+          return;
+        }
+
+        const controller = new AbortController();
+        safetyFetchController = controller;
+        const stopFetch = () => controller.abort();
+        stopController.signal.addEventListener('abort', stopFetch, { once: true });
+        // RPC retry/backoff lives off the main loop so a rate-limited safety
+        // sweep cannot prevent authoritative heads and logs from committing.
+        safetyFetchRun = (async () => {
+          const polledHead = await pollHead(
+            prisma,
+            client,
+            controller.signal,
+            wait,
+            random,
+            now,
+          );
+          if (polledHead === undefined || controller.signal.aborted) return;
+          head = Math.max(head ?? polledHead, polledHead);
+          if (safetySweepNextBlock > polledHead) return;
+
+          const fromBlock = safetySweepNextBlock;
+          const toBlock = Math.min(
+            polledHead,
+            fromBlock + config.blockChunk - 1,
+          );
+          const collateralOwners = await loadCollateralOwners(prisma);
+          const decoded = await requestRpcWithRetry(
+            prisma,
+            `safety getLogs blocks=${fromBlock}-${toBlock}`,
+            () =>
+              decodedEventsForRange(
+                client,
+                fromBlock,
+                toBlock,
+                collateralOwners,
+              ),
+            controller.signal,
+            wait,
+            random,
+          );
+          if (decoded === undefined || controller.signal.aborted) return;
+          pendingSafetySweep = {
+            fromBlock,
+            toBlock,
+            headBlock: polledHead,
+            events: decoded.value,
+            failures: decoded.failures,
+          };
+        })()
+          .catch((error: unknown) => {
+            if (!controller.signal.aborted) {
+              console.warn(
+                `[indexer] safety sweep deferred error="${String(error)}"`,
+              );
+            }
+          })
+          .finally(() => {
+            stopController.signal.removeEventListener('abort', stopFetch);
+            if (safetyFetchController === controller) {
+              safetyFetchController = undefined;
+            }
+            safetyFetchRun = undefined;
+            wake.notify();
+          });
+      };
 
       if (config.webSocketRpcUrls.length === 0) {
         console.warn(
@@ -915,6 +1057,10 @@ export async function runIndexer(
           reconnectMaxMs: config.webSocketReconnectMaxMs,
           createTransport: createSubscriptionTransport,
           async onConnecting(url) {
+            activeGeneration = undefined;
+            trustedGeneration = undefined;
+            session = undefined;
+            cancelSafetyFetch();
             await setSubscriptionStatus(prisma, 'connecting');
             console.info(
               `[indexer] websocket=connecting ` +
@@ -923,8 +1069,18 @@ export async function runIndexer(
             wake.notify();
           },
           async onConnected(details) {
-            await setSubscriptionStatus(prisma, 'backfilling');
             activeGeneration = details.generation;
+            trustedGeneration = undefined;
+            session = {
+              generation: details.generation,
+              authorityStartBlock: undefined,
+              latestHead: undefined,
+              timestampByBlock: new Map(),
+              logsById: new Map(),
+              removedLogIds: new Set(),
+              dirty: false,
+            };
+            await setSubscriptionStatus(prisma, 'backfilling');
             console.info(
               `[indexer] websocket=subscribed ` +
                 `endpoint=${subscriptionEndpointLabel(details.url)} ` +
@@ -938,6 +1094,9 @@ export async function runIndexer(
               activeGeneration === details.generation
             ) {
               activeGeneration = undefined;
+              trustedGeneration = undefined;
+              session = undefined;
+              cancelSafetyFetch();
             }
             await setSubscriptionStatus(prisma, 'polling');
             const message =
@@ -949,18 +1108,57 @@ export async function runIndexer(
             else console.warn(message);
             wake.notify();
           },
-          onHead(blockNumber) {
-            latestHeadWatermark = Math.max(
-              latestHeadWatermark,
-              blockNumber,
-            );
+          onInvalidated(details) {
+            if (
+              details.generation === undefined ||
+              activeGeneration === details.generation
+            ) {
+              activeGeneration = undefined;
+              trustedGeneration = undefined;
+              session = undefined;
+              cancelSafetyFetch();
+              void setSubscriptionStatus(prisma, 'polling').catch(
+                () => undefined,
+              );
+            }
+            wake.notify();
           },
-          onActivity(blockNumber, generation) {
-            if (activeGeneration !== generation) return;
-            pendingActivityBlock = Math.max(
-              pendingActivityBlock ?? 0,
-              blockNumber,
+          onHead(details) {
+            if (
+              activeGeneration !== details.generation ||
+              session?.generation !== details.generation
+            ) {
+              return;
+            }
+            session.latestHead = Math.max(
+              session.latestHead ?? 0,
+              details.blockNumber,
             );
+            session.timestampByBlock.set(
+              details.blockNumber,
+              details.timestamp,
+            );
+            session.dirty = true;
+            wake.notify();
+          },
+          onLog(log, generation) {
+            if (
+              activeGeneration !== generation ||
+              session?.generation !== generation
+            ) {
+              return;
+            }
+            const id = subscriptionLogId(log);
+            if (log.removed) {
+              session.logsById.delete(id);
+              session.removedLogIds.add(id);
+            } else if (log.blockNumber <= safetySweepConfirmedBlock) {
+              // The independent canonical sweep already covered this block.
+              return;
+            } else if (!session.removedLogIds.has(id)) {
+              session.logsById.set(id, log);
+              session.dirty = true;
+            }
             wake.notify();
           },
           async onHeartbeat({ blockNumber, generation, receivedAt }) {
@@ -978,6 +1176,9 @@ export async function runIndexer(
           },
         }).catch(async (error: unknown) => {
           activeGeneration = undefined;
+          trustedGeneration = undefined;
+          session = undefined;
+          cancelSafetyFetch();
           await setSubscriptionStatus(prisma, 'polling').catch(() => undefined);
           console.warn(
             `[indexer] websocket=failed mode=polling ` +
@@ -1011,6 +1212,11 @@ export async function runIndexer(
           trustedGeneration !== activeGeneration
         ) {
           const generation = activeGeneration;
+          const connectingSession = session;
+          state = await prisma.indexerState.findUniqueOrThrow({
+            where: { id: 1 },
+          });
+          nextBlock = Math.max(config.deployBlock, state.lastBlock + 1);
           const reconnectHead = await pollHead(
             prisma,
             client,
@@ -1021,16 +1227,24 @@ export async function runIndexer(
           );
           if (reconnectHead === undefined) break;
           head = Math.max(head, reconnectHead);
-          latestHeadWatermark = Math.max(latestHeadWatermark, reconnectHead);
           if (!(await catchUpTo(reconnectHead))) break;
-          if (
-            pendingActivityBlock !== undefined &&
-            pendingActivityBlock <= reconnectHead
-          ) {
-            pendingActivityBlock = undefined;
-          }
 
-          if (activeGeneration === generation) {
+          if (
+            activeGeneration === generation &&
+            session === connectingSession &&
+            connectingSession !== undefined
+          ) {
+            // All filters were installed before this HTTP cursor-to-head fill.
+            // H0 becomes authoritative only now, for this generation alone.
+            for (const [id, log] of connectingSession.logsById) {
+              if (log.blockNumber <= reconnectHead) {
+                connectingSession.logsById.delete(id);
+              }
+            }
+            connectingSession.authorityStartBlock = reconnectHead;
+            connectingSession.dirty =
+              (connectingSession.latestHead ?? reconnectHead) > reconnectHead ||
+              connectingSession.logsById.size > 0;
             trustedGeneration = generation;
             await setSubscriptionStatus(prisma, 'connected');
             if (activeGeneration !== generation) {
@@ -1051,26 +1265,142 @@ export async function runIndexer(
           continue;
         }
 
-        if (pendingActivityBlock !== undefined && isTrusted) {
+        if (pendingSafetySweep !== undefined) {
+          const sweep = pendingSafetySweep;
+          pendingSafetySweep = undefined;
+          const result = await applyRange(
+            prisma,
+            sweep.events,
+            sweep.fromBlock,
+            sweep.toBlock,
+            sweep.headBlock,
+            options.onEvents,
+            options.marketDedupIndexer,
+            now(),
+          );
+          safetySweepNextBlock = sweep.toBlock + 1;
+          safetySweepConfirmedBlock = Math.max(
+            safetySweepConfirmedBlock,
+            sweep.toBlock,
+          );
+          nextBlock = Math.max(nextBlock, sweep.toBlock + 1);
+          logRpcRecovery(
+            `safety getLogs blocks=${sweep.fromBlock}-${sweep.toBlock}`,
+            sweep.failures,
+          );
+          console.info(
+            `[indexer] ${result.fromBlock}-${result.toBlock} ` +
+              `decoded=${result.decodedLogs} applied=${result.newlyAppliedLogs} ` +
+              `mode=safety-sweep`,
+          );
+          if (session !== undefined) {
+            for (const blockNumber of session.timestampByBlock.keys()) {
+              if (blockNumber <= safetySweepConfirmedBlock) {
+                session.timestampByBlock.delete(blockNumber);
+              }
+            }
+          }
+          if (sweep.toBlock < sweep.headBlock) {
+            nextPollAt = Math.min(nextPollAt, now().getTime());
+          }
+          continue;
+        }
+
+        const activeSession = session;
+        if (activeSession?.dirty === true && isTrusted) {
+          activeSession.dirty = false;
           await wait(config.webSocketCoalesceMs, stopController.signal);
           if (stopController.signal.aborted) break;
-          const targetHead = Math.max(
-            pendingActivityBlock,
-            latestHeadWatermark,
-          );
-          head = Math.max(head, targetHead);
-          if (!(await catchUpTo(targetHead))) break;
           if (
-            pendingActivityBlock !== undefined &&
-            pendingActivityBlock <= targetHead
+            activeGeneration !== activeSession.generation ||
+            trustedGeneration !== activeSession.generation ||
+            session !== activeSession
           ) {
-            pendingActivityBlock = undefined;
+            continue;
           }
+
+          const targetHead = activeSession.latestHead;
+          if (targetHead === undefined) continue;
+          const pushedLogs = [...activeSession.logsById.values()].filter(
+            (log) =>
+              log.blockNumber <= targetHead &&
+              log.blockNumber >
+                (activeSession.authorityStartBlock ?? Number.MAX_SAFE_INTEGER),
+          );
+          const missingTimestamp = pushedLogs.find(
+            (log) => !activeSession.timestampByBlock.has(log.blockNumber),
+          );
+          if (missingTimestamp !== undefined) {
+            console.warn(
+              `[indexer] websocket generation=${String(activeSession.generation)} ` +
+                `waiting for header timestamp block=${String(missingTimestamp.blockNumber)}`,
+            );
+            continue;
+          }
+
+          state = await prisma.indexerState.findUniqueOrThrow({
+            where: { id: 1 },
+          });
+          const alreadyCommitted =
+            targetHead <= state.lastBlock && pushedLogs.length === 0;
+          if (!alreadyCommitted) {
+            const decoded = decodeIndexerLogs(
+              pushedLogs,
+              activeSession.timestampByBlock,
+            );
+            const fromBlock =
+              pushedLogs.length === 0
+                ? state.lastBlock + 1
+                : Math.min(
+                    state.lastBlock + 1,
+                    ...pushedLogs.map((log) => log.blockNumber),
+                  );
+            let result: RangeResult;
+            try {
+              result = await applyRange(
+                prisma,
+                decoded,
+                fromBlock,
+                Math.max(state.lastBlock, targetHead),
+                targetHead,
+                options.onEvents,
+                options.marketDedupIndexer,
+                now(),
+                // If close/error/stall fires while handlers are awaiting the
+                // database, this guard rolls back both events and the cursor.
+                () =>
+                  activeGeneration === activeSession.generation &&
+                  trustedGeneration === activeSession.generation &&
+                  session === activeSession,
+              );
+            } catch (error) {
+              if (error instanceof SubscriptionAuthorityRevokedError) {
+                continue;
+              }
+              throw error;
+            }
+            console.info(
+              `[indexer] ${result.fromBlock}-${result.toBlock} ` +
+                `decoded=${result.decodedLogs} applied=${result.newlyAppliedLogs} ` +
+                `mode=subscription generation=${String(activeSession.generation)}`,
+            );
+          }
+          for (const log of pushedLogs) {
+            activeSession.logsById.delete(subscriptionLogId(log));
+          }
+          head = Math.max(head, targetHead);
+          nextBlock = Math.max(nextBlock, targetHead + 1);
           continue;
         }
 
         const currentTime = now().getTime();
         if (currentTime >= nextPollAt) {
+          if (isTrusted) {
+            launchSafetyFetch();
+            currentPollInterval = config.pollMs;
+            nextPollAt = now().getTime() + config.pollMs;
+            continue;
+          }
           const polledHead = await pollHead(
             prisma,
             client,
@@ -1081,14 +1411,7 @@ export async function runIndexer(
           );
           if (polledHead === undefined) break;
           head = Math.max(head, polledHead);
-          latestHeadWatermark = Math.max(latestHeadWatermark, polledHead);
           if (!(await catchUpTo(polledHead))) break;
-          if (
-            pendingActivityBlock !== undefined &&
-            pendingActivityBlock <= polledHead
-          ) {
-            pendingActivityBlock = undefined;
-          }
           const trustedAfterPoll =
             activeGeneration !== undefined &&
             trustedGeneration === activeGeneration;
@@ -1105,6 +1428,9 @@ export async function runIndexer(
           wait,
         );
       }
+
+      cancelSafetyFetch();
+      await safetyFetchRun;
     }
 
     state = await prisma.indexerState.findUniqueOrThrow({ where: { id: 1 } });
