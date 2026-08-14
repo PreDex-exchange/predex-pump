@@ -86,6 +86,15 @@ afterEach(() => {
 });
 
 describe('browser fetch failure copy', () => {
+  it('returns a null market for a genuine HTTP 404 response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(null, { status: 404 })),
+    );
+
+    await expect(backendRestClient.getMarket('404')).resolves.toBeNull();
+  });
+
   it.each([
     ['PATCH', () => backendRestClient.updateAccountProfile({ displayName: 'Ada' })],
     ['DELETE', () => backendRestClient.withdrawOrder(`0x${'1'.repeat(64)}`)],

@@ -66,6 +66,7 @@ interface ResourceState<T> {
   data: T | null;
   isLoading: boolean;
   error: Error | null;
+  isSuccess: boolean;
   refetch: () => void;
 }
 
@@ -79,8 +80,10 @@ interface ResourceOptions {
 interface QueryResourceStatus {
   data: unknown;
   error: Error | null;
+  failureReason: Error | null;
   isFetched: boolean;
   isLoading: boolean;
+  isPaused: boolean;
 }
 
 const RETAINED_QUERY_ERROR = new Error(
@@ -90,7 +93,13 @@ const RETAINED_QUERY_ERROR = new Error(
 function stableResourceStatus(query: QueryResourceStatus) {
   const error =
     query.error ??
-    (query.data === undefined && query.isFetched ? RETAINED_QUERY_ERROR : null);
+    (query.data === undefined
+      ? query.isPaused
+        ? (query.failureReason ?? RETAINED_QUERY_ERROR)
+        : query.isFetched
+          ? RETAINED_QUERY_ERROR
+          : null
+      : null);
   return {
     error,
     isLoading: query.isLoading && error === null,
@@ -118,6 +127,7 @@ function useApiResource<T>(
     data: query.data ?? null,
     isLoading: status.isLoading,
     error: status.error,
+    isSuccess: query.isSuccess,
     refetch: () => {
       void query.refetch();
     },
@@ -197,6 +207,7 @@ export function useDedupCheck(
     data: isCurrent ? (query.data ?? null) : null,
     isLoading: isPending && (!isCurrent || status.error === null),
     error: isCurrent ? status.error : null,
+    isSuccess: isCurrent && query.isSuccess,
     refetch: () => {
       void query.refetch();
     },
@@ -216,11 +227,19 @@ export function useMarket(id: string) {
     });
   }, [id, queryClient]);
 
-  return useApiResource<MarketDetailResponse | null>(['market', id], load, {
-    refetchInterval: MARKET_DETAIL_FALLBACK_REFRESH_MS,
-    retry: MARKET_DETAIL_RETRY_COUNT,
-    retryDelay: apiRetryDelayMs,
-  });
+  const resource = useApiResource<MarketDetailResponse | null>(
+    ['market', id],
+    load,
+    {
+      refetchInterval: MARKET_DETAIL_FALLBACK_REFRESH_MS,
+      retry: MARKET_DETAIL_RETRY_COUNT,
+      retryDelay: apiRetryDelayMs,
+    },
+  );
+  return {
+    ...resource,
+    isNotFound: resource.isSuccess && resource.data === null,
+  };
 }
 
 export function useAccount(address?: string) {
