@@ -28,6 +28,11 @@ BACKEND_URL="http://127.0.0.1:3001"
 WALLET_URL="http://127.0.0.1:3003"
 WALLET_SCRIPT_URL="$WALLET_URL/provider.js"
 MODE="read-only"
+# When set, QA runs the wallet shim + frontend ONLY, against an already
+# deployed backend. This is the only way to exercise the cross-site session
+# cookie, the nginx /pump route and the WebSocket proxy — a local backend
+# tests none of them.
+REMOTE_API=""
 COMPOSE_PROJECT_FILE="$STATE_DIR/compose-project"
 CREATED_CONTAINERS_FILE="$STATE_DIR/docker-created-containers"
 STARTED_CONTAINERS_FILE="$STATE_DIR/docker-started-containers"
@@ -46,6 +51,12 @@ Usage:
 Modes:
   --read-only  Default. Signs SIWE messages and EIP-712 orders, but rejects
                eth_sendTransaction before any network request. No chain writes.
+  --remote-api URL
+               Run the wallet shim and frontend ONLY, against an already
+               deployed backend (e.g. https://api.predex.exchange/pump).
+               Skips Docker, Prisma and the local backend. Required to test
+               the cross-site session cookie, the nginx route and the WS
+               proxy; a local backend exercises none of those.
   --broadcast  Enables eth_sendTransaction for approvals and fills. The local
                signer signs and broadcasts to Arc testnet. Use deliberately.
 
@@ -642,8 +653,13 @@ launch_frontend() {
     export NODE_ENV=development
     export QA_WALLET_ENABLED=1
     export QA_WALLET_SCRIPT_URL="$WALLET_SCRIPT_URL"
-    export NEXT_PUBLIC_API_URL="$BACKEND_URL"
-    export NEXT_PUBLIC_WS_URL="ws://127.0.0.1:3001/ws"
+    if [[ -n "$REMOTE_API" ]]; then
+      export NEXT_PUBLIC_API_URL="$REMOTE_API"
+      export NEXT_PUBLIC_WS_URL="$(printf '%s' "$REMOTE_API" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')/ws"
+    else
+      export NEXT_PUBLIC_API_URL="$BACKEND_URL"
+      export NEXT_PUBLIC_WS_URL="ws://127.0.0.1:3001/ws"
+    fi
     export NEXT_PUBLIC_ARC_EXPLORER_URL=https://testnet.arcscan.app
     export NEXT_PUBLIC_AGENT_ADDRESSES="${NEXT_PUBLIC_AGENT_ADDRESSES:-}"
     exec ./node_modules/.bin/next dev --hostname 127.0.0.1 --port 3002
@@ -663,11 +679,20 @@ up() {
 
   require_command node
   require_command pnpm
-  require_command docker
   require_command curl
-  validate_compose_project
-  docker_command info >/dev/null 2>&1 || fail 'Docker is not available'
-  assert_ports_usable
+  if [[ -z "$REMOTE_API" ]]; then
+    require_command docker
+    validate_compose_project
+    docker_command info >/dev/null 2>&1 || fail 'Docker is not available'
+    assert_ports_usable
+  else
+    # Only the signer and frontend run locally; 3001 belongs to the deployed API.
+    for port in 3002 3003; do
+      port_is_listening "$port" &&
+        fail "TCP port $port is already occupied; frontend and signer ports must be free"
+    done
+    printf 'Running against deployed API: %s\n' "$REMOTE_API"
+  fi
   install_runtime_dependencies
 
   mkdir -p "$LOG_DIR"
@@ -676,6 +701,13 @@ up() {
   : > "$LOG_DIR/frontend.log"
   trap cleanup_failed_up ERR INT TERM
 
+  if [[ -n "$REMOTE_API" ]]; then
+    curl -fsS --max-time 15 "$REMOTE_API/health" >/dev/null 2>&1 ||
+      fail "deployed API is not reachable at $REMOTE_API/health"
+    printf 'Deployed API is healthy.\n'
+  fi
+
+  if [[ -z "$REMOTE_API" ]]; then
   prepare_compose_services
 
   printf 'Applying Prisma migrations...\n'
@@ -691,12 +723,16 @@ up() {
     DATABASE_URL="$DATABASE_URL" ./node_modules/.bin/prisma generate
   )
 
+  fi
+
   launch_wallet
   # The already-running signer is the only child allowed to retain the key.
   unset QA_WALLET_PRIVATE_KEY
   wait_until 'QA wallet signer' "$STATE_DIR/wallet.pid" 30 wallet_is_healthy
-  launch_backend
-  wait_until 'Backend/indexer' "$STATE_DIR/backend.pid" 240 backend_is_healthy
+  if [[ -z "$REMOTE_API" ]]; then
+    launch_backend
+    wait_until 'Backend/indexer' "$STATE_DIR/backend.pid" 240 backend_is_healthy
+  fi
   launch_frontend
   wait_until 'Frontend/provider injection' "$STATE_DIR/frontend.pid" 180 frontend_is_healthy
 
@@ -711,11 +747,28 @@ up() {
     ')"
   printf '\nPredex QA stack is ready (mode: %s).\n' "$MODE"
   printf 'Frontend:      %s\n' "$FRONTEND_URL"
-  printf 'Backend REST:  %s\n' "$BACKEND_URL"
-  printf 'Backend WS:    ws://127.0.0.1:3001/ws\n'
+  if [[ -n "$REMOTE_API" ]]; then
+    printf 'Backend REST:  %s  (deployed)\n' "$REMOTE_API"
+    printf 'Backend WS:    %s/ws\n' \
+      "$(printf '%s' "$REMOTE_API" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')"
+  else
+    printf 'Backend REST:  %s\n' "$BACKEND_URL"
+    printf 'Backend WS:    ws://127.0.0.1:3001/ws\n'
+  fi
   printf 'Wallet:        %s\n' "$wallet_account"
-  printf 'HYBRID market: %s/market/1\n' "$FRONTEND_URL"
-  printf 'Resolved:      %s/market/2\n' "$FRONTEND_URL"
+  # Market ids are deployment-specific; list what this backend actually serves
+  # rather than hardcoding fixtures that may not exist.
+  local listed
+  listed="$(curl -fsS --max-time 15 "${REMOTE_API:-$BACKEND_URL}/markets" 2>/dev/null |
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{
+      const items=JSON.parse(s).items||[];
+      console.log(items.map(m=>"#"+m.id+" "+m.phase).join("  "));
+    }catch{console.log("")}})' 2>/dev/null || true)"
+  if [[ -n "$listed" ]]; then
+    printf 'Markets:       %s\n' "$listed"
+  else
+    printf 'Markets:       (none indexed)\n'
+  fi
   printf 'Logs:          %s\n' "$LOG_DIR"
   printf 'Teardown:      ./scripts/qa-stack.sh down\n'
 }
@@ -760,6 +813,15 @@ main() {
         case "$1" in
           --read-only)
             MODE=read-only
+            ;;
+          --remote-api)
+            shift
+            [[ $# -gt 0 ]] || fail '--remote-api requires a base URL, e.g. https://api.predex.exchange/pump'
+            REMOTE_API="${1%/}"
+            ;;
+          --remote-api=*)
+            REMOTE_API="${1#--remote-api=}"
+            REMOTE_API="${REMOTE_API%/}"
             ;;
           --broadcast)
             MODE=broadcast
