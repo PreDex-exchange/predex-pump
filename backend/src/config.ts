@@ -11,10 +11,16 @@ export const DEFAULT_INDEXER_POLL_MS = 30_000;
 export const DEFAULT_INDEXER_FALLBACK_POLL_MS = 10_000;
 export const DEFAULT_INDEXER_CHUNK_DELAY_MS = 200;
 export const DEFAULT_INDEXER_STALL_MS = 90_000;
-// At the default 2,000-block range this permits 50 chunks (hundreds of
-// eth_getLogs calls), but stays below the observed 165,527-block Arc gap that
-// could not make progress under sustained public-RPC rate limiting.
+// At the default 10,000-block range this permits 10 chunks, but stays below
+// the observed 165,527-block Arc gap that could not make progress under
+// sustained public-RPC rate limiting.
 export const DEFAULT_INDEXER_MAX_BACKFILL_BLOCKS = 100_000;
+// Arc's public RPC rejects an eth_getLogs span of 30,000 blocks with
+// -32012 "requested range too large" and accepts 20,000, on all three
+// endpoints. 10,000 keeps a 2x margin under that ceiling while cutting the
+// requests needed to close a given gap by 5x versus the previous 2,000 —
+// catch-up was losing ground to the chain at ~3 blocks/sec under 429s.
+export const DEFAULT_INDEXER_BLOCK_CHUNK = 10_000;
 export const DEFAULT_INDEXER_WS_COALESCE_MS = 250;
 export const DEFAULT_INDEXER_WS_STALL_MS = 15_000;
 export const DEFAULT_INDEXER_WS_HEARTBEAT_MS = 5_000;
@@ -156,7 +162,7 @@ export function loadRuntimeConfig(): RuntimeConfig {
     rpcUrls,
     webSocketRpcUrls,
     deployBlock: DEPLOY_BLOCK,
-    blockChunk: positiveInteger('INDEXER_BLOCK_CHUNK', 2_000),
+    blockChunk: positiveInteger('INDEXER_BLOCK_CHUNK', DEFAULT_INDEXER_BLOCK_CHUNK),
     pollMs: positiveInteger('INDEXER_POLL_MS', DEFAULT_INDEXER_POLL_MS),
     fallbackPollMs: positiveInteger(
       'INDEXER_FALLBACK_POLL_MS',

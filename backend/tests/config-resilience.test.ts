@@ -31,6 +31,7 @@ describe('indexer RPC configuration', () => {
     expect(resolveRpcUrls(undefined)).toEqual([...new Set(ARC.rpcUrls)]);
     expect(ARC.rpcUrls).toEqual([
       'https://rpc.testnet.arc.network',
+      'https://rpc.testnet.arc.io',
       'https://rpc.drpc.testnet.arc.network',
     ]);
     expect(resolveWebSocketRpcUrls(undefined)).toEqual([

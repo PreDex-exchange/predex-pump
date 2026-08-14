@@ -12,6 +12,7 @@ export const ARC = {
   name: 'Arc Testnet',
   rpcUrls: [
     'https://rpc.testnet.arc.network',
+    'https://rpc.testnet.arc.io',
     'https://rpc.drpc.testnet.arc.network',
   ],
   webSocketRpcUrls: [
