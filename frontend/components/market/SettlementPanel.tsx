@@ -295,19 +295,26 @@ export function SettlementPanel({
   }
 
   if (status.isLoading || !settlement) {
+    // A freshly created market is not readable on chain for a few seconds, so
+    // the first reads fail and then succeed on their own. The query keeps
+    // retrying on its refetch interval, so reporting "unavailable" during that
+    // window tells the user something is wrong while it is still working —
+    // and offers a manual retry for something that needs no intervention.
+    // Only call it unavailable once it has failed repeatedly without ever
+    // returning data, or once previously good data has stopped refreshing.
+    const hasNeverLoaded = status.dataUpdatedAt === 0;
+    const stillSettlingIn = hasNeverLoaded && status.errorUpdateCount <= 2;
+    const readFailed = status.error !== null && !stillSettlingIn;
     return (
       <aside className={styles.sticky}>
         <Card className={styles.card}>
           <h2>Settlement</h2>
-          <p
-            className={styles.readState}
-            role={status.error ? 'alert' : 'status'}
-          >
-            {status.error
+          <p className={styles.readState} role={readFailed ? 'alert' : 'status'}>
+            {readFailed
               ? 'Live settlement data is temporarily unavailable. No settlement action is shown until the Arc read succeeds.'
               : 'Reading live lifecycle, oracle, CTF, and LMSR state…'}
           </p>
-          {status.error && (
+          {readFailed && (
             <Button onClick={() => void status.refetch()} size="small" variant="neutral">
               Try the live read again
             </Button>

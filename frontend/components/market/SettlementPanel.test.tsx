@@ -13,6 +13,11 @@ const mocks = vi.hoisted(() => ({
     data: undefined as SettlementStatus | undefined,
     error: null as Error | null,
     isLoading: false,
+    dataUpdatedAt: 0,
+    // Default to a read that has already failed repeatedly, so error-copy
+    // assertions below describe a genuine failure rather than the brief
+    // settling-in window a freshly created market goes through.
+    errorUpdateCount: 3,
   },
 }));
 
@@ -146,6 +151,11 @@ beforeEach(() => {
     data: undefined,
     error: null,
     isLoading: false,
+    dataUpdatedAt: 0,
+    // Default to a read that has already failed repeatedly, so error-copy
+    // assertions describe a genuine failure rather than the brief settling-in
+    // window a freshly created market goes through.
+    errorUpdateCount: 3,
   };
 });
 
@@ -213,5 +223,56 @@ describe('SettlementPanel reads', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close out market' }));
     expect(internalIdentifiersInRenderedOutput(closeout.container)).toEqual([]);
+  });
+});
+
+// A freshly created market is not readable on chain for a few seconds. The
+// query keeps retrying on its interval and succeeds on its own, so announcing
+// "unavailable" during that window reports a failure that is not happening and
+// offers a manual retry for something needing no intervention.
+describe('settlement read while a new market becomes readable', () => {
+  it('keeps reporting the read as in progress during the settling-in window', () => {
+    mocks.status.error = new Error('lifecycle read failed');
+    mocks.status.dataUpdatedAt = 0;
+    mocks.status.errorUpdateCount = 1;
+
+    render(<SettlementPanel market={market} />);
+
+    expect(
+      screen.getByText(/Reading live lifecycle, oracle, CTF, and LMSR state/u),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(/Live settlement data is temporarily unavailable/u),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Try the live read again' }),
+    ).toBeNull();
+  });
+
+  it('reports a failure once the read keeps failing without ever returning data', () => {
+    mocks.status.error = new Error('lifecycle read failed');
+    mocks.status.dataUpdatedAt = 0;
+    mocks.status.errorUpdateCount = 3;
+
+    render(<SettlementPanel market={market} />);
+
+    expect(
+      screen.getByText(/Live settlement data is temporarily unavailable/u),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Try the live read again' }),
+    ).toBeTruthy();
+  });
+
+  it('reports a failure immediately when a previously good read stops refreshing', () => {
+    mocks.status.error = new Error('lifecycle read failed');
+    mocks.status.dataUpdatedAt = 1_700_000_000_000;
+    mocks.status.errorUpdateCount = 1;
+
+    render(<SettlementPanel market={market} />);
+
+    expect(
+      screen.getByText(/Live settlement data is temporarily unavailable/u),
+    ).toBeTruthy();
   });
 });
