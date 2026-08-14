@@ -255,7 +255,7 @@ export function HybridOrderBookPanel({
       enabled: Boolean(address) && chainId === arcTestnet.id,
     },
   });
-  const { session, isLoading: sessionLoading, isSigningIn, signIn } = useAuth();
+  const { session, isLoading: sessionLoading } = useAuth();
   const authenticated =
     session?.authenticated === true &&
     Boolean(address) &&
@@ -1163,19 +1163,14 @@ export function HybridOrderBookPanel({
             <p className={styles.stateText}>Connect the maker wallet to see its orders.</p>
           ) : sessionLoading ? (
             <p className={styles.stateText} role="status">
-              Checking the connected wallet session…
+              Preparing your private order list…
             </p>
           ) : !authenticated ? (
-            <div className={styles.signInState}>
-              <p>Sign in with the connected wallet to load its private order list.</p>
-              <Button
-                disabled={isSigningIn}
-                onClick={() => void signIn()}
-                size="small"
-                variant="neutral"
-              >
-                {isSigningIn ? 'Signing in…' : 'Sign in to view my orders'}
-              </Button>
+            <div className={styles.privateState}>
+              <p>
+                Your private order list is unavailable for this connection. Public
+                orders and wallet-only trading remain available.
+              </p>
             </div>
           ) : myOrders.isLoading ? (
             <p className={styles.stateText} role="status">

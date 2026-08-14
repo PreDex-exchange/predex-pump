@@ -147,7 +147,7 @@ export function DedupHint({
           {feedbackError ??
             (feedbackEnabled
               ? 'Your accept/reject choice is saved to improve your account experience.'
-              : 'Sign in if you want this accept/reject choice saved to your account.')}
+              : 'Connect a wallet to save this accept/reject choice to your account.')}
         </small>
       )}
     </aside>

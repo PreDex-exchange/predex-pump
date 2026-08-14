@@ -47,7 +47,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
   const recordedView = useRef<string | null>(null);
   const queryClient = useQueryClient();
   const { address } = useWalletAccount();
-  const { session, isSigningIn, signIn } = useAuth();
+  const { session, isEstablishingSession, ensureSession } = useAuth();
   const authenticated = session?.authenticated === true;
   const {
     data: detail,
@@ -168,16 +168,17 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     isSettled ||
     clockSeconds >= market.tradingEndsAt;
   const isWatchlisted =
-    accountProfile?.watchlist.some((item) => item.id === market.id) ?? false;
+    authenticated &&
+    (accountProfile?.watchlist.some((item) => item.id === market.id) ?? false);
 
   async function toggleWatchlist() {
-    if (!authenticated) {
-      await signIn();
-      return;
-    }
     setWatchlistBusy(true);
     setWatchlistError(null);
     try {
+      if (!authenticated && !(await ensureSession())) {
+        setWatchlistError(new Error('The watchlist is unavailable for this connection.'));
+        return;
+      }
       await backendRestClient.setWatchlist(market.id, !isWatchlisted);
       await queryClient.invalidateQueries({ queryKey: ['account-profile'] });
     } catch {
@@ -235,7 +236,11 @@ export function MarketScreen({ marketId }: { marketId: string }) {
           </div>
           <div className={styles.watchlistControl}>
             <Button
-              disabled={watchlistBusy || isSigningIn || (authenticated && profileLoading)}
+              disabled={
+                watchlistBusy ||
+                isEstablishingSession ||
+                (authenticated && profileLoading)
+              }
               onClick={() => void toggleWatchlist()}
               size="small"
               variant={isWatchlisted ? 'mint' : 'neutral'}
@@ -244,9 +249,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
                 ? 'Saving…'
                 : isWatchlisted
                   ? '✓ In watchlist'
-                  : authenticated
-                    ? '+ Add to watchlist'
-                    : 'Sign in to watch'}
+                  : '+ Add to watchlist'}
             </Button>
             {(watchlistError || profileError) && (
               <small role="alert">Watchlist is temporarily unavailable.</small>

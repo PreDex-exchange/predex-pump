@@ -178,8 +178,8 @@ export function GatewayDepositPanel({
       </div>
       {gatewayBalance?.totalRaw === '0' && (
         <p className={styles.notice}>
-          This Gateway balance is empty. A confirmed deposit will credit the signed-in
-          address, never predex.
+          This Gateway balance is empty. A confirmed deposit will credit the connected
+          account address, never predex.
         </p>
       )}
 
@@ -255,13 +255,12 @@ export function GatewayDepositPanel({
         </p>
       )}
       {!isConnected && (
-        <p className={styles.notice}>Reconnect the signed-in wallet to deposit.</p>
+        <p className={styles.notice}>Reconnect this wallet to deposit.</p>
       )}
       {isConnected && !walletMatchesSession && (
         <p className={styles.error} role="alert">
-          Connected wallet {address ? shortAddress(address) : ''} does not match the
-          signed-in account {shortAddress(sessionAddress)}. Sign in with the connected
-          wallet before depositing.
+          Account features are still preparing for connected wallet{' '}
+          {address ? shortAddress(address) : ''}. Depositing is unavailable for now.
         </p>
       )}
       {wrongNetwork && (

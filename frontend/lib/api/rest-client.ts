@@ -86,7 +86,7 @@ function errorDetails(body: unknown, status: number): ErrorDetails {
     return { message: 'The indexed API rejected this request.' };
   }
   if (status === 401) {
-    return { message: 'This request needs a current signed-in session.' };
+    return { message: 'Saved account features are not ready for this wallet.' };
   }
   if (status === 403) {
     return { message: 'The indexed API did not allow this request.' };

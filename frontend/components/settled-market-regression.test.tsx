@@ -54,8 +54,8 @@ vi.mock('@/components/providers/AuthProvider', () => ({
   useAuth: () => ({
     session: { authenticated: false },
     isLoading: false,
-    isSigningIn: false,
-    signIn: vi.fn(),
+    isEstablishingSession: false,
+    ensureSession: vi.fn().mockResolvedValue(false),
   }),
 }));
 

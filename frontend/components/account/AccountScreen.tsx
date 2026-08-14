@@ -4,7 +4,7 @@ import type { Market } from '@predex-pump/shared/domain';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
-import { useAccount as useWalletAccount, useConnect } from 'wagmi';
+import { useAccount as useWalletAccount } from 'wagmi';
 
 import { MarketCard } from '@/components/feed/MarketCard';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -69,16 +69,9 @@ export function AccountScreen() {
   const queryClient = useQueryClient();
   const { isConnected } = useWalletAccount();
   const {
-    connect,
-    connectors,
-    isPending: isConnecting,
-  } = useConnect();
-  const {
     session,
     isLoading: sessionLoading,
-    isSigningIn,
     error: authError,
-    signIn,
   } = useAuth();
   const authenticated = session?.authenticated === true;
   const {
@@ -119,15 +112,15 @@ export function AccountScreen() {
     }
   }
 
-  const connector = connectors[0];
   const header = (
     <header className={styles.header}>
       <div>
         <span className={styles.kicker}>Optional account layer</span>
         <h1>Your name and your on-chain trail.</h1>
         <p>
-          Signing in unlocks profile, watchlist, and recent-view features. Creating,
-          trading, resolving, redeeming, and closing out still require only your wallet.
+          Connecting a wallet prepares profile, watchlist, and recent-view features.
+          Creating, trading, resolving, redeeming, and closing out still require only
+          your wallet.
         </p>
       </div>
       {authenticated && (
@@ -143,8 +136,8 @@ export function AccountScreen() {
       <main className={styles.page}>
         {header}
         <InlineState
-          message="Checking the saved secure session for this browser."
-          title="Restoring sign-in…"
+          message="Checking whether saved account features are ready for this wallet."
+          title="Preparing your account…"
         />
       </main>
     );
@@ -156,36 +149,19 @@ export function AccountScreen() {
         {header}
         <StatePanel
           actions={
-            <>
-              {!isConnected ? (
-                <Button
-                  disabled={!connector || isConnecting}
-                  onClick={() => connector && connect({ connector })}
-                  variant="coral"
-                >
-                  {isConnecting ? 'Connecting…' : 'Connect wallet'}
-                </Button>
-              ) : (
-                <Button
-                  disabled={isSigningIn}
-                  onClick={() => void signIn()}
-                  variant="coral"
-                >
-                  {isSigningIn ? 'Waiting for signature…' : 'Sign in with Ethereum'}
-                </Button>
-              )}
-              <Link className={buttonClassName('neutral')} href="/">
-                Keep browsing
-              </Link>
-            </>
+            <Link className={buttonClassName('neutral')} href="/">
+              Keep browsing
+            </Link>
           }
           message={
             authError?.message ??
-            'One EIP-4361 signature creates an expiring session. It is not a transaction and does not grant spending authority.'
+            (isConnected
+              ? 'Your wallet remains connected, and every wallet-only market action is still available. Saved account extras are unavailable for now.'
+              : 'Connect a wallet from the header to prepare optional profile, watchlist, and recent-view features.')
           }
           showMascot={false}
           state={authError ? 'error' : 'empty'}
-          title={isConnected ? 'Sign to open your profile' : 'Connect, then sign in'}
+          title={isConnected ? 'Wallet connected' : 'Connect your wallet'}
         />
       </main>
     );

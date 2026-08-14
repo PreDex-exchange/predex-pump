@@ -18,17 +18,10 @@ const mocks = vi.hoisted(() => ({
   sessionLoading: false,
   isConnected: false,
   authError: null as Error | null,
-  connect: vi.fn(),
-  signIn: vi.fn(),
 }));
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: mocks.address, isConnected: mocks.isConnected }),
-  useConnect: () => ({
-    connect: mocks.connect,
-    connectors: [{ id: 'injected' }],
-    isPending: false,
-  }),
 }));
 
 vi.mock('@/components/providers/AuthProvider', () => ({
@@ -41,9 +34,9 @@ vi.mock('@/components/providers/AuthProvider', () => ({
         }
       : { authenticated: false },
     isLoading: mocks.sessionLoading,
-    isSigningIn: false,
+    isEstablishingSession: false,
     error: mocks.authError,
-    signIn: mocks.signIn,
+    ensureSession: vi.fn(),
   }),
 }));
 
@@ -79,17 +72,16 @@ beforeEach(() => {
   mocks.sessionLoading = false;
   mocks.isConnected = false;
   mocks.authError = null;
-  mocks.connect.mockReset();
-  mocks.signIn.mockReset();
 });
 
 afterEach(cleanup);
 
 describe('AccountScreen money states', () => {
-  it('keeps the mascot off the signed-out account state', () => {
+  it('keeps the mascot and duplicate auth controls off the disconnected account state', () => {
     const rendered = renderScreen();
 
-    expect(screen.getByText('Connect, then sign in')).toBeTruthy();
+    expect(screen.getByText('Connect your wallet')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /connect|sign in/iu })).toBeNull();
     expect(rendered.container.querySelector('svg')).toBeNull();
   });
 

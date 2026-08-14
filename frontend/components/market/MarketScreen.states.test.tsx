@@ -32,8 +32,8 @@ vi.mock('wagmi', async (importOriginal) => {
 vi.mock('@/components/providers/AuthProvider', () => ({
   useAuth: () => ({
     session: { authenticated: false },
-    isSigningIn: false,
-    signIn: vi.fn(),
+    isEstablishingSession: false,
+    ensureSession: vi.fn().mockResolvedValue(false),
   }),
 }));
 

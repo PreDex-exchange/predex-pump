@@ -113,46 +113,6 @@
   color: var(--error);
 }
 
-.auth {
-  min-height: 40px;
-  padding: 7px 12px;
-  border: 2px solid var(--outline);
-  border-radius: var(--radius-pill);
-  background: var(--reward-soft);
-  box-shadow: 0 4px 0 var(--outline);
-  color: var(--ink);
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.auth:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 5px 0 var(--outline);
-}
-
-.auth:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-
-.signed {
-  border-color: var(--yes);
-  background: var(--yes-soft);
-  box-shadow: 0 4px 0 var(--yes);
-  color: var(--yes-ink);
-}
-
-.pending {
-  background: var(--surface);
-}
-
-.sessionAddress {
-  font-family: var(--font-dm-mono), monospace;
-  font-size: 0.72rem;
-}
-
 @keyframes pulse {
   0% {
     box-shadow: 0 0 0 0 var(--yes-55);
@@ -186,10 +146,6 @@
     min-width: 0;
     flex: 1;
     justify-content: center;
-  }
-
-  .auth {
-    flex: 1;
   }
 }
 

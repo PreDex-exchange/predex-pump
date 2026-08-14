@@ -106,7 +106,7 @@ function orderStatusLabel(status: OffchainOrder['status']) {
 
 export function PortfolioScreen() {
   const { address, isConnected } = useWalletAccount();
-  const { session, isLoading: sessionLoading, isSigningIn, signIn } = useAuth();
+  const { session, isLoading: sessionLoading } = useAuth();
   const authenticated =
     session?.authenticated === true &&
     Boolean(address) &&
@@ -420,19 +420,14 @@ export function PortfolioScreen() {
 
         {sessionLoading ? (
           <p className={styles.inlineState} role="status">
-            Checking the connected wallet session…
+            Preparing the private order list…
           </p>
         ) : !authenticated ? (
           <Card className={styles.inlineState} quiet>
-            <p>Sign in with this wallet to load its private live-order list.</p>
-            <Button
-              disabled={isSigningIn}
-              onClick={() => void signIn()}
-              size="small"
-              variant="neutral"
-            >
-              {isSigningIn ? 'Signing in…' : 'Sign in to view open orders'}
-            </Button>
+            <p>
+              The private live-order list is unavailable for this connection. Your
+              on-chain portfolio and wallet-only trading remain available.
+            </p>
           </Card>
         ) : ordersLoading ? (
           <p className={styles.inlineState} role="status">

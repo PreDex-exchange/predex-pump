@@ -427,7 +427,7 @@
 .inlineError,
 .completion,
 .stateText,
-.signInState {
+.privateState {
   padding: var(--space-3);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-input);
@@ -458,12 +458,12 @@
 }
 
 .inlineError p,
-.signInState p,
+.privateState p,
 .fillApproval p {
   margin-bottom: var(--space-2);
 }
 
-.signInState {
+.privateState {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -471,7 +471,7 @@
   margin-top: var(--space-3);
 }
 
-.signInState p {
+.privateState p {
   margin: 0;
 }
 
@@ -547,7 +547,7 @@
 @media (max-width: 620px) {
   .header,
   .sectionHeader,
-  .signInState,
+  .privateState,
   .myOrder {
     align-items: flex-start;
     flex-direction: column;

@@ -35,6 +35,7 @@ import { OrderBookPanel } from './OrderBookPanel';
 
 const mocks = vi.hoisted(() => ({
   address: `0x${'12'.repeat(20)}` as const,
+  authenticated: true,
   approvals: {
     data: {
       owner: `0x${'12'.repeat(20)}` as const,
@@ -64,7 +65,6 @@ const mocks = vi.hoisted(() => ({
     error: null as Error | null,
     refetch: vi.fn(),
   },
-  signIn: vi.fn(),
   approveCollateral: vi.fn(),
   approveTokens: vi.fn(),
   signOrder: vi.fn(),
@@ -89,14 +89,14 @@ vi.mock('wagmi', () => ({
 
 vi.mock('@/components/providers/AuthProvider', () => ({
   useAuth: () => ({
-    session: {
-      authenticated: true,
-      address: mocks.address,
-      expiresAt: '2033-01-01T00:00:00.000Z',
-    },
+    session: mocks.authenticated
+      ? {
+          authenticated: true,
+          address: mocks.address,
+          expiresAt: '2033-01-01T00:00:00.000Z',
+        }
+      : { authenticated: false },
     isLoading: false,
-    isSigningIn: false,
-    signIn: mocks.signIn,
   }),
 }));
 
@@ -325,6 +325,7 @@ function renderLivePanel(
 }
 
 beforeEach(() => {
+  mocks.authenticated = true;
   mocks.approvals.data = {
     owner: mocks.address,
     ctfApprovedForAll: true,
@@ -349,7 +350,6 @@ beforeEach(() => {
   for (const mock of [
     mocks.approvals.refetch,
     mocks.myOrders.refetch,
-    mocks.signIn,
     mocks.approveCollateral,
     mocks.approveTokens,
     mocks.signOrder,
@@ -685,8 +685,9 @@ describe('Hybrid human trading surface', () => {
     expect(mocks.signOrder).not.toHaveBeenCalled();
   });
 
-  it('labels the live venue and shows the full commitment before signing', async () => {
+  it('signs and posts a binding order without a server session', async () => {
     const makerOrder = offchainOrder(OTHER_MAKER, 'ab');
+    mocks.authenticated = false;
     mocks.signOrder.mockResolvedValue({
       orderHash: makerOrder.orderHash,
       order: makerOrder.signedOrder,

@@ -45,25 +45,13 @@ export function WalletBar() {
   const { address, chainId, isConnected } = useAccount();
   const { connect, connectors, error: connectError, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
-  const {
-    session,
-    isLoading: isAuthLoading,
-    isSigningIn,
-    error: authError,
-    signIn,
-    signOut,
-  } = useAuth();
+  const { error: authError, clearSession } = useAuth();
   const {
     switchChain,
     error: switchError,
     isPending: isSwitching,
   } = useSwitchChain();
   const isWrongNetwork = isConnected && chainId !== arcTestnet.id;
-  const isSignedIn = session?.authenticated === true;
-  const sessionMatchesWallet =
-    isSignedIn &&
-    Boolean(address) &&
-    session.address.toLowerCase() === address?.toLowerCase();
   const authFeedback = authError?.message ?? null;
   const connectFeedback = connectError
     ? publicWalletErrorMessage(
@@ -77,51 +65,6 @@ export function WalletBar() {
         'The network switch did not complete. Check the wallet and try again.',
       )
     : null;
-
-  const authControl = isAuthLoading ? (
-    <button className={`${styles.auth} ${styles.pending}`} disabled type="button">
-      Checking sign-in…
-    </button>
-  ) : sessionMatchesWallet ? (
-    <button
-      aria-label="Sign out"
-      className={`${styles.auth} ${styles.signed}`}
-      onClick={() => void signOut()}
-      title="Signed in. Click to sign out."
-      type="button"
-    >
-      <span aria-hidden="true">✓</span>
-      Signed in
-    </button>
-  ) : isSignedIn && !address ? (
-    <button
-      aria-label={`Sign out saved session for ${session.address}`}
-      className={`${styles.auth} ${styles.signed}`}
-      onClick={() => void signOut()}
-      title="The server session stays saved while the wallet is disconnected. Click to sign out."
-      type="button"
-    >
-      <span aria-hidden="true">✓</span>
-      <span>
-        Session saved ·{' '}
-        <span className={styles.sessionAddress}>{shortAddress(session.address)}</span>
-      </span>
-    </button>
-  ) : (
-    <button
-      className={styles.auth}
-      disabled={!address || isSigningIn}
-      onClick={() => void signIn()}
-      title={
-        isSignedIn
-          ? `The saved session belongs to ${session.address}. Sign in with this wallet to replace it.`
-          : 'Sign in with Ethereum to save profile features'
-      }
-      type="button"
-    >
-      {isSigningIn ? 'Signing…' : 'Sign in'}
-    </button>
-  );
 
   const { data: usdcBalance, isLoading: isBalanceLoading } = useReadContract({
     address: arcAddresses.usdc,
@@ -146,22 +89,15 @@ export function WalletBar() {
           className={styles.wallet}
           disabled={!connector || isConnecting}
           onClick={() => connector && connect({ connector })}
-          title={
-            isSignedIn
-              ? 'Reconnect a wallet to the saved server session'
-              : 'Connect an injected wallet'
-          }
+          title="Connect an injected wallet"
           type="button"
         >
           {isConnecting
             ? 'Connecting…'
             : connector
-              ? isSignedIn
-                ? 'Reconnect wallet'
-                : 'Connect wallet'
+              ? 'Connect wallet'
               : 'No wallet found'}
         </button>
-        {authControl}
       </WalletControls>
     );
   }
@@ -182,7 +118,6 @@ export function WalletBar() {
         >
           {isSwitching ? 'Switching…' : 'Switch to Arc'}
         </button>
-        {authControl}
       </WalletControls>
     );
   }
@@ -198,7 +133,10 @@ export function WalletBar() {
           isBalanceLoading ? 'balance loading' : `${formatWalletBalance(usdcBalance)} USDC`
         }`}
         className={styles.wallet}
-        onClick={() => disconnect()}
+        onClick={() => {
+          disconnect();
+          void clearSession();
+        }}
         title="Disconnect wallet"
         type="button"
       >
@@ -207,7 +145,6 @@ export function WalletBar() {
           {isBalanceLoading ? '…' : formatWalletBalance(usdcBalance)} USDC
         </span>
       </button>
-      {authControl}
     </WalletControls>
   );
 }
