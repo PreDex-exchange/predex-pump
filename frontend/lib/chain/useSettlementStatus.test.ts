@@ -17,7 +17,10 @@ import {
   incubatorRegistryAbi,
 } from './contracts';
 import { createArcPublicClient } from './client';
-import { readSettlementStatus } from './useSettlementStatus';
+import {
+  readSettlementStatus,
+  settlementStatusQueryKey,
+} from './useSettlementStatus';
 
 const ACCOUNT = `0x${'c'.repeat(40)}` as const;
 const CREATOR = `0x${'a'.repeat(40)}` as const;
@@ -98,6 +101,20 @@ function blockResult() {
 }
 
 describe('settlement RPC aggregation', () => {
+  it('starts a fresh query when preview identifiers become authoritative', () => {
+    const preview = {
+      ...market,
+      conditionId: 'Pending creation',
+      questionId: 'Pending creation',
+      yesTokenId: '0',
+      noTokenId: '0',
+    };
+
+    expect(settlementStatusQueryKey(preview)).not.toEqual(
+      settlementStatusQueryKey(market),
+    );
+  });
+
   it('uses one Multicall3 request plus one block request and no log scan', async () => {
     const ammState = {
       qYesRaw: 0n,
