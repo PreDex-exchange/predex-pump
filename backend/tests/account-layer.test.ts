@@ -20,6 +20,7 @@ import { resetDatabase, testPrisma } from './database.js';
 import { seedContractData, TRADE_TX, TRADER } from './fixtures.js';
 
 const accountConfig: AccountLayerConfig = {
+  cookieSameSite: 'Lax',
   webOrigin: 'http://localhost:3000',
   cookiePath: '/',
   siweDomain: 'localhost:3000',

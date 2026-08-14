@@ -58,3 +58,50 @@ describe('session cookie scope', () => {
     expect(SESSION_COOKIE_NAME).not.toBe('predex_session');
   });
 });
+
+// A frontend on localhost or *.vercel.app can never be same-site with the API,
+// so Lax would drop the cookie on every authenticated fetch.
+describe('cross-site session cookies', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function load(sameSite: string, secure: string) {
+    vi.stubEnv('PREDEX_WEB_ORIGIN', 'http://127.0.0.1:3002');
+    vi.stubEnv('ACCOUNT_COOKIE_SAMESITE', sameSite);
+    vi.stubEnv('ACCOUNT_COOKIE_SECURE', secure);
+    return loadAccountLayerConfig();
+  }
+
+  it('emits SameSite=None with Secure so a cross-site fetch keeps the session', () => {
+    const config = load('None', 'true');
+    const cookie = serializeSessionCookie(
+      'token',
+      new Date(Date.now() + 60_000),
+      config,
+    );
+    expect(cookie).toContain('SameSite=None');
+    expect(cookie).toContain('Secure');
+  });
+
+  it('refuses SameSite=None without Secure instead of shipping a discarded cookie', () => {
+    // Browsers drop such a cookie silently; failing at boot is far cheaper
+    // than debugging a login that appears to work and never persists.
+    expect(() => load('None', 'false')).toThrow(/requires ACCOUNT_COOKIE_SECURE/u);
+  });
+
+  it('rejects an unrecognised value rather than defaulting', () => {
+    expect(() => load('none-ish', 'true')).toThrow(/must be Lax, Strict, or None/u);
+  });
+
+  it('stays Lax when unset', () => {
+    vi.stubEnv('PREDEX_WEB_ORIGIN', 'https://pump.predex.exchange');
+    expect(loadAccountLayerConfig().cookieSameSite).toBe('Lax');
+  });
+
+  it('clears with the same SameSite it set', () => {
+    expect(serializeClearedSessionCookie(load('None', 'true'))).toContain(
+      'SameSite=None',
+    );
+  });
+});

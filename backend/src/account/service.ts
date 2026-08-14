@@ -87,7 +87,7 @@ function sessionCookieAttributes(
   return [
     `Path=${config.cookiePath}`,
     'HttpOnly',
-    'SameSite=Lax',
+    `SameSite=${config.cookieSameSite}`,
     `Max-Age=${maxAge}`,
     `Expires=${expiresAt.toUTCString()}`,
     ...(config.secureCookies ? ['Secure'] : []),
@@ -108,7 +108,7 @@ export function serializeClearedSessionCookie(
   // The clear must repeat the exact Path the cookie was set with — a browser
   // matches name+domain+path, so clearing at `/` would leave a `/pump` cookie
   // in place and make sign-out silently fail.
-  return `${SESSION_COOKIE_NAME}=; Path=${config.cookiePath}; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${config.secureCookies ? '; Secure' : ''}`;
+  return `${SESSION_COOKIE_NAME}=; Path=${config.cookiePath}; HttpOnly; SameSite=${config.cookieSameSite}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${config.secureCookies ? '; Secure' : ''}`;
 }
 
 function behaviorRecord(row: {

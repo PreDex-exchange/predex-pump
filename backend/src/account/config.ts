@@ -30,7 +30,43 @@ export interface AccountLayerConfig {
   sessionTtlMs: number;
   secureCookies: boolean;
   cookiePath: string;
+  cookieSameSite: CookieSameSite;
   rpcUrl: string;
+}
+
+export type CookieSameSite = 'Lax' | 'Strict' | 'None';
+
+// A browser only sends a `Lax` cookie on same-site requests, and same-site is
+// judged on the registrable domain. A frontend on localhost or *.vercel.app
+// calling this API is therefore cross-site: sign-in appears to succeed and
+// every later request arrives unauthenticated. `None` is the only value that
+// works there, and browsers reject `None` without `Secure`.
+function resolveCookieSameSite(
+  value: string | undefined,
+  secureCookies: boolean,
+): CookieSameSite {
+  const raw = value?.trim();
+  if (!raw) return 'Lax';
+  const normalized = raw.toLowerCase();
+  const sameSite =
+    normalized === 'lax'
+      ? 'Lax'
+      : normalized === 'strict'
+        ? 'Strict'
+        : normalized === 'none'
+          ? 'None'
+          : undefined;
+  if (sameSite === undefined) {
+    throw new Error(
+      `ACCOUNT_COOKIE_SAMESITE must be Lax, Strict, or None, received ${raw}`,
+    );
+  }
+  if (sameSite === 'None' && !secureCookies) {
+    throw new Error(
+      'ACCOUNT_COOKIE_SAMESITE=None requires ACCOUNT_COOKIE_SECURE=true; browsers silently discard a SameSite=None cookie that is not Secure',
+    );
+  }
+  return sameSite;
 }
 
 // When the API is mounted behind a shared hostname under a path prefix, the
@@ -57,6 +93,10 @@ export function loadAccountLayerConfig(): AccountLayerConfig {
   const webUrl = new URL(webOrigin);
   const siweDomain = process.env.SIWE_DOMAIN?.trim() || webUrl.host;
   const siweUri = process.env.SIWE_URI?.trim() || webOrigin;
+  const secureCookies = booleanValue(
+    'ACCOUNT_COOKIE_SECURE',
+    webUrl.protocol === 'https:',
+  );
 
   return {
     webOrigin,
@@ -68,11 +108,12 @@ export function loadAccountLayerConfig(): AccountLayerConfig {
     nonceTtlMs: positiveInteger('SIWE_NONCE_TTL_SECONDS', 5 * 60) * 1_000,
     sessionTtlMs:
       positiveInteger('ACCOUNT_SESSION_TTL_SECONDS', 7 * 24 * 60 * 60) * 1_000,
-    secureCookies: booleanValue(
-      'ACCOUNT_COOKIE_SECURE',
-      webUrl.protocol === 'https:',
-    ),
+    secureCookies,
     cookiePath: resolveCookiePath(process.env.ACCOUNT_COOKIE_PATH),
+    cookieSameSite: resolveCookieSameSite(
+      process.env.ACCOUNT_COOKIE_SAMESITE,
+      secureCookies,
+    ),
     rpcUrl: process.env.ARC_RPC_URL?.trim() || ARC.rpcUrls[0],
   };
 }
