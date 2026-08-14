@@ -292,7 +292,9 @@ terminate_process_tree() {
     [[ -n "$child" ]] && children+=("$child")
   done < <(process_children "$pid")
   kill -TERM "$pid" >/dev/null 2>&1 || true
-  for child in "${children[@]}"; do
+  # bash 3.2 (macOS default) treats an empty array's "${arr[@]}" as unbound
+  # under `set -u`, so a leaf process with no children aborted `down`.
+  for child in ${children[@]+"${children[@]}"}; do
     terminate_process_tree "$child"
   done
 }

@@ -8,10 +8,18 @@ import { injected } from 'wagmi/connectors';
 
 import { arcTestnet } from './arc';
 
+// Market, book and position data all come from the indexed REST/WebSocket API,
+// so the browser needs the chain only for wallet balance and for sending
+// transactions. wagmi's 4s default block polling is therefore almost pure
+// waste, and it competes with the indexer for the same Arc request budget —
+// enough to starve it into `stalled` and freeze its head watermark.
+const CHAIN_POLLING_INTERVAL_MS = 30_000;
+
 function createWagmiConfig() {
   return createConfig({
     chains: [arcTestnet],
     connectors: [injected()],
+    pollingInterval: CHAIN_POLLING_INTERVAL_MS,
     transports: {
       [arcTestnet.id]: http(arcTestnet.rpcUrls.default.http[0]),
     },
