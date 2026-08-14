@@ -282,7 +282,7 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           </div>
           {quoteError && (
             <p className={styles.quoteError} role="alert">
-              {quoteError.message}
+              The live quote could not be read from Arc. Try again.
             </p>
           )}
         </div>

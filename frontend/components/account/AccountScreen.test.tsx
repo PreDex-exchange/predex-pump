@@ -102,6 +102,18 @@ describe('AccountScreen money states', () => {
     expect(rendered.container.innerHTML).not.toMatch(/viem|Details:|Version:/u);
   });
 
+  it('does not render a backend code identifier as profile-error prose', () => {
+    mocks.authenticated = true;
+    mocks.isConnected = true;
+    mocks.profileError = new Error('marketId must be an unsigned decimal string');
+
+    renderScreen();
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('The account API could not load this profile.');
+    expect(alert.textContent).not.toContain('marketId');
+  });
+
   it.each([
     {
       expectedTitle: 'Assembling your profile…',

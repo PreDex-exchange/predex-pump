@@ -616,11 +616,9 @@ export function HybridOrderBookPanel({
       await queryClient.invalidateQueries({
         queryKey: ['order-book', order.marketId],
       });
-    } catch (error) {
+    } catch {
       setOrderActionError(
-        error instanceof Error
-          ? error.message
-          : 'This order could not be withdrawn from the operator book.',
+        'This order could not be withdrawn from the operator book.',
       );
     } finally {
       setOrderActionBusy(null);

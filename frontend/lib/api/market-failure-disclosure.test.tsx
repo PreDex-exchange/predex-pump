@@ -8,6 +8,7 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  MARKET_DETAIL_FAILURE_DISCLOSURE_OVERHEAD_MS,
   MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS,
   useMarket,
 } from './hooks';
@@ -32,7 +33,7 @@ afterEach(() => {
 });
 
 describe('market detail failure disclosure deadline', () => {
-  it('reports four consecutively stalled attempts at the 12-second deadline', async () => {
+  it('reports four consecutively stalled attempts within the documented bound', async () => {
     const attemptStarts: number[] = [];
     const fetchMock = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -60,16 +61,18 @@ describe('market detail failure disclosure deadline', () => {
     );
     const { result } = renderHook(() => useMarket('17'), { wrapper });
 
-    expect(MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS).toBe(12_000);
+    const scheduledFailureMs =
+      MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS -
+      MARKET_DETAIL_FAILURE_DISCLOSURE_OVERHEAD_MS;
+
+    expect(MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS).toBe(30_000);
     expect(result.current.isLoading).toBe(true);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(
-        MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS - 1,
-      );
+      await vi.advanceTimersByTimeAsync(scheduledFailureMs - 1);
     });
     expect(result.current.error).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(attemptStarts).toEqual([0, 2_250, 5_500, 10_750]);
+    expect(attemptStarts).toEqual([0, 6_000, 13_000, 22_000]);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
@@ -79,8 +82,11 @@ describe('market detail failure disclosure deadline', () => {
     });
     expect(result.current.isLoading).toBe(false);
     expect(result.current.error?.message).toContain(
-      'did not respond within 1.25 seconds',
+      'did not respond within 5 seconds',
     );
     expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(Date.now()).toBeLessThanOrEqual(
+      MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS,
+    );
   });
 });

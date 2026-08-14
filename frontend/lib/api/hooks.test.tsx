@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./rest-client', () => ({
-  MARKET_DETAIL_REQUEST_TIMEOUT_MS: 1_250,
+  REST_READ_TIMEOUT_MS: 5_000,
   backendRestClient: {
     dedupCheck: mocks.dedupCheck,
     getMarket: mocks.getMarket,

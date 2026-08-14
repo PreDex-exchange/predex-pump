@@ -36,7 +36,8 @@ import {
 } from './order-errors';
 
 const DEFAULT_API_URL = 'http://localhost:3001';
-export const MARKET_DETAIL_REQUEST_TIMEOUT_MS = 1_250;
+export const REST_READ_TIMEOUT_MS = 5_000;
+export const REST_WRITE_TIMEOUT_MS = 10_000;
 
 type QueryValue = string | number | undefined;
 
@@ -71,14 +72,6 @@ function errorDetails(body: unknown, status: number): ErrorDetails {
     typeof body === 'object' &&
     body !== null &&
     'error' in body &&
-    typeof body.error === 'string'
-  ) {
-    return { message: body.error };
-  }
-  if (
-    typeof body === 'object' &&
-    body !== null &&
-    'error' in body &&
     typeof body.error === 'object' &&
     body.error !== null &&
     'code' in body.error &&
@@ -89,7 +82,27 @@ function errorDetails(body: unknown, status: number): ErrorDetails {
       message: humanizeOrderRejection(body.error.code),
     };
   }
-  return { message: `Backend request failed with HTTP ${status}.` };
+  if (status === 400) {
+    return { message: 'The indexed API rejected this request.' };
+  }
+  if (status === 401) {
+    return { message: 'This request needs a current signed-in session.' };
+  }
+  if (status === 403) {
+    return { message: 'The indexed API did not allow this request.' };
+  }
+  if (status === 404) {
+    return { message: 'The requested indexed record was not found.' };
+  }
+  if (status === 409) {
+    return { message: 'This request conflicted with newer indexed state.' };
+  }
+  if (status === 429) {
+    return {
+      message: 'The indexed API is busy. Wait a moment, then try again.',
+    };
+  }
+  return { message: `The indexed API request failed with HTTP ${status}.` };
 }
 
 export const backendApiUrl = publicUrl(
@@ -113,13 +126,12 @@ async function request<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  let response: Response;
-  const controller = options.timeoutMs === undefined
-    ? undefined
-    : new AbortController();
-  const timeout = controller
-    ? setTimeout(() => controller.abort(), options.timeoutMs)
-    : undefined;
+  const method = options.method ?? 'GET';
+  const timeoutMs =
+    options.timeoutMs ??
+    (method === 'GET' ? REST_READ_TIMEOUT_MS : REST_WRITE_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const headers: Record<string, string> = {
     accept: 'application/json',
   };
@@ -127,52 +139,58 @@ async function request<T>(
     headers['content-type'] = 'application/json';
   }
   try {
-    response = await fetch(`${backendApiUrl}${path}`, {
-      cache: 'no-store',
-      credentials: 'include',
-      ...(options.method === undefined ? {} : { method: options.method }),
-      headers,
-      ...(options.body === undefined
-        ? {}
-        : { body: JSON.stringify(options.body) }),
-      ...(controller === undefined ? {} : { signal: controller.signal }),
-    });
-  } catch {
-    const method = options.method ?? 'GET';
-    if (controller?.signal.aborted && options.timeoutMs !== undefined) {
+    let response: Response;
+    try {
+      response = await fetch(`${backendApiUrl}${path}`, {
+        cache: 'no-store',
+        credentials: 'include',
+        ...(options.method === undefined ? {} : { method: options.method }),
+        headers,
+        ...(options.body === undefined
+          ? {}
+          : { body: JSON.stringify(options.body) }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      if (method === 'GET') {
+        throw new Error(`The indexed API at ${backendApiUrl} could not be reached.`);
+      }
       throw new Error(
-        `The indexed API did not respond within ${options.timeoutMs / 1_000} seconds.`,
+        `The indexed API did not complete the ${method} request. The browser may have blocked this method, or the connection may have failed.`,
       );
     }
-    if (method === 'GET') {
-      throw new Error(`The indexed API at ${backendApiUrl} could not be reached.`);
+
+    if (response.status === 404 && options.notFoundAsNull) {
+      return null as T;
     }
-    throw new Error(
-      `The indexed API did not complete the ${method} request. The browser may have blocked this method, or the connection may have failed.`,
-    );
+    if (!response.ok) {
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        body = null;
+      }
+      const details = errorDetails(body, response.status);
+      throw new BackendApiError(
+        response.status,
+        details.message,
+        details.code,
+      );
+    }
+
+    return (await response.json()) as T;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `The indexed API did not respond within ${timeoutMs / 1_000} seconds.`,
+      );
+    }
+    throw error;
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+    clearTimeout(timeout);
   }
-
-  if (response.status === 404 && options.notFoundAsNull) {
-    return null as T;
-  }
-  if (!response.ok) {
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      body = null;
-    }
-    const details = errorDetails(body, response.status);
-    throw new BackendApiError(
-      response.status,
-      details.message,
-      details.code,
-    );
-  }
-
-  return (await response.json()) as T;
 }
 
 export const backendRestClient: BackendApiClient = {
@@ -242,7 +260,6 @@ export const backendRestClient: BackendApiClient = {
   getMarket(id: string): Promise<MarketDetailResponse | null> {
     return request(routes.market(encodeURIComponent(id)), {
       notFoundAsNull: true,
-      timeoutMs: MARKET_DETAIL_REQUEST_TIMEOUT_MS,
     });
   },
 

@@ -144,7 +144,7 @@ export function IndexerLagIndicator() {
       : `. Balance reconciliation ${unreconciledGap.balanceReconciliationStatus}` +
         (unreconciledGap.balanceReconciliationError === null
           ? ''
-          : `: ${unreconciledGap.balanceReconciliationError}`);
+          : '; a backend diagnostic was recorded');
   const chainState = data.chainState.ready
     ? ''
     : `. Chain configuration bootstrap ${data.chainState.status}` +
@@ -154,7 +154,9 @@ export function IndexerLagIndicator() {
       (data.chainState.issues.length === 0
         ? ''
         : `; invalid snapshots: ${data.chainState.issues.join(', ')}`) +
-      (data.chainState.error === null ? '' : `; error: ${data.chainState.error}`);
+      (data.chainState.error === null
+        ? ''
+        : '; a backend diagnostic was recorded');
   const dedupProvider = data.dedupIndex.providers[data.dedupIndex.configuredProvider];
   const dedupIndex =
     data.dedupIndex.status === 'ready'
@@ -163,7 +165,9 @@ export function IndexerLagIndicator() {
         `query provider ${data.dedupIndex.queryProvider ?? 'none'}; ` +
         `indexed ${dedupProvider.indexedMarketCount ?? 'unknown'}, ` +
         `missing ${dedupProvider.missingMarketCount ?? 'unknown'}` +
-        (data.dedupIndex.error === null ? '' : `; error: ${data.dedupIndex.error}`);
+        (data.dedupIndex.error === null
+          ? ''
+          : '; a backend diagnostic was recorded');
 
   return (
     <span

@@ -180,12 +180,8 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     try {
       await backendRestClient.setWatchlist(market.id, !isWatchlisted);
       await queryClient.invalidateQueries({ queryKey: ['account-profile'] });
-    } catch (caught) {
-      setWatchlistError(
-        caught instanceof Error
-          ? caught
-          : new Error('The watchlist could not be updated.'),
-      );
+    } catch {
+      setWatchlistError(new Error('The watchlist could not be updated.'));
     } finally {
       setWatchlistBusy(false);
     }
@@ -253,9 +249,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
                     : 'Sign in to watch'}
             </Button>
             {(watchlistError || profileError) && (
-              <small role="alert">
-                {watchlistError?.message ?? 'Watchlist is temporarily unavailable.'}
-              </small>
+              <small role="alert">Watchlist is temporarily unavailable.</small>
             )}
           </div>
         </div>

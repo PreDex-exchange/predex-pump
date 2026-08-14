@@ -166,6 +166,8 @@ describe('IndexerLagIndicator liveness', () => {
     const status = render(<IndexerLagIndicator />).getByRole('status');
     expect(status.textContent).toContain('Chain configuration unavailable');
     expect(status.getAttribute('title')).toContain('committee-snapshot-invalid');
+    expect(status.getAttribute('title')).not.toContain('currentSigners');
+    expect(status.getAttribute('title')).not.toContain('Multicall3');
   });
 
   it('prominently surfaces an audited history gap even when caught up', () => {

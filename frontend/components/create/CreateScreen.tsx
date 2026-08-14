@@ -300,10 +300,8 @@ export function CreateScreen() {
     setDedupFeedbackError(null);
     void backendRestClient
       .recordAccountBehavior({ type, marketId })
-      .catch((error: unknown) => {
-        setDedupFeedbackError(
-          error instanceof Error ? error.message : 'Dedup feedback could not be saved.',
-        );
+      .catch(() => {
+        setDedupFeedbackError('Dedup feedback could not be saved.');
       });
   }
 

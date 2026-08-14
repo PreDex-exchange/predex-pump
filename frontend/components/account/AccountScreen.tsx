@@ -112,10 +112,8 @@ export function AccountScreen() {
       setDisplayNameDraft(null);
       setRememberRecentlyViewedDraft(undefined);
       setSaved(true);
-    } catch (caught) {
-      setSaveError(
-        caught instanceof Error ? caught : new Error('Profile changes were not saved.'),
-      );
+    } catch {
+      setSaveError(new Error('Profile changes were not saved. Try again.'));
     } finally {
       setIsSaving(false);
     }
@@ -211,7 +209,7 @@ export function AccountScreen() {
         {header}
         <Card className={styles.inlineState} role="alert">
           <strong>Your profile could not load</strong>
-          <p>{error?.message ?? 'The account API returned no profile.'}</p>
+          <p>The account API could not load this profile.</p>
           <Button onClick={refetch} size="small" variant="neutral">
             Try again
           </Button>
@@ -278,7 +276,11 @@ export function AccountScreen() {
               {isSaving ? 'Saving…' : 'Save profile'}
             </Button>
             {saved && <span className={styles.saved}>Saved</span>}
-            {saveError && <span className={styles.saveError}>{saveError.message}</span>}
+            {saveError && (
+              <span className={styles.saveError}>
+                Profile changes were not saved. Try again.
+              </span>
+            )}
           </div>
         </Card>
 

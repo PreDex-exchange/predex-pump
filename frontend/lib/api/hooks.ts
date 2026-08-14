@@ -32,7 +32,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   backendRestClient as apiClient,
-  MARKET_DETAIL_REQUEST_TIMEOUT_MS,
+  REST_READ_TIMEOUT_MS,
 } from './rest-client';
 import { backendWsClient } from './websocket';
 
@@ -42,6 +42,7 @@ const HEALTH_REFRESH_MS = 15_000;
 export const MARKET_DETAIL_RETRY_COUNT = 3;
 const API_RETRY_BASE_DELAY_MS = 1_000;
 const API_RETRY_MAX_DELAY_MS = 30_000;
+export const MARKET_DETAIL_FAILURE_DISCLOSURE_OVERHEAD_MS = 3_000;
 export const DEDUP_CHECK_DEBOUNCE_MS = 500;
 
 export function apiRetryDelayMs(failureCount: number) {
@@ -52,11 +53,14 @@ export function apiRetryDelayMs(failureCount: number) {
 }
 
 export const MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS =
-  MARKET_DETAIL_REQUEST_TIMEOUT_MS * (MARKET_DETAIL_RETRY_COUNT + 1) +
+  REST_READ_TIMEOUT_MS * (MARKET_DETAIL_RETRY_COUNT + 1) +
   Array.from(
     { length: MARKET_DETAIL_RETRY_COUNT },
     (_, failureCount) => apiRetryDelayMs(failureCount),
-  ).reduce((total, delay) => total + delay, 0);
+  ).reduce((total, delay) => total + delay, 0) +
+  // Browser measurement found 2,022 ms beyond the nominal request/retry
+  // schedule. Round that timer/observer/render overhead up to a whole second.
+  MARKET_DETAIL_FAILURE_DISCLOSURE_OVERHEAD_MS;
 
 interface ResourceState<T> {
   data: T | null;
@@ -70,6 +74,27 @@ interface ResourceOptions {
   enabled?: boolean;
   retry?: boolean | number;
   retryDelay?: number | ((failureCount: number, error: Error) => number);
+}
+
+interface QueryResourceStatus {
+  data: unknown;
+  error: Error | null;
+  isFetched: boolean;
+  isLoading: boolean;
+}
+
+const RETAINED_QUERY_ERROR = new Error(
+  'The indexed API request is still unavailable.',
+);
+
+function stableResourceStatus(query: QueryResourceStatus) {
+  const error =
+    query.error ??
+    (query.data === undefined && query.isFetched ? RETAINED_QUERY_ERROR : null);
+  return {
+    error,
+    isLoading: query.isLoading && error === null,
+  };
 }
 
 function useApiResource<T>(
@@ -87,11 +112,12 @@ function useApiResource<T>(
     retry: options.retry,
     retryDelay: options.retryDelay,
   });
+  const status = stableResourceStatus(query);
 
   return {
     data: query.data ?? null,
-    isLoading: query.isLoading,
-    error: query.error,
+    isLoading: status.isLoading,
+    error: status.error,
     refetch: () => {
       void query.refetch();
     },
@@ -115,6 +141,7 @@ export function useMarkets(query: ListMarketsQuery = {}) {
     refetchInterval: MARKET_BACKGROUND_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
+  const status = stableResourceStatus(result);
   const data = useMemo<ListMarketsResponse | null>(() => {
     if (!result.data) return null;
     const pages = result.data.pages;
@@ -126,9 +153,9 @@ export function useMarkets(query: ListMarketsQuery = {}) {
 
   return {
     data,
-    isLoading: result.isLoading,
+    isLoading: status.isLoading,
     isLoadingMore: result.isFetchingNextPage,
-    error: result.error,
+    error: status.error,
     hasNextPage: result.hasNextPage,
     loadMore: () => {
       void result.fetchNextPage();
@@ -164,11 +191,12 @@ export function useDedupCheck(
   const isCurrent = normalizedQuestion === debouncedQuestion;
   const isPending =
     normalizedQuestion.length > 0 && (!isCurrent || query.isFetching);
+  const status = stableResourceStatus(query);
 
   return {
     data: isCurrent ? (query.data ?? null) : null,
-    isLoading: isPending,
-    error: isCurrent ? query.error : null,
+    isLoading: isPending && (!isCurrent || status.error === null),
+    error: isCurrent ? status.error : null,
     refetch: () => {
       void query.refetch();
     },
@@ -262,10 +290,11 @@ export function useGatewayBalance(enabled = true) {
     retry: false,
     staleTime: 10_000,
   });
+  const status = stableResourceStatus(query);
   return {
     data: query.data ?? null,
-    isLoading: query.isLoading,
-    error: query.error,
+    isLoading: status.isLoading,
+    error: status.error,
     refetch: () => {
       void query.refetch();
     },
@@ -321,6 +350,7 @@ export function useActivity(query: ActivityQuery = {}) {
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     staleTime: 30_000,
   });
+  const status = stableResourceStatus(result);
   const data = useMemo<ActivityResponse | null>(() => {
     if (!result.data) return null;
     const pages = result.data.pages;
@@ -332,9 +362,9 @@ export function useActivity(query: ActivityQuery = {}) {
 
   return {
     data,
-    isLoading: result.isLoading,
+    isLoading: status.isLoading,
     isLoadingMore: result.isFetchingNextPage,
-    error: result.error,
+    error: status.error,
     hasNextPage: result.hasNextPage,
     loadMore: () => {
       void result.fetchNextPage();
