@@ -10,6 +10,11 @@ export const DEFAULT_INDEXER_POLL_MS = 30_000;
 // an HTTP-only deployment remains correct.
 export const DEFAULT_INDEXER_FALLBACK_POLL_MS = 10_000;
 export const DEFAULT_INDEXER_CHUNK_DELAY_MS = 200;
+// Arc's public RPC trips a burst limit on the third back-to-back request. A
+// range issues four filtered getLogs calls, and one 429 fails the whole range,
+// so an unspaced range never completes. Measured 2026-08-14: unspaced returned
+// 200/200/429/200, 400ms spacing returned 200/200/200/200.
+export const DEFAULT_INDEXER_REQUEST_SPACING_MS = 400;
 export const DEFAULT_INDEXER_STALL_MS = 90_000;
 // At the default 10,000-block range this permits 10 chunks, but stays below
 // the observed 165,527-block Arc gap that could not make progress under
@@ -106,6 +111,7 @@ export interface RuntimeConfig {
   webSocketRpcUrls: readonly string[];
   deployBlock: number;
   blockChunk: number;
+  requestSpacingMs: number;
   pollMs: number;
   fallbackPollMs: number;
   chunkDelayMs: number;
@@ -163,6 +169,10 @@ export function loadRuntimeConfig(): RuntimeConfig {
     webSocketRpcUrls,
     deployBlock: DEPLOY_BLOCK,
     blockChunk: positiveInteger('INDEXER_BLOCK_CHUNK', DEFAULT_INDEXER_BLOCK_CHUNK),
+    requestSpacingMs: nonNegativeInteger(
+      'INDEXER_REQUEST_SPACING_MS',
+      DEFAULT_INDEXER_REQUEST_SPACING_MS,
+    ),
     pollMs: positiveInteger('INDEXER_POLL_MS', DEFAULT_INDEXER_POLL_MS),
     fallbackPollMs: positiveInteger(
       'INDEXER_FALLBACK_POLL_MS',

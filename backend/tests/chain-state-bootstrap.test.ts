@@ -50,6 +50,8 @@ function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
     ...loadRuntimeConfig(),
     deployBlock: 100,
     blockChunk: 1_000,
+    // Tests drive a fake transport, not a rate-limited endpoint.
+    requestSpacingMs: 0,
     chunkDelayMs: 0,
     webSocketRpcUrls: [],
     indexerStartPolicy: 'head',

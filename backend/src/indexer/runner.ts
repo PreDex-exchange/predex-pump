@@ -12,6 +12,7 @@ import {
 } from 'viem';
 
 import type { IndexerStartPolicy, RuntimeConfig } from '../config.js';
+import { DEFAULT_INDEXER_REQUEST_SPACING_MS } from '../config.js';
 import { ARC_CHAIN } from '../chain.js';
 import { parseMarketPhase } from '../dedup/indexer.js';
 import type { MarketDedupIndexer } from '../dedup/types.js';
@@ -207,6 +208,8 @@ async function decodedEventsForRange(
   fromBlock: number,
   toBlock: number,
   collateralOwners: readonly Address[],
+  requestSpacingMs = DEFAULT_INDEXER_REQUEST_SPACING_MS,
+  spacer?: (milliseconds: number) => Promise<void>,
 ): Promise<DecodedEvent[]> {
   const range = {
     fromBlock: BigInt(fromBlock),
@@ -214,45 +217,68 @@ async function decodedEventsForRange(
   } as const;
   // Keep the calls sequential so a shared endpoint's rate-limit response stops
   // the range immediately instead of creating a burst of doomed requests.
-  const coreLogs = await client.getLogs({
-    address: CORE_TRACKED_ADDRESSES,
-    ...range,
-  });
-  const ctfLogs = await client.getLogs({
-    address: ADDRESSES.ctf,
-    events: CTF_EVENT_ABI,
-    ...range,
-  });
-  const ctfApprovalLogs = await client.getLogs({
-    address: ADDRESSES.ctf,
-    event: CTF_APPROVAL_EVENT,
-    args: { operator: ADDRESSES.ctfExchange },
-    ...range,
-  });
-  const collateralApprovalLogs = await client.getLogs({
-    address: ADDRESSES.usdc,
-    event: COLLATERAL_APPROVAL_EVENT,
-    args: { spender: ADDRESSES.ctfExchange },
-    ...range,
-  });
+  //
+  // Sequential is not enough on Arc: its public RPC enforces a burst limit that
+  // back-to-back requests trip on the THIRD call. Measured against the live
+  // endpoint on 2026-08-14 with the four filters below:
+  //   no spacing -> 200 200 429 200
+  //   400ms      -> 200 200 200 200
+  // A single 429 fails the whole range, which then retries and re-fires the
+  // same burst, so an unspaced range can never complete under load. Spacing the
+  // calls is what makes catch-up converge at all.
+  const pause =
+    spacer ??
+    ((milliseconds: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const spaced = async <T>(call: () => Promise<T>, first = false): Promise<T> => {
+    if (!first && requestSpacingMs > 0) await pause(requestSpacingMs);
+    return call();
+  };
+  const coreLogs = await spaced(
+    () => client.getLogs({ address: CORE_TRACKED_ADDRESSES, ...range }),
+    true,
+  );
+  const ctfLogs = await spaced(() =>
+    client.getLogs({ address: ADDRESSES.ctf, events: CTF_EVENT_ABI, ...range }),
+  );
+  const ctfApprovalLogs = await spaced(() =>
+    client.getLogs({
+      address: ADDRESSES.ctf,
+      event: CTF_APPROVAL_EVENT,
+      args: { operator: ADDRESSES.ctfExchange },
+      ...range,
+    }),
+  );
+  const collateralApprovalLogs = await spaced(() =>
+    client.getLogs({
+      address: ADDRESSES.usdc,
+      event: COLLATERAL_APPROVAL_EVENT,
+      args: { spender: ADDRESSES.ctfExchange },
+      ...range,
+    }),
+  );
   const collateralIncomingLogs =
     collateralOwners.length === 0
       ? []
-      : await client.getLogs({
-          address: ADDRESSES.usdc,
-          event: COLLATERAL_TRANSFER_EVENT,
-          args: { to: collateralOwners },
-          ...range,
-        });
+      : await spaced(() =>
+          client.getLogs({
+            address: ADDRESSES.usdc,
+            event: COLLATERAL_TRANSFER_EVENT,
+            args: { to: collateralOwners },
+            ...range,
+          }),
+        );
   const collateralOutgoingLogs =
     collateralOwners.length === 0
       ? []
-      : await client.getLogs({
-          address: ADDRESSES.usdc,
-          event: COLLATERAL_TRANSFER_EVENT,
-          args: { from: collateralOwners },
-          ...range,
-        });
+      : await spaced(() =>
+          client.getLogs({
+            address: ADDRESSES.usdc,
+            event: COLLATERAL_TRANSFER_EVENT,
+            args: { from: collateralOwners },
+            ...range,
+          }),
+        );
   const logs = [
     ...coreLogs,
     ...ctfLogs,
@@ -885,7 +911,15 @@ export async function runIndexer(
         const decoded = await requestRpcWithRetry(
           prisma,
           `getLogs blocks=${nextBlock}-${toBlock}`,
-          () => decodedEventsForRange(client, nextBlock, toBlock, collateralOwners),
+          () =>
+            decodedEventsForRange(
+              client,
+              nextBlock,
+              toBlock,
+              collateralOwners,
+              config.requestSpacingMs,
+              (ms) => wait(ms, stopController.signal),
+            ),
           stopController.signal,
           wait,
           random,
@@ -1009,6 +1043,8 @@ export async function runIndexer(
                 fromBlock,
                 toBlock,
                 collateralOwners,
+                config.requestSpacingMs,
+                (ms) => wait(ms, controller.signal),
               ),
             controller.signal,
             wait,
