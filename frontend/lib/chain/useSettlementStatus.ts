@@ -90,6 +90,25 @@ const EMPTY_SETTLEMENT_EVENTS: IndexedSettlementEvents = {
   protocolSweptRaw: '0',
 };
 
+export function settlementStatusQueryKey(
+  market: Market,
+  account?: Address,
+  settlementEvents: IndexedSettlementEvents = EMPTY_SETTLEMENT_EVENTS,
+) {
+  return [
+    'settlement',
+    market.id,
+    market.questionId,
+    market.conditionId,
+    market.yesTokenId,
+    market.noTokenId,
+    market.tradingEndsAt,
+    account,
+    settlementEvents.protocolSweepCompleted,
+    settlementEvents.protocolSweptRaw,
+  ] as const;
+}
+
 function payoutOutcome(
   payoutYes: bigint,
   payoutNo: bigint,
@@ -279,13 +298,7 @@ export function useSettlementStatus(
   settlementEvents: IndexedSettlementEvents = EMPTY_SETTLEMENT_EVENTS,
 ) {
   return useQuery<SettlementStatus, Error>({
-    queryKey: [
-      'settlement',
-      market.id,
-      account,
-      settlementEvents.protocolSweepCompleted,
-      settlementEvents.protocolSweptRaw,
-    ],
+    queryKey: settlementStatusQueryKey(market, account, settlementEvents),
     queryFn: () => readSettlementStatus(market, account, settlementEvents),
     staleTime: ARC_READ_CACHE_MS,
     refetchInterval: ARC_READ_CACHE_MS,

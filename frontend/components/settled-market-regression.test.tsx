@@ -82,6 +82,7 @@ vi.mock('@/lib/api/hooks', () => ({
     data: mocks.marketDetail,
     isLoading: false,
     error: null,
+    isNotFound: mocks.marketDetail === null,
     refetch: vi.fn(),
   }),
   useMarkets: () => ({

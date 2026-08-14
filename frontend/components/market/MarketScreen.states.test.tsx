@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   market: {
     data: null as MarketDetailResponse | null,
     error: null as Error | null,
+    isNotFound: true,
     isLoading: false,
     refetch: vi.fn(),
   },
@@ -65,6 +66,7 @@ function renderScreen() {
 beforeEach(() => {
   mocks.market.data = null;
   mocks.market.error = null;
+  mocks.market.isNotFound = true;
   mocks.market.isLoading = false;
   mocks.market.refetch.mockReset();
 });

@@ -35,13 +35,16 @@ const mocks = vi.hoisted(() => ({
   dedupRefetch: vi.fn(),
   dedupCheck: vi.fn(),
   recordAccountBehavior: vi.fn(async () => undefined),
-  txExecute: vi.fn(async () => null),
+  txExecute: vi.fn(async (): Promise<{ marketId: string } | null> => null),
   txReset: vi.fn(),
   buildMarketMetadata: vi.fn(() => ({
     ancillaryData: '0x01',
     metadataHash: `0x${'ab'.repeat(32)}`,
   })),
   createMarketOnArc: vi.fn(),
+  invalidateQueries: vi.fn(async () => undefined),
+  routerPush: vi.fn(),
+  setQueryData: vi.fn(),
 }));
 
 const validConfig = {
@@ -90,11 +93,14 @@ const duplicateResponse: DedupCheckResponse = {
 };
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: mocks.routerPush }),
 }));
 
 vi.mock('@tanstack/react-query', () => ({
-  useQueryClient: () => ({ setQueryData: vi.fn() }),
+  useQueryClient: () => ({
+    invalidateQueries: mocks.invalidateQueries,
+    setQueryData: mocks.setQueryData,
+  }),
 }));
 
 vi.mock('wagmi', () => ({
@@ -326,6 +332,22 @@ describe('CreateScreen market launch guardrails', () => {
       ).toBeTruthy(),
     );
     expect(mocks.txExecute).not.toHaveBeenCalled();
+  });
+
+  it('refreshes live contract reads before redirecting after creation', async () => {
+    mocks.txExecute.mockResolvedValue({ marketId: '73' });
+    render(<CreateScreen />);
+    const dialog = openReview();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Approve & launch' }));
+
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalledWith('/market/73'));
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['readContract'],
+    });
+    expect(mocks.invalidateQueries.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.routerPush.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it('renders a config failure honestly and retries it', () => {

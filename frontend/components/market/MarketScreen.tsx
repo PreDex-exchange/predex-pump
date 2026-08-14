@@ -53,6 +53,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     data: detail,
     isLoading,
     error,
+    isNotFound,
     refetch: refetchMarket,
   } = useMarket(marketId);
   const { data: priceHistory } = usePriceHistory(marketId);
@@ -116,7 +117,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     );
   }
 
-  if (error) {
+  if (error || (!detail && !isNotFound)) {
     return (
       <main className={styles.state}>
         <StatePanel

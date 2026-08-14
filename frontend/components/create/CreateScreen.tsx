@@ -491,6 +491,7 @@ export function CreateScreen() {
           },
         },
       );
+      void queryClient.invalidateQueries({ queryKey: ['readContract'] });
       router.push(`/market/${result.marketId}`);
       return;
     }
