@@ -21,6 +21,7 @@ import { seedContractData, TRADE_TX, TRADER } from './fixtures.js';
 
 const accountConfig: AccountLayerConfig = {
   webOrigin: 'http://localhost:3000',
+  cookiePath: '/',
   siweDomain: 'localhost:3000',
   siweUri: 'http://localhost:3000',
   siweStatement:

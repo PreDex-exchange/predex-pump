@@ -32,7 +32,10 @@ import {
 import { ARC_CHAIN } from '../chain.js';
 import type { AccountLayerConfig } from './config.js';
 
-export const SESSION_COOKIE_NAME = 'predex_session';
+// Distinct from the pairing stack's `predex_session`. Both projects can be
+// served from one hostname, and a shared name would let either overwrite the
+// other's session for the whole domain.
+export const SESSION_COOKIE_NAME = 'predex_pump_session';
 const MAX_BEHAVIOR_RECORDS = 50;
 const MAX_PROFILE_MARKETS = 50;
 const BEHAVIOR_TYPES = new Set<AccountBehaviorType>([
@@ -82,7 +85,7 @@ function sessionCookieAttributes(
     Math.floor((expiresAt.getTime() - Date.now()) / 1_000),
   );
   return [
-    'Path=/',
+    `Path=${config.cookiePath}`,
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${maxAge}`,
@@ -102,7 +105,10 @@ export function serializeSessionCookie(
 export function serializeClearedSessionCookie(
   config: AccountLayerConfig,
 ): string {
-  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${config.secureCookies ? '; Secure' : ''}`;
+  // The clear must repeat the exact Path the cookie was set with — a browser
+  // matches name+domain+path, so clearing at `/` would leave a `/pump` cookie
+  // in place and make sign-out silently fail.
+  return `${SESSION_COOKIE_NAME}=; Path=${config.cookiePath}; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${config.secureCookies ? '; Secure' : ''}`;
 }
 
 function behaviorRecord(row: {

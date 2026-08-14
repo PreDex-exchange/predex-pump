@@ -29,7 +29,24 @@ export interface AccountLayerConfig {
   nonceTtlMs: number;
   sessionTtlMs: number;
   secureCookies: boolean;
+  cookiePath: string;
   rpcUrl: string;
+}
+
+// When the API is mounted behind a shared hostname under a path prefix, the
+// session cookie must declare that prefix. A reverse proxy strips the prefix
+// before the backend sees it, so the value cannot be derived from the request
+// — the browser scopes the cookie by the URL it asked for, not by what we
+// received. Left at '/' the cookie is attached to every request to the shared
+// host, including other tenants' routes.
+function resolveCookiePath(value: string | undefined): string {
+  const path = value?.trim();
+  if (!path) return '/';
+  if (!path.startsWith('/')) {
+    throw new Error(`ACCOUNT_COOKIE_PATH must start with "/", received ${path}`);
+  }
+  // Strip a trailing slash so '/pump/' and '/pump' scope identically; '/' stays.
+  return path.length > 1 ? path.replace(/\/+$/u, '') : path;
 }
 
 export function loadAccountLayerConfig(): AccountLayerConfig {
@@ -55,6 +72,7 @@ export function loadAccountLayerConfig(): AccountLayerConfig {
       'ACCOUNT_COOKIE_SECURE',
       webUrl.protocol === 'https:',
     ),
+    cookiePath: resolveCookiePath(process.env.ACCOUNT_COOKIE_PATH),
     rpcUrl: process.env.ARC_RPC_URL?.trim() || ARC.rpcUrls[0],
   };
 }
