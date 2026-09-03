@@ -1246,7 +1246,11 @@ describe('graduated book migration', () => {
     const harness = await createHarness();
     await runToStatus(harness, 'CANCELLED');
     const gapBook = await getMarketBook(testPrisma, '1');
-    expect(gapBook?.liveVenue).toBe('MINICLOB');
+    expect(gapBook).toMatchObject({
+      orderBookAvailable: false,
+      liveVenue: 'NONE',
+      venueTransition: { state: 'PREPARING' },
+    });
     expect(gapBook?.yes.asks).toEqual([]);
     expect(gapBook?.no.asks).toEqual([]);
 

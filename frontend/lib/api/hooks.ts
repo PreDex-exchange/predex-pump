@@ -16,6 +16,7 @@ import type {
   MakerOrdersResponse,
   PriceHistoryQuery,
   PriceHistoryResponse,
+  VenueTransition,
 } from '@predex-pump/shared/rest';
 import type {
   Outcome,
@@ -27,6 +28,7 @@ import {
   useQuery,
   useQueryClient,
   type QueryKey,
+  type UseQueryOptions,
 } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -41,6 +43,7 @@ import {
 
 const MARKET_BACKGROUND_REFRESH_MS = 60_000;
 const MARKET_DETAIL_FALLBACK_REFRESH_MS = 15_000;
+const ORDER_BOOK_TRANSITION_REFRESH_MS = 2_000;
 const ORDER_BOOK_LIVE_REFRESH_MS = 15_000;
 const ORDER_BOOK_FALLBACK_REFRESH_MS = 4_000;
 const HEALTH_REFRESH_MS = 15_000;
@@ -69,7 +72,18 @@ export const MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS =
 
 export function orderBookRefreshIntervalMs(
   connectionStatus: BackendConnectionStatus,
+  book?: {
+    liveVenue: string;
+    orderBookAvailable: boolean;
+    venueTransition?: VenueTransition;
+  },
 ) {
+  if (
+    book?.venueTransition?.state === 'PREPARING' ||
+    (book?.orderBookAvailable === true && book.liveVenue === 'MINICLOB')
+  ) {
+    return ORDER_BOOK_TRANSITION_REFRESH_MS;
+  }
   return connectionStatus === 'live'
     ? ORDER_BOOK_LIVE_REFRESH_MS
     : ORDER_BOOK_FALLBACK_REFRESH_MS;
@@ -83,8 +97,8 @@ interface ResourceState<T> {
   refetch: () => void;
 }
 
-interface ResourceOptions {
-  refetchInterval?: number;
+interface ResourceOptions<T> {
+  refetchInterval?: UseQueryOptions<T, Error>['refetchInterval'];
   refetchOnWindowFocus?: boolean | 'always';
   enabled?: boolean;
   retry?: boolean | number;
@@ -123,7 +137,7 @@ function stableResourceStatus(query: QueryResourceStatus) {
 function useApiResource<T>(
   queryKey: QueryKey,
   load: () => Promise<T>,
-  options: ResourceOptions = {},
+  options: ResourceOptions<T> = {},
 ): ResourceState<T> {
   const query = useQuery<T, Error>({
     queryKey,
@@ -373,7 +387,8 @@ export function useOrderBook(marketId: string) {
   );
 
   return useApiResource<MarketBookResponse>(['order-book', marketId], load, {
-    refetchInterval: orderBookRefreshIntervalMs(connectionStatus),
+    refetchInterval: (query) =>
+      orderBookRefreshIntervalMs(connectionStatus, query.state.data),
     refetchOnWindowFocus: 'always',
   });
 }

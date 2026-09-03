@@ -66,6 +66,10 @@ interface MarketBookResponseBase {
   no: OrderBook;
 }
 
+export type VenueTransition =
+  | { state: 'PREPARING' }
+  | { state: 'FAILED'; failureCode: string | null };
+
 // GET /markets/:id/book → a lifecycle-aware venue and both outcome snapshots.
 export type MarketBookResponse = MarketBookResponseBase &
   (
@@ -78,6 +82,8 @@ export type MarketBookResponse = MarketBookResponseBase &
         /** LMSR is live before graduation; NONE means no venue is live. */
         orderBookAvailable: false;
         liveVenue: Extract<MarketLiveVenue, 'LMSR' | 'NONE'>;
+        /** Present only while an intended book handoff is preparing or failed. */
+        venueTransition?: VenueTransition;
       }
   );
 

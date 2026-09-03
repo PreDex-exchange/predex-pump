@@ -176,7 +176,46 @@ interface OrderBookPanelProps {
   positions?: Position[];
 }
 
+function venueTransition(books: MarketBookResponse) {
+  return 'venueTransition' in books ? books.venueTransition : undefined;
+}
+
+function safeFailureCode(value: string | null) {
+  return value && /^[A-Z][A-Z0-9_]{0,63}$/u.test(value) ? value : null;
+}
+
 export function OrderBookPanel(props: OrderBookPanelProps) {
+  const transition = venueTransition(props.books);
+  if (transition?.state === 'PREPARING') {
+    return (
+      <Card className={styles.card} role="status">
+        <h2 className={styles.unavailableTitle}>Preparing Hybrid liquidity</h2>
+        <p className={styles.unavailableCopy}>
+          Order controls are paused while liquidity moves between venues. This
+          view updates automatically.
+        </p>
+      </Card>
+    );
+  }
+  if (transition?.state === 'FAILED') {
+    const failureCode = safeFailureCode(transition.failureCode);
+    return (
+      <Card className={styles.card} role="alert">
+        <h2 className={styles.unavailableTitle}>
+          Hybrid liquidity needs attention
+        </h2>
+        <p className={styles.unavailableCopy}>
+          Order controls remain paused because the venue transition did not
+          complete safely.
+          {failureCode ? (
+            <>
+              {' '}Status code: <code>{failureCode}</code>.
+            </>
+          ) : null}
+        </p>
+      </Card>
+    );
+  }
   if (!props.books.orderBookAvailable) {
     return (
       <Card className={styles.card}>

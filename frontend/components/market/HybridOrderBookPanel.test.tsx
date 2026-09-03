@@ -477,6 +477,62 @@ describe('Hybrid human trading surface', () => {
     expect(screen.queryByText('Live venue · On-chain MiniCLOB')).toBeNull();
   });
 
+  it('pauses every order control while Hybrid liquidity is preparing', () => {
+    const response: MarketBookResponse = {
+      ...books(offchainOrder(OTHER_MAKER, 'a0')),
+      liveVenue: 'NONE',
+      orderBookAvailable: false,
+      venueTransition: { state: 'PREPARING' },
+    };
+
+    renderLivePanel(response);
+
+    expect(screen.getByText('Preparing Hybrid liquidity')).toBeTruthy();
+    expect(screen.getByText(/updates automatically/u)).toBeTruthy();
+    expect(screen.queryByText('Live venue · On-chain MiniCLOB')).toBeNull();
+    expect(screen.queryByText('Live venue · Hybrid CTF exchange')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('shows only a safe failure code when Hybrid liquidity needs attention', () => {
+    const response: MarketBookResponse = {
+      ...books(offchainOrder(OTHER_MAKER, 'a0')),
+      liveVenue: 'NONE',
+      orderBookAvailable: false,
+      venueTransition: {
+        state: 'FAILED',
+        failureCode: 'TOKEN_REGISTRATION_FAILED',
+      },
+    };
+
+    renderLivePanel(response);
+
+    expect(screen.getByText('Hybrid liquidity needs attention')).toBeTruthy();
+    expect(screen.getByText(/TOKEN_REGISTRATION_FAILED/u)).toBeTruthy();
+    expect(screen.queryByText('Live venue · On-chain MiniCLOB')).toBeNull();
+    expect(screen.queryByText('Live venue · Hybrid CTF exchange')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('does not echo an unsafe venue-transition failure detail', () => {
+    const unsafeDetail = 'RPC_FAILED: https://private.example calldata=0x1234';
+    const response: MarketBookResponse = {
+      ...books(offchainOrder(OTHER_MAKER, 'a0')),
+      liveVenue: 'NONE',
+      orderBookAvailable: false,
+      venueTransition: {
+        state: 'FAILED',
+        failureCode: unsafeDetail,
+      },
+    };
+
+    renderLivePanel(response);
+
+    expect(screen.getByText('Hybrid liquidity needs attention')).toBeTruthy();
+    expect(document.body.textContent).not.toContain(unsafeDetail);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
   it.each(['HYBRID', 'MINICLOB'] as const)(
     "labels and disables the connected maker's resting order on %s",
     (venue) => {

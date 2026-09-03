@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { MarketBookResponse } from '@predex-pump/shared/rest';
 import {
   focusManager,
   QueryClient,
@@ -10,6 +10,7 @@ import {
   renderHook,
   waitFor,
 } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import {
   afterEach,
   beforeEach,
@@ -75,7 +76,7 @@ beforeEach(() => {
       };
     },
   );
-  mocks.getOrderBook.mockClear();
+  mocks.getOrderBook.mockReset().mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -100,6 +101,34 @@ describe('order-book REST fallback', () => {
       expect(orderBookRefreshIntervalMs(connectionStatus)).toBe(expectedInterval);
     },
   );
+
+  it('uses two-second polling only while MiniCLOB is actionable or Hybrid liquidity is preparing', () => {
+    expect(
+      orderBookRefreshIntervalMs('live', {
+        liveVenue: 'MINICLOB',
+        orderBookAvailable: true,
+      }),
+    ).toBe(2_000);
+    expect(
+      orderBookRefreshIntervalMs('live', {
+        liveVenue: 'NONE',
+        orderBookAvailable: false,
+        venueTransition: { state: 'PREPARING' },
+      }),
+    ).toBe(2_000);
+    expect(
+      orderBookRefreshIntervalMs('live', {
+        liveVenue: 'HYBRID',
+        orderBookAvailable: true,
+      }),
+    ).toBe(15_000);
+    expect(
+      orderBookRefreshIntervalMs('reconnecting', {
+        liveVenue: 'HYBRID',
+        orderBookAvailable: true,
+      }),
+    ).toBe(4_000);
+  });
 
   it('polls every four seconds while disconnected, pauses in the background, and refetches on focus', async () => {
     vi.useFakeTimers();
@@ -174,6 +203,51 @@ describe('order-book REST fallback', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(mocks.getOrderBook).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns from two-second migration polling to the normal live interval after Hybrid arrives', async () => {
+    vi.useFakeTimers();
+    focusManager.setFocused(true);
+    mocks.connectionStatus = 'live';
+    const miniClob = {
+      liveVenue: 'MINICLOB',
+      orderBookAvailable: true,
+    } as MarketBookResponse;
+    const hybrid = {
+      liveVenue: 'HYBRID',
+      orderBookAvailable: true,
+    } as MarketBookResponse;
+    mocks.getOrderBook
+      .mockResolvedValueOnce(miniClob)
+      .mockResolvedValue(hybrid);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+
+    renderHook(() => useOrderBook('17'), { wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(14_999);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledTimes(3);
   });
 });
 

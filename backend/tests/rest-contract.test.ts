@@ -482,6 +482,7 @@ describe('REST shared contract', () => {
     expect(body.marketId).toBe('1');
     expect(body.liveVenue).toBe('MINICLOB');
     expect(body.orderBookAvailable).toBe(true);
+    expect('venueTransition' in body).toBe(false);
     expect(body.minimumTickSizeRaw).toBe('1000');
     expect(body.minimumTickSizeAppliesTo).toBe('NEW_ORDERS');
     expect(body.yes).toMatchObject({
@@ -567,6 +568,9 @@ describe('REST shared contract', () => {
         minimumTickSizeRaw: '1000',
         minimumTickSizeAppliesTo: 'NEW_ORDERS',
       });
+      if (expectedBookAvailable) {
+        expect('venueTransition' in body).toBe(false);
+      }
       if (!expectedBookAvailable) {
         expect(body.yes.orders).toEqual([]);
         expect(body.no.orders).toEqual([]);
@@ -575,6 +579,78 @@ describe('REST shared contract', () => {
       }
     },
   );
+
+  it('reports an active migration as a non-actionable preparing transition', async () => {
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'STAGED',
+        yesSeedOrderId: '2',
+        noSeedOrderId: '3',
+        createdAt: 1_700_003_700,
+        updatedAt: 1_700_003_800,
+      },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/markets/1/book',
+    });
+    const body = response.json<MarketBookResponse>();
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toMatchObject({
+      orderBookAvailable: false,
+      liveVenue: 'NONE',
+      venueTransition: { state: 'PREPARING' },
+    });
+    expect(body.yes.bids).toEqual([]);
+    expect(body.yes.asks).toEqual([]);
+    expect(body.yes.orders).toEqual([]);
+    expect(body.yes.offchainOrders).toEqual([]);
+    expect(body.no.bids).toEqual([]);
+    expect(body.no.asks).toEqual([]);
+    expect(body.no.orders).toEqual([]);
+    expect(body.no.offchainOrders).toEqual([]);
+  });
+
+  it('reports a failed migration without exposing its stored failure text', async () => {
+    const privateFailure = 'private provider details must not leave the backend';
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'FAILED',
+        yesSeedOrderId: '2',
+        noSeedOrderId: '3',
+        lastFailureCode: 'REGISTRATION_UNAUTHORIZED',
+        lastFailureMessage: privateFailure,
+        lastFailureAt: 1_700_003_800,
+        createdAt: 1_700_003_700,
+        updatedAt: 1_700_003_800,
+      },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/markets/1/book',
+    });
+    const body = response.json<MarketBookResponse>();
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toMatchObject({
+      orderBookAvailable: false,
+      liveVenue: 'NONE',
+      venueTransition: {
+        state: 'FAILED',
+        failureCode: 'REGISTRATION_UNAUTHORIZED',
+      },
+    });
+    expect(response.body).not.toContain(privateFailure);
+    expect(body.yes.orders).toEqual([]);
+    expect(body.yes.offchainOrders).toEqual([]);
+    expect(body.no.orders).toEqual([]);
+    expect(body.no.offchainOrders).toEqual([]);
+  });
 
   it('preserves an executable off-tick seed price while scoping the tick to new orders', async () => {
     await testPrisma.order.update({
@@ -616,6 +692,57 @@ describe('REST shared contract', () => {
       orderCount: 2,
     });
     expect(body.asks[0]?.priceRaw).toBe('650000');
+  });
+
+  it('GET /orderbook/:tokenId hides every order during migration', async () => {
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'STAGED',
+        yesSeedOrderId: '2',
+        noSeedOrderId: '3',
+        createdAt: 1_700_003_700,
+        updatedAt: 1_700_003_800,
+      },
+    });
+    await testPrisma.signedOrder.create({
+      data: {
+        orderHash: `0x${'d'.repeat(64)}`,
+        saltRaw: '1',
+        maker: DEPLOYER,
+        signer: DEPLOYER,
+        taker: `0x${'0'.repeat(40)}`,
+        tokenId: '101',
+        makerAmountRaw: '1000000',
+        takerAmountRaw: '650000',
+        expiration: 1_900_000_000,
+        nonceRaw: '0',
+        feeRateBpsRaw: '0',
+        exchangeSide: 1,
+        signatureType: 0,
+        signature: '0x',
+        marketId: '1',
+        conditionId: MARKET_ONE_CONDITION,
+        outcome: 'YES',
+        side: 'ASK',
+        priceRaw: '650000',
+        sizeRaw: '1000000',
+        remainingRaw: '1000000',
+        status: 'OPEN',
+        origin: 'USER',
+        createdAt: 1_700_003_700,
+        updatedAt: 1_700_003_800,
+      },
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/orderbook/101' });
+    const body = response.json<OrderBookResponse>();
+
+    expect(response.statusCode).toBe(200);
+    expect(body.bids).toEqual([]);
+    expect(body.asks).toEqual([]);
+    expect(body.orders).toEqual([]);
+    expect(body.offchainOrders).toEqual([]);
   });
 
   it('GET /markets/:id/prices returns the latest window chronologically unless fromTs is explicit', async () => {

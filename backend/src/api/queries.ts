@@ -412,7 +412,7 @@ export async function getMarketBook(
       graduatedAt: true,
       resolvedAt: true,
       minimumTickSizeRaw: true,
-      bookMigration: { select: { status: true, cancelledAt: true } },
+      bookMigration: { select: { status: true, lastFailureCode: true } },
     },
   });
   if (market === null) return null;
@@ -450,12 +450,44 @@ export async function getMarketBook(
     };
   }
 
+  if (
+    market.bookMigration !== null &&
+    market.bookMigration.status !== 'MIGRATED'
+  ) {
+    return {
+      marketId,
+      minimumTickSizeRaw: market.minimumTickSizeRaw,
+      minimumTickSizeAppliesTo: 'NEW_ORDERS',
+      orderBookAvailable: false,
+      liveVenue: 'NONE',
+      venueTransition:
+        market.bookMigration.status === 'FAILED'
+          ? {
+              state: 'FAILED',
+              failureCode: market.bookMigration.lastFailureCode,
+            }
+          : { state: 'PREPARING' },
+      yes: buildOrderBook(
+        marketId,
+        market.minimumTickSizeRaw,
+        'YES',
+        market.yesTokenId ?? '',
+        [],
+        [],
+      ),
+      no: buildOrderBook(
+        marketId,
+        market.minimumTickSizeRaw,
+        'NO',
+        market.noTokenId ?? '',
+        [],
+        [],
+      ),
+    };
+  }
+
   const liveVenue =
     market.bookMigration?.status === 'MIGRATED' ? 'HYBRID' : 'MINICLOB';
-  const cancellingGap =
-    market.bookMigration?.status === 'CANCELLED' ||
-    market.bookMigration?.status === 'PUBLISHING' ||
-    typeof market.bookMigration?.cancelledAt === 'number';
   const [liveMiniClobOrders, liveSignedOrders] =
     liveVenue === 'HYBRID'
       ? [
@@ -467,12 +499,10 @@ export async function getMarketBook(
           ),
         ]
       : [
-          cancellingGap
-            ? []
-            : await prisma.order.findMany({
-                where: { marketId, open: true },
-                select: ORDER_SELECT,
-              }),
+          await prisma.order.findMany({
+            where: { marketId, open: true },
+            select: ORDER_SELECT,
+          }),
           [],
         ];
   return {
@@ -511,18 +541,15 @@ export async function getOrderBook(
       yesTokenId: true,
       noTokenId: true,
       minimumTickSizeRaw: true,
-      bookMigration: { select: { status: true, cancelledAt: true } },
+      bookMigration: { select: { status: true } },
     },
   });
   if (market === null) return null;
   const outcome = market.yesTokenId === tokenId ? 'YES' : 'NO';
   const hybrid = market.bookMigration?.status === 'MIGRATED';
-  const cancellingGap =
-    market.bookMigration?.status === 'CANCELLED' ||
-    market.bookMigration?.status === 'PUBLISHING' ||
-    typeof market.bookMigration?.cancelledAt === 'number';
+  const transitioning = market.bookMigration !== null && !hybrid;
   const orders =
-    hybrid || cancellingGap
+    hybrid || transitioning
       ? []
       : await prisma.order.findMany({
           where: { tokenId, open: true },
