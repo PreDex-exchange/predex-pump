@@ -17,6 +17,10 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildServer } from '../src/api/server.js';
+import type {
+  PublicJsonCacheRequest,
+  PublicJsonReadCache,
+} from '../src/cache/public-json.js';
 import { ServerEventBus } from '../src/events/bus.js';
 import { resetDatabase, testPrisma } from './database.js';
 import {
@@ -173,6 +177,80 @@ describe('REST shared contract', () => {
     expect(filtered.json<ListMarketsResponse>().items.map((market) => market.id)).toEqual([
       '1',
     ]);
+  });
+
+  it('caches only normalized market-list queries and reports cache degradation separately', async () => {
+    const observed: Array<{
+      namespace: string;
+      identity: PublicJsonCacheRequest<unknown>['identity'];
+      ttlSeconds: number;
+    }> = [];
+    const publicReadCache: PublicJsonReadCache = {
+      async getOrLoad<T>(request: PublicJsonCacheRequest<T>): Promise<T> {
+        observed.push({
+          namespace: request.namespace,
+          identity: request.identity,
+          ttlSeconds: request.ttlSeconds,
+        });
+        return request.load();
+      },
+      invalidate: async () => undefined,
+      getHealth: () => ({
+        status: 'degraded',
+        hits: 2,
+        misses: 3,
+        errors: 1,
+        invalidations: 4,
+      }),
+      close: async () => undefined,
+    };
+    const cachedApp = await buildServer({
+      prisma: testPrisma,
+      eventBus: new ServerEventBus(),
+      publicReadCache,
+      marketListCacheTtlSeconds: 7,
+      logger: false,
+    });
+
+    try {
+      const mixedCaseCreator = `0x${DEPLOYER.slice(2).toUpperCase()}`;
+      const response = await cachedApp.inject({
+        method: 'GET',
+        url: `/markets?phase=Graduated&creator=${mixedCaseCreator}&limit=050`,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(observed).toEqual([
+        {
+          namespace: 'markets',
+          identity: {
+            phase: 'Graduated',
+            creator: DEPLOYER,
+            limit: 50,
+            cursor: null,
+          },
+          ttlSeconds: 7,
+        },
+      ]);
+
+      expect((await cachedApp.inject({ method: 'GET', url: '/markets/1' })).statusCode).toBe(
+        200,
+      );
+      expect(observed).toHaveLength(1);
+      expect(
+        (await cachedApp.inject({ method: 'GET', url: '/health' })).json<HealthResponse>(),
+      ).toMatchObject({
+        ok: true,
+        readCache: {
+          status: 'degraded',
+          hits: 2,
+          misses: 3,
+          errors: 1,
+          invalidations: 4,
+        },
+      });
+    } finally {
+      await cachedApp.close();
+    }
   });
 
   it('allows browser mutation preflights without widening origin policy', async () => {
@@ -930,6 +1008,13 @@ describe('REST shared contract', () => {
         issues: [],
       },
       dedupIndex: READY_DEDUP_INDEX,
+      readCache: {
+        status: 'disabled',
+        hits: 0,
+        misses: 0,
+        errors: 0,
+        invalidations: 0,
+      },
       historyGaps: [],
     });
   });

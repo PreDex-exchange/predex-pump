@@ -10,7 +10,9 @@ import {
   DEFAULT_INDEXER_WS_COALESCE_MS,
   DEFAULT_INDEXER_WS_HEARTBEAT_MS,
   DEFAULT_INDEXER_WS_STALL_MS,
+  DEFAULT_MARKETS_CACHE_TTL_SECONDS,
   loadRuntimeConfig,
+  MAX_MARKETS_CACHE_TTL_SECONDS,
   resolveRpcUrls,
   resolveIndexerStartPolicy,
   resolveWebSocketRpcUrls,
@@ -79,5 +81,17 @@ describe('indexer RPC configuration', () => {
       indexerStartPolicy: 'head',
       indexerMaxBackfillBlocks: 12_345,
     });
+  });
+
+  it('keeps the public market cache TTL short enough for Redis outage recovery', () => {
+    expect(DEFAULT_MARKETS_CACHE_TTL_SECONDS).toBe(5);
+    expect(MAX_MARKETS_CACHE_TTL_SECONDS).toBe(60);
+    vi.stubEnv('MARKETS_CACHE_TTL_SECONDS', '60');
+    expect(loadRuntimeConfig().marketsCacheTtlSeconds).toBe(60);
+
+    vi.stubEnv('MARKETS_CACHE_TTL_SECONDS', '61');
+    expect(() => loadRuntimeConfig()).toThrow(
+      'MARKETS_CACHE_TTL_SECONDS must be at most 60',
+    );
   });
 });

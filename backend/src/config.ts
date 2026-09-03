@@ -31,6 +31,8 @@ export const DEFAULT_INDEXER_WS_STALL_MS = 15_000;
 export const DEFAULT_INDEXER_WS_HEARTBEAT_MS = 5_000;
 export const DEFAULT_INDEXER_WS_RECONNECT_BASE_MS = 1_000;
 export const DEFAULT_INDEXER_WS_RECONNECT_MAX_MS = 30_000;
+export const DEFAULT_MARKETS_CACHE_TTL_SECONDS = 5;
+export const MAX_MARKETS_CACHE_TTL_SECONDS = 60;
 
 export type IndexerStartPolicy = 'auto' | 'head' | 'resume';
 
@@ -127,6 +129,9 @@ export interface RuntimeConfig {
   apiPort: number;
   databasePoolSize: number;
   databasePoolTimeoutSeconds: number;
+  redisUrl: string | undefined;
+  redisKeyPrefix: string;
+  marketsCacheTtlSeconds: number;
   qdrantUrl: string;
   openAiApiKey: string | undefined;
   dedupTopK: number;
@@ -159,6 +164,15 @@ export function loadRuntimeConfig(): RuntimeConfig {
     throw new Error(
       'INDEXER_WS_RECONNECT_MAX_MS must be greater than or equal to ' +
         'INDEXER_WS_RECONNECT_BASE_MS',
+    );
+  }
+  const marketsCacheTtlSeconds = positiveInteger(
+    'MARKETS_CACHE_TTL_SECONDS',
+    DEFAULT_MARKETS_CACHE_TTL_SECONDS,
+  );
+  if (marketsCacheTtlSeconds > MAX_MARKETS_CACHE_TTL_SECONDS) {
+    throw new Error(
+      `MARKETS_CACHE_TTL_SECONDS must be at most ${MAX_MARKETS_CACHE_TTL_SECONDS}, received ${marketsCacheTtlSeconds}`,
     );
   }
 
@@ -211,6 +225,9 @@ export function loadRuntimeConfig(): RuntimeConfig {
     apiPort,
     databasePoolSize: positiveInteger('DATABASE_POOL_SIZE', 32),
     databasePoolTimeoutSeconds: positiveInteger('DATABASE_POOL_TIMEOUT_SECONDS', 10),
+    redisUrl: process.env.REDIS_URL?.trim() || undefined,
+    redisKeyPrefix: process.env.REDIS_KEY_PREFIX?.trim() || 'predex',
+    marketsCacheTtlSeconds,
     qdrantUrl: process.env.QDRANT_URL ?? 'http://localhost:6333',
     openAiApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
     dedupTopK: positiveInteger('DEDUP_TOP_K', 5),

@@ -27,10 +27,15 @@ function isProviderHealth(value: unknown) {
 }
 
 function isHealthResponse(value: unknown): value is HealthResponse {
-  if (!isRecord(value) || !isRecord(value.chainState) || !isRecord(value.dedupIndex)) {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.chainState) ||
+    !isRecord(value.dedupIndex) ||
+    !isRecord(value.readCache)
+  ) {
     return false;
   }
-  const { chainState, dedupIndex } = value;
+  const { chainState, dedupIndex, readCache } = value;
   const providers = dedupIndex.providers;
   const historyGaps = value.historyGaps;
   const configuredProvider = dedupIndex.configuredProvider;
@@ -57,6 +62,13 @@ function isHealthResponse(value: unknown): value is HealthResponse {
     isProviderHealth(providers.openai) &&
     isProviderHealth(providers.fallback) &&
     isNullableString(dedupIndex.error) &&
+    (readCache.status === 'disabled' ||
+      readCache.status === 'ready' ||
+      readCache.status === 'degraded') &&
+    typeof readCache.hits === 'number' &&
+    typeof readCache.misses === 'number' &&
+    typeof readCache.errors === 'number' &&
+    typeof readCache.invalidations === 'number' &&
     Array.isArray(historyGaps) &&
     historyGaps.every(
       (gap) =>

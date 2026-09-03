@@ -1,6 +1,8 @@
 import 'dotenv/config';
 
+import { MARKETS_CACHE_NAMESPACE } from './api/routes.js';
 import { buildServer } from './api/server.js';
+import { createNodeRedisPublicJsonReadCache } from './cache/node-redis.js';
 import { loadRuntimeConfig } from './config.js';
 import { prisma } from './db.js';
 import { PrismaMarketCatalog } from './dedup/market-catalog.js';
@@ -26,35 +28,53 @@ async function main(): Promise<void> {
   const truthSeller = loadTruthSellerConfig();
   const truthPaymentGate = createTruthPaymentGate(truthSeller);
   const eventBus = new ServerEventBus();
-  const app = await buildServer({
-    prisma,
-    eventBus,
-    dedupChecker: dedup.checker,
-    dedupIndexHealthReader: dedup.indexHealth,
-    indexerStallMs: config.indexerStallMs,
-    ...(truthPaymentGate === undefined ? {} : { truthPaymentGate }),
+  const publicReadCache = createNodeRedisPublicJsonReadCache({
+    url: config.redisUrl,
+    keyPrefix: config.redisKeyPrefix,
   });
 
   try {
-    await app.listen({ host: config.apiHost, port: config.apiPort });
-    console.info(
-      `[server] REST=http://${config.apiHost}:${config.apiPort} ` +
-        `WebSocket=ws://${config.apiHost}:${config.apiPort}/ws`,
-    );
-    console.info(`[dedup] provider=${dedup.provider.mode} qdrant=${config.qdrantUrl}`);
-    console.info(
-      `[truth] seller=${truthSeller.mode} priceRaw=${truthSeller.amountRaw}`,
-    );
-    await runIndexer(prisma, config, {
-      once: false,
-      ...(parsed.startPolicy === undefined
-        ? {}
-        : { startPolicy: parsed.startPolicy }),
-      onEvents: (events) => publishIndexedEvents(prisma, eventBus, events),
-      marketDedupIndexer: dedup.indexer,
+    const app = await buildServer({
+      prisma,
+      eventBus,
+      dedupChecker: dedup.checker,
+      dedupIndexHealthReader: dedup.indexHealth,
+      indexerStallMs: config.indexerStallMs,
+      publicReadCache,
+      marketListCacheTtlSeconds: config.marketsCacheTtlSeconds,
+      ...(truthPaymentGate === undefined ? {} : { truthPaymentGate }),
     });
+
+    try {
+      await app.listen({ host: config.apiHost, port: config.apiPort });
+      console.info(
+        `[server] REST=http://${config.apiHost}:${config.apiPort} ` +
+          `WebSocket=ws://${config.apiHost}:${config.apiPort}/ws`,
+      );
+      console.info(`[dedup] provider=${dedup.provider.mode} qdrant=${config.qdrantUrl}`);
+      console.info(
+        `[truth] seller=${truthSeller.mode} priceRaw=${truthSeller.amountRaw}`,
+      );
+      await runIndexer(prisma, config, {
+        once: false,
+        ...(parsed.startPolicy === undefined
+          ? {}
+          : { startPolicy: parsed.startPolicy }),
+        onEvents: async (events) => {
+          if (events.length === 0) return;
+          // applyDecodedEvents invokes this only after its serializable database
+          // transaction commits. Await the bounded best-effort invalidation so
+          // a WebSocket-triggered refetch cannot observe the prior cache epoch.
+          await publicReadCache.invalidate(MARKETS_CACHE_NAMESPACE);
+          await publishIndexedEvents(prisma, eventBus, events);
+        },
+        marketDedupIndexer: dedup.indexer,
+      });
+    } finally {
+      await app.close();
+    }
   } finally {
-    await app.close();
+    await publicReadCache.close();
     await prisma.$disconnect();
   }
 }

@@ -61,6 +61,13 @@ const healthy: HealthResponse = {
     },
     error: null,
   },
+  readCache: {
+    status: 'disabled',
+    hits: 0,
+    misses: 0,
+    errors: 0,
+    invalidations: 0,
+  },
   historyGaps: [],
 };
 

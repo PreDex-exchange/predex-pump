@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 
 import { loadAccountLayerConfig, type AccountLayerConfig } from '../account/config.js';
 import { AccountService, type SiweVerifier } from '../account/service.js';
+import type { PublicJsonReadCache } from '../cache/public-json.js';
 import { unavailableDedupResponse } from '../dedup/service.js';
 import type { DedupChecker, DedupIndexHealthReader } from '../dedup/types.js';
 import type { ServerEventBus } from '../events/bus.js';
@@ -35,6 +36,8 @@ export interface BuildServerOptions {
   gatewayBalanceReader?: GatewayBalanceReader;
   orderChainReader?: OrderChainReader;
   orderNow?: () => number;
+  publicReadCache?: PublicJsonReadCache;
+  marketListCacheTtlSeconds?: number;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -60,6 +63,8 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     options.indexerStallMs,
     options.truthPaymentGate,
     options.dedupIndexHealthReader,
+    options.publicReadCache,
+    options.marketListCacheTtlSeconds,
   );
   registerOrderRoutes(
     app,

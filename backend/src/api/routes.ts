@@ -16,10 +16,17 @@ import {
 } from '@predex-pump/shared';
 import type { FastifyInstance } from 'fastify';
 
-import { unavailableDedupResponse } from '../dedup/service.js';
+import {
+  createDisabledPublicJsonReadCache,
+  type PublicJsonReadCache,
+} from '../cache/public-json.js';
+import {
+  DEFAULT_INDEXER_STALL_MS,
+  DEFAULT_MARKETS_CACHE_TTL_SECONDS,
+} from '../config.js';
 import { unavailableDedupIndexHealth } from '../dedup/health.js';
+import { unavailableDedupResponse } from '../dedup/service.js';
 import type { DedupChecker, DedupIndexHealthReader } from '../dedup/types.js';
-import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
 import {
   encodePaymentHeader,
   PAYMENT_REQUIRED_HEADER,
@@ -27,6 +34,7 @@ import {
   PAYMENT_SIGNATURE_HEADER,
   type TruthPaymentGate,
 } from '../truth-payment/types.js';
+import { isListMarketsResponse } from './cache-validators.js';
 import {
   HttpError,
   parseAddress,
@@ -86,6 +94,8 @@ interface AccountParams {
   addr: string;
 }
 
+export const MARKETS_CACHE_NAMESPACE = 'markets';
+
 function parseDedupQuestion(body: unknown): string {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw new HttpError(400, 'Request body must be an object');
@@ -127,6 +137,8 @@ export function registerRestRoutes(
   indexerStallMs = DEFAULT_INDEXER_STALL_MS,
   truthPaymentGate?: TruthPaymentGate,
   dedupIndexHealthReader?: DedupIndexHealthReader,
+  publicReadCache: PublicJsonReadCache = createDisabledPublicJsonReadCache(),
+  marketListCacheTtlSeconds = DEFAULT_MARKETS_CACHE_TTL_SECONDS,
 ): void {
   const readConfig = createCachedConfigReader(prisma);
 
@@ -150,11 +162,24 @@ export function registerRestRoutes(
       const phase = parseMarketPhase(request.query.phase);
       const creator = parseOptionalAddress('creator', request.query.creator);
       const cursor = parseOptionalString(request.query.cursor);
-      return listMarkets(prisma, {
+      const limit = parsePositiveInteger('limit', request.query.limit, 50, 200);
+      const query = {
         ...(phase === undefined ? {} : { phase }),
         ...(creator === undefined ? {} : { creator }),
-        limit: parsePositiveInteger('limit', request.query.limit, 50, 200),
+        limit,
         ...(cursor === undefined ? {} : { cursor }),
+      };
+      return publicReadCache.getOrLoad({
+        namespace: MARKETS_CACHE_NAMESPACE,
+        identity: {
+          phase: phase ?? null,
+          creator: creator ?? null,
+          limit,
+          cursor: cursor ?? null,
+        },
+        ttlSeconds: marketListCacheTtlSeconds,
+        validate: isListMarketsResponse,
+        load: () => listMarkets(prisma, query),
       });
     },
   );
@@ -328,7 +353,13 @@ export function registerRestRoutes(
               'Dedup index health reader is not configured',
             )
           : await dedupIndexHealthReader.getHealth();
-      return getHealth(prisma, indexerStallMs, new Date(), dedupIndex);
+      return getHealth(
+        prisma,
+        indexerStallMs,
+        new Date(),
+        dedupIndex,
+        publicReadCache.getHealth(),
+      );
     },
   );
 }

@@ -335,6 +335,17 @@ export interface DedupIndexHealth {
   error: string | null;
 }
 
+export type ReadCacheStatus = 'disabled' | 'ready' | 'degraded';
+
+/** Best-effort public read cache. Postgres remains authoritative in every state. */
+export interface ReadCacheHealth {
+  status: ReadCacheStatus;
+  hits: number;
+  misses: number;
+  errors: number;
+  invalidations: number;
+}
+
 export interface HealthResponse {
   ok: boolean;
   chainId: number;
@@ -351,6 +362,8 @@ export interface HealthResponse {
   chainState: ChainStateHealth;
   /** Provider-partition coverage for same-fact retrieval. */
   dedupIndex: DedupIndexHealth;
+  /** Redis-backed acceleration for public reads; degradation never fails core reads. */
+  readCache: ReadCacheHealth;
   /** Append-only audit history of blocks intentionally omitted at startup. */
   historyGaps: IndexerHistoryGap[];
 }

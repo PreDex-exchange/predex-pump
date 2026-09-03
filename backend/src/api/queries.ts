@@ -14,6 +14,7 @@ import type {
   OrderBook,
   OrderBookResponse,
   PriceHistoryResponse,
+  ReadCacheHealth,
   TruthSignalResponse,
 } from '@predex-pump/shared';
 import {
@@ -811,6 +812,14 @@ export function createCachedConfigReader(
   };
 }
 
+const DISABLED_READ_CACHE_HEALTH: ReadCacheHealth = {
+  status: 'disabled',
+  hits: 0,
+  misses: 0,
+  errors: 0,
+  invalidations: 0,
+};
+
 export async function getHealth(
   prisma: PrismaClient,
   stallAfterMs = DEFAULT_INDEXER_STALL_MS,
@@ -819,6 +828,7 @@ export async function getHealth(
     'fallback',
     'Dedup index health reader is not configured',
   ),
+  readCache: ReadCacheHealth = DISABLED_READ_CACHE_HEALTH,
 ): Promise<HealthResponse> {
   const [state, subscription, gaps, persistedChainState] = await Promise.all([
     prisma.indexerState.findUnique({ where: { id: 1 } }),
@@ -882,6 +892,7 @@ export async function getHealth(
       unreconciledBalanceGapCount,
       chainState,
       dedupIndex,
+      readCache,
       historyGaps,
     };
   }
@@ -929,6 +940,7 @@ export async function getHealth(
     unreconciledBalanceGapCount,
     chainState,
     dedupIndex,
+    readCache,
     historyGaps,
   };
 }
