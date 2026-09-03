@@ -7,6 +7,7 @@ const sourceRoots = ['app', 'components', 'lib', 'public', 'styles']
   .map((directory) => join(process.cwd(), directory))
   .filter(existsSync);
 const tokensPath = join(process.cwd(), 'styles/tokens.css');
+const pwaPalettePath = join(process.cwd(), 'lib/pwa/palette.ts');
 const hardcodedColor =
   /#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3})\b|\b(?:color|hsla?|hwb|lab|lch|oklab|oklch|rgba?)\([^)]*\)/giu;
 
@@ -16,6 +17,7 @@ function renderedSourceFiles(directory: string): string[] {
     if (entry.isDirectory()) return renderedSourceFiles(path);
     if (
       path === tokensPath ||
+      path === pwaPalettePath ||
       !/\.(?:css|svg|tsx?)$/u.test(entry.name) ||
       /\.(?:spec|test)\./u.test(entry.name)
     ) {
@@ -72,5 +74,16 @@ describe('rendered source color tokens', () => {
     ]) {
       expect(tokens).toContain(`${token}:`);
     }
+  });
+
+  it('keeps the server-only PWA palette aligned with the CSS token set', () => {
+    const tokens = readFileSync(tokensPath, 'utf8');
+    const palette = readFileSync(pwaPalettePath, 'utf8');
+    const paletteColors = [...palette.matchAll(hardcodedColor)].map(
+      (match) => match[0],
+    );
+
+    expect(paletteColors.length).toBeGreaterThan(0);
+    for (const color of paletteColors) expect(tokens).toContain(color);
   });
 });

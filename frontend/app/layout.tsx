@@ -9,6 +9,7 @@ import { AppHeader } from '@/components/layout/AppHeader';
 import { TransactionRecoveryNotice } from '@/components/layout/TransactionRecoveryNotice';
 import { AppProviders } from '@/components/providers/AppProviders';
 import { getWagmiConfig } from '@/lib/chain/config';
+import { PWA_COLORS } from '@/lib/pwa/palette';
 
 import './globals.css';
 
@@ -34,17 +35,48 @@ const dmMono = DM_Mono({
 });
 
 export const metadata: Metadata = {
+  applicationName: 'predex',
   title: {
     default: 'predex — Market incubator',
     template: '%s — predex',
   },
   description:
     'Launch a prediction market from zero, trade it on a bonding curve, and watch it graduate into an order book.',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'predex',
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  icons: {
+    apple: [
+      {
+        sizes: '192x192',
+        type: 'image/png',
+        url: '/pwa/icon-192.png',
+      },
+    ],
+    icon: [
+      {
+        sizes: '192x192',
+        type: 'image/png',
+        url: '/pwa/icon-192.png',
+      },
+      {
+        sizes: '512x512',
+        type: 'image/png',
+        url: '/pwa/icon-512.png',
+      },
+    ],
+  },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  themeColor: PWA_COLORS.background,
   viewportFit: 'cover',
 };
 
