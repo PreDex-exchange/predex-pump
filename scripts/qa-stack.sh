@@ -28,6 +28,7 @@ FRONTEND_URL="http://127.0.0.1:3002"
 BACKEND_URL="http://127.0.0.1:3001"
 WALLET_URL="http://127.0.0.1:3003"
 WALLET_SCRIPT_URL="$WALLET_URL/provider.js"
+FRONTEND_WS_URL="${QA_FRONTEND_WS_URL:-ws://127.0.0.1:3001/ws}"
 MODE="read-only"
 SEED_FIXTURES=false
 # When set, QA runs the wallet shim + frontend ONLY, against an already
@@ -88,6 +89,11 @@ QA URLs:
   Backend REST   http://127.0.0.1:3001
   Backend WS     ws://127.0.0.1:3001/ws
   Wallet health  http://127.0.0.1:3003/healthz
+
+WebSocket fault injection:
+  QA_FRONTEND_WS_URL=ws://127.0.0.1:3999/ws points only the frontend at a
+  dead loopback socket while REST remains healthy. This is intended for
+  verifying polling fallback; the default remains the backend's /ws route.
 
 Pages and useful fixtures:
   /              market list
@@ -667,7 +673,7 @@ launch_frontend() {
       export NEXT_PUBLIC_WS_URL="$(printf '%s' "$REMOTE_API" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')/ws"
     else
       export NEXT_PUBLIC_API_URL="$BACKEND_URL"
-      export NEXT_PUBLIC_WS_URL="ws://127.0.0.1:3001/ws"
+      export NEXT_PUBLIC_WS_URL="$FRONTEND_WS_URL"
     fi
     export NEXT_PUBLIC_ARC_EXPLORER_URL=https://testnet.arcscan.app
     export NEXT_PUBLIC_AGENT_ADDRESSES="${NEXT_PUBLIC_AGENT_ADDRESSES:-}"
@@ -692,6 +698,8 @@ up() {
   if [[ -z "$REMOTE_API" ]]; then
     require_command docker
     validate_compose_project
+    [[ "$FRONTEND_WS_URL" =~ ^ws://(127\.0\.0\.1|localhost):[0-9]+/ws$ ]] ||
+      fail 'QA_FRONTEND_WS_URL must be a loopback ws:// URL ending in /ws'
     docker_command info >/dev/null 2>&1 || fail 'Docker is not available'
     assert_ports_usable
   else
@@ -775,6 +783,7 @@ up() {
   else
     printf 'Backend REST:  %s\n' "$BACKEND_URL"
     printf 'Backend WS:    ws://127.0.0.1:3001/ws\n'
+    printf 'Frontend WS:   %s\n' "$FRONTEND_WS_URL"
   fi
   printf 'Wallet:        %s\n' "$wallet_account"
   # Market ids are deployment-specific; list what this backend actually serves
