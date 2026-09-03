@@ -164,7 +164,8 @@ export interface WithdrawOrderResponse {
 export const OFFCHAIN_WITHDRAWAL_WARNING =
   'Off-chain withdrawal only removes this order from the Predex operator book. The signed order may remain fillable on-chain until it expires or the maker submits cancelOrder/cancelAll; on-chain cancellation is authoritative.';
 
-// GET /markets/:id/prices?fromTs=&limit=  → price curve, derived from the TradeState stream
+// GET /markets/:id/prices?fromTs=&limit= → latest chronological window by default;
+// fromTs explicitly requests the first chronological window at or after that timestamp.
 export interface PriceHistoryQuery {
   fromTs?: number;
   limit?: number; // default 500, max 2000

@@ -8,7 +8,17 @@ import { formatUsd } from '@/lib/format';
 
 import styles from './Hero.module.css';
 
-export function Hero({ markets }: { markets: Market[] | null }) {
+function lowerBound(value: string | number, hasMore: boolean) {
+  return hasMore ? `${value}+` : value;
+}
+
+export function Hero({
+  markets,
+  hasMore = false,
+}: {
+  markets: Market[] | null;
+  hasMore?: boolean;
+}) {
   const graduated =
     markets?.filter((market) => market.phase !== 'Opened').length ?? null;
   const volumeRaw =
@@ -41,18 +51,22 @@ export function Hero({ markets }: { markets: Market[] | null }) {
         </div>
         <ul className={styles.stats} aria-label="Platform statistics">
           <li>
-            <NumberDisplay size="hero">{markets?.length ?? '—'}</NumberDisplay>
+            <NumberDisplay size="hero">
+              {markets === null ? '—' : lowerBound(markets.length, hasMore)}
+            </NumberDisplay>
             markets
           </li>
           <li>
             <NumberDisplay size="hero" tone="yes">
-              {graduated ?? '—'}
+              {graduated === null ? '—' : lowerBound(graduated, hasMore)}
             </NumberDisplay>
             graduated
           </li>
           <li>
             <NumberDisplay size="hero" tone="no">
-              {volumeRaw === null ? '—' : formatUsd(volumeRaw, 2)}
+              {volumeRaw === null
+                ? '—'
+                : lowerBound(formatUsd(volumeRaw, 2), hasMore)}
             </NumberDisplay>
             volume
           </li>

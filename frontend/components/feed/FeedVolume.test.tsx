@@ -5,8 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Hero } from './Hero';
 import { MarketCard } from './MarketCard';
 
+const mocks = vi.hoisted(() => ({
+  usePriceHistory: vi.fn(),
+}));
+
 vi.mock('@/lib/api/hooks', () => ({
-  usePriceHistory: () => ({ data: { points: [] } }),
+  usePriceHistory: mocks.usePriceHistory,
 }));
 
 function market(volumeRaw: string): Market {
@@ -48,9 +52,29 @@ function market(volumeRaw: string): Market {
   };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mocks.usePriceHistory.mockReset();
+});
 
 describe('feed volume display', () => {
+  it('requests only the latest compact sparkline sample', () => {
+    mocks.usePriceHistory.mockReturnValue({ data: { points: [] } });
+    render(<MarketCard market={market('0')} />);
+
+    expect(mocks.usePriceHistory).toHaveBeenCalledWith('1', { limit: 32 });
+  });
+
+  it('marks loaded statistics as lower bounds while another page exists', () => {
+    mocks.usePriceHistory.mockReturnValue({ data: { points: [] } });
+    const snapshot = market('5000');
+    render(<Hero hasMore markets={[snapshot]} />);
+
+    const statistics = screen.getByRole('list', { name: 'Platform statistics' });
+    expect(within(statistics).getByText('1+')).toBeTruthy();
+    expect(within(statistics).getByText('$0.01+')).toBeTruthy();
+  });
+
   it.each([
     ['0', '$0.00'],
     ['1', '<$0.01'],
@@ -59,6 +83,7 @@ describe('feed volume display', () => {
     ['999999', '$1.00'],
     ['123456789012', '$123,456.79'],
   ])('renders raw volume %s at its real magnitude', (volumeRaw, expected) => {
+    mocks.usePriceHistory.mockReturnValue({ data: { points: [] } });
     const snapshot = market(volumeRaw);
     render(
       <>

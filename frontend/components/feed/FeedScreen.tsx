@@ -15,6 +15,7 @@ import styles from './FeedScreen.module.css';
 
 type FeedFilter = 'all' | 'incubating' | 'graduated' | 'resolved';
 type FeedSort = 'newest' | 'volume';
+const FEED_MARKET_PAGE_SIZE = 12;
 
 const FILTERS: { value: FeedFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -70,7 +71,7 @@ export function FeedScreen() {
     error,
     loadMore,
     refetch: refetchMarkets,
-  } = useMarkets();
+  } = useMarkets({ limit: FEED_MARKET_PAGE_SIZE });
   const {
     data: activityPage,
     error: activityError,
@@ -104,7 +105,10 @@ export function FeedScreen() {
 
   return (
     <main>
-      <Hero markets={error ? null : (marketPage?.items ?? null)} />
+      <Hero
+        hasMore={Boolean(marketPage?.nextCursor)}
+        markets={error ? null : (marketPage?.items ?? null)}
+      />
       <section className={styles.discovery} id="how-it-works">
         <div aria-label="Filter markets" className={styles.filters} role="group">
           {FILTERS.map((item) => (

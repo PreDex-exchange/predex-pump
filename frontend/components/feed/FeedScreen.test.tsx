@@ -28,11 +28,12 @@ const mocks = vi.hoisted(() => ({
     loadMore: vi.fn(),
     refetch: vi.fn(),
   },
+  useMarkets: vi.fn(),
 }));
 
 vi.mock('@/lib/api/hooks', () => ({
   useActivity: () => mocks.activity,
-  useMarkets: () => mocks.markets,
+  useMarkets: mocks.useMarkets,
   usePriceHistory: () => ({ data: { points: [] } }),
 }));
 
@@ -49,6 +50,8 @@ beforeEach(() => {
   mocks.activity.refetch.mockClear();
   mocks.markets.loadMore.mockClear();
   mocks.markets.refetch.mockClear();
+  mocks.useMarkets.mockReset();
+  mocks.useMarkets.mockReturnValue(mocks.markets);
 });
 
 afterEach(() => {
@@ -57,6 +60,12 @@ afterEach(() => {
 });
 
 describe('FeedScreen failure states', () => {
+  it('bounds the first market page for mobile feed fluency', () => {
+    render(<FeedScreen />);
+
+    expect(mocks.useMarkets).toHaveBeenCalledWith({ limit: 12 });
+  });
+
   it('keeps character art out of the market-price loading surface', () => {
     mocks.markets.isLoading = true;
 

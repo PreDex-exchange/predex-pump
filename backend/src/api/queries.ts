@@ -561,9 +561,13 @@ export async function getPriceHistory(
       ...(fromTs === undefined ? {} : { ts: { gte: fromTs } }),
     },
     select: { ts: true, yesPriceRaw: true, noPriceRaw: true },
-    orderBy: [{ ts: 'asc' }, { blockNumber: 'asc' }, { logIndex: 'asc' }],
+    orderBy:
+      fromTs === undefined
+        ? [{ ts: 'desc' }, { blockNumber: 'desc' }, { logIndex: 'desc' }]
+        : [{ ts: 'asc' }, { blockNumber: 'asc' }, { logIndex: 'asc' }],
     take: limit,
   });
+  if (fromTs === undefined) points.reverse();
   return {
     marketId,
     points: points.map((point) => ({

@@ -540,19 +540,100 @@ describe('REST shared contract', () => {
     expect(body.asks[0]?.priceRaw).toBe('650000');
   });
 
-  it('GET /markets/:id/prices returns the indexed price curve', async () => {
-    const response = await app.inject({
-      method: 'GET',
-      url: '/markets/1/prices?fromTs=1700000020&limit=10',
+  it('GET /markets/:id/prices returns the latest window chronologically unless fromTs is explicit', async () => {
+    const txHash = `0x${'a'.repeat(64)}`;
+    await testPrisma.pricePoint.createMany({
+      data: [
+        {
+          id: `${txHash}:7`,
+          marketId: '1',
+          yesPriceRaw: '610000',
+          noPriceRaw: '390000',
+          qYesRaw: '2100000',
+          qNoRaw: '0',
+          bCurrentWad: '1000000000000000000',
+          txHash,
+          logIndex: 7,
+          blockNumber: 97,
+          ts: 1_700_000_030,
+        },
+        {
+          id: `${txHash}:8`,
+          marketId: '1',
+          yesPriceRaw: '620000',
+          noPriceRaw: '380000',
+          qYesRaw: '2200000',
+          qNoRaw: '0',
+          bCurrentWad: '1000000000000000000',
+          txHash,
+          logIndex: 8,
+          blockNumber: 98,
+          ts: 1_700_000_040,
+        },
+        {
+          id: `${txHash}:9`,
+          marketId: '1',
+          yesPriceRaw: '630000',
+          noPriceRaw: '370000',
+          qYesRaw: '2300000',
+          qNoRaw: '0',
+          bCurrentWad: '1000000000000000000',
+          txHash,
+          logIndex: 9,
+          blockNumber: 99,
+          ts: 1_700_000_050,
+        },
+      ],
     });
-    expect(response.statusCode).toBe(200);
-    expect(response.json<PriceHistoryResponse>()).toEqual({
+
+    const latestResponse = await app.inject({
+      method: 'GET',
+      url: '/markets/1/prices?limit=3',
+    });
+    expect(latestResponse.statusCode).toBe(200);
+    expect(latestResponse.json<PriceHistoryResponse>()).toEqual({
+      marketId: '1',
+      points: [
+        {
+          ts: 1_700_000_030,
+          yesPriceRaw: '610000',
+          noPriceRaw: '390000',
+        },
+        {
+          ts: 1_700_000_040,
+          yesPriceRaw: '620000',
+          noPriceRaw: '380000',
+        },
+        {
+          ts: 1_700_000_050,
+          yesPriceRaw: '630000',
+          noPriceRaw: '370000',
+        },
+      ],
+    });
+
+    const forwardResponse = await app.inject({
+      method: 'GET',
+      url: '/markets/1/prices?fromTs=1700000020&limit=3',
+    });
+    expect(forwardResponse.statusCode).toBe(200);
+    expect(forwardResponse.json<PriceHistoryResponse>()).toEqual({
       marketId: '1',
       points: [
         {
           ts: 1_700_000_020,
           yesPriceRaw: '600000',
           noPriceRaw: '400000',
+        },
+        {
+          ts: 1_700_000_030,
+          yesPriceRaw: '610000',
+          noPriceRaw: '390000',
+        },
+        {
+          ts: 1_700_000_040,
+          yesPriceRaw: '620000',
+          noPriceRaw: '380000',
         },
       ],
     });

@@ -21,6 +21,8 @@ import {
 
 import styles from './MarketCard.module.css';
 
+const FEED_SPARKLINE_POINT_LIMIT = 32;
+
 function sparklinePoints(points: PricePoint[]) {
   if (points.length < 2) return '0,16 120,16';
 
@@ -60,7 +62,9 @@ export function MarketCard({
   href = `/market/${market.id}`,
   referenceTimestamp,
 }: MarketCardProps) {
-  const { data: priceHistory } = usePriceHistory(market.id);
+  const { data: priceHistory } = usePriceHistory(market.id, {
+    limit: FEED_SPARKLINE_POINT_LIMIT,
+  });
   const graduation = graduationPercent(market);
   const isSettled = isMarketSettled(market);
   const visiblePhase = displayMarketPhase(market);
