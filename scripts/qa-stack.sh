@@ -12,9 +12,10 @@
 # /, /create, /market/1, /market/2, /portfolio, /account, and /activity.
 # With --fixtures, market 1 is live on HYBRID, market 2 is resolved, and market 3
 # is open on the curve. By default the stack attaches to the canonical `backend`
-# Compose project's Postgres/Qdrant containers. Set QA_COMPOSE_PROJECT to use a
+# Compose project's Postgres/Qdrant/Redis containers. Set QA_COMPOSE_PROJECT to use a
 # different, isolated Compose project. `down` never removes attached containers
-# and never removes Docker networks or volumes.
+# and never removes Docker networks or volumes. Redis itself is disposable and
+# has no volume.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -24,6 +25,7 @@ LOG_DIR="$STATE_DIR/logs"
 COMPOSE_FILE="$ROOT_DIR/backend/docker-compose.yml"
 COMPOSE_PROJECT="${QA_COMPOSE_PROJECT:-backend}"
 DATABASE_URL="postgresql://predex:predex@127.0.0.1:5432/predex_pump?schema=public"
+REDIS_URL="redis://127.0.0.1:6379"
 FRONTEND_URL="http://127.0.0.1:3002"
 BACKEND_URL="http://127.0.0.1:3001"
 WALLET_URL="http://127.0.0.1:3003"
@@ -71,11 +73,12 @@ Runtime key:
   32-byte private key supplied by the operator at runtime. The value is never
   printed, logged, saved to a file, passed to Next/backend, or built into assets.
 
-Database services:
+State services:
   QA_COMPOSE_PROJECT=backend is the default. It attaches to the canonical
-  backend-postgres-1 and backend-qdrant-1 containers and their existing data.
+  backend-postgres-1, backend-qdrant-1, and backend-redis-1 containers. Redis is
+  a disposable cache with no persisted volume.
 
-  For a genuinely isolated stack, first make sure ports 5432 and 6333 are free,
+  For a genuinely isolated stack, first make sure ports 5432, 6333, and 6379 are free,
   then choose a new project namespace explicitly:
     QA_COMPOSE_PROJECT=my-qa-stack QA_WALLET_PRIVATE_KEY=<set-in-shell> \
       ./scripts/qa-stack.sh up --read-only
@@ -113,7 +116,7 @@ Production gate:
 
 Teardown:
   `down` stops only the signer, backend, and frontend processes recorded by `up`.
-  Attached Postgres/Qdrant containers are never stopped or removed. A previously
+  Attached Postgres/Qdrant/Redis containers are never stopped or removed. A previously
   stopped container started by `up` is stopped again; a container created by
   `up` is removed by exact container ID. Docker networks and volumes are always
   retained, as are the non-secret process logs under .qa/logs/.
@@ -235,6 +238,7 @@ assert_ports_usable() {
   assert_application_ports_free
   assert_database_port postgres 5432 5432
   assert_database_port qdrant 6333 6333
+  assert_database_port redis 6379 6379
 }
 
 install_runtime_dependencies() {
@@ -457,6 +461,7 @@ report_compose_attachment() {
   fi
   printf 'Compose project: %s (%s)\n' "$COMPOSE_PROJECT" "$project_kind"
   printf 'Database URL:   %s\n' "$DATABASE_URL"
+  printf 'Redis URL:      %s\n' "$REDIS_URL"
   if ((${#ATTACHED_SERVICES[@]})); then
     printf 'Attached to existing services: %s\n' "$(join_services "${ATTACHED_SERVICES[@]}")"
   fi
@@ -472,8 +477,10 @@ prepare_compose_services() {
   record_compose_project
   start_or_attach_compose_service postgres
   start_or_attach_compose_service qdrant
+  start_or_attach_compose_service redis
   assert_database_port postgres 5432 5432
   assert_database_port qdrant 6333 6333
+  assert_database_port redis 6379 6379
   report_compose_attachment
 }
 
@@ -499,7 +506,7 @@ teardown_recorded_containers() {
       continue
     }
     case "$service" in
-      postgres|qdrant) ;;
+      postgres|qdrant|redis) ;;
       *)
         printf 'Skipping unknown QA Docker service %s.\n' "$service" >&2
         result=1
@@ -649,6 +656,7 @@ launch_backend() {
     unset QA_WALLET_PRIVATE_KEY OPENAI_API_KEY
     export NODE_ENV=development
     export DATABASE_URL
+    export REDIS_URL
     export API_HOST=127.0.0.1
     export API_PORT=3001
     export QDRANT_URL=http://127.0.0.1:6333
@@ -824,7 +832,7 @@ down() {
     printf 'Legacy Docker state has no exact container ownership records; leaving all Docker services unchanged.\n' >&2
     docker_result='No Docker container, network, or volume was changed.'
   else
-    docker_result='Attached Postgres/Qdrant were left running; no Docker container, network, or volume was changed.'
+    docker_result='Attached Postgres/Qdrant/Redis were left running; no Docker container, network, or volume was changed.'
   fi
   rm -f "$CREATED_CONTAINERS_FILE" "$STARTED_CONTAINERS_FILE" \
     "$COMPOSE_PROJECT_FILE" "$STATE_DIR/docker.started" "$STATE_DIR/active"
