@@ -287,12 +287,48 @@
   color: var(--no-ink);
 }
 
-@media (max-width: 420px) {
+@media (max-width: 640px) {
   .card {
     min-height: 0;
+    padding: 17px 14px 14px 20px;
+    border-width: 2px;
+    border-radius: 18px;
+    box-shadow: 0 4px 0 var(--ink-10);
+  }
+
+  .card::before {
+    top: 0;
+    right: auto;
+    bottom: 0;
+    left: 0;
+    width: 7px;
+    height: auto;
   }
 
   .card h2 {
     min-height: 0;
+    margin: var(--space-3) 0;
+    font-size: 1rem;
+    line-height: 1.28;
+  }
+
+  .price {
+    padding: 9px 11px;
+    border-width: 1.5px;
+  }
+
+  .priceValue {
+    font-size: 1.35rem;
+  }
+
+  .sparkline {
+    height: 32px;
+    margin-top: var(--space-3);
+  }
+
+  .foot {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top-width: 1.5px;
   }
 }

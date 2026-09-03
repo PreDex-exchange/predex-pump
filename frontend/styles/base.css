@@ -112,3 +112,9 @@ p {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media (max-width: 900px) {
+  body {
+    padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+  }
+}

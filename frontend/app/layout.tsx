@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { DM_Mono, Fredoka, Nunito } from 'next/font/google';
 import { headers } from 'next/headers';
 import Script from 'next/script';
@@ -39,6 +39,12 @@ export const metadata: Metadata = {
   },
   description:
     'Launch a prediction market from zero, trade it on a bonding curve, and watch it graduate into an order book.',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 export default async function RootLayout({

@@ -106,6 +106,40 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('wallet-only core trade path', () => {
+  it('opens one mobile trade surface and restores focus when Escape closes it', () => {
+    render(<TradePanel market={market} />);
+
+    const trigger = screen.getByRole('button', { name: 'Trade' });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('dialog', { name: 'Trade' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Buy YES' })).toHaveLength(1);
+    expect(document.body.style.overflow).toBe('hidden');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('dialog', { name: 'Trade' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('keeps the existing confirmation path inside the mobile trade surface', () => {
+    render(<TradePanel market={market} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Trade' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Buy YES' }));
+
+    expect(
+      screen.getByRole('dialog', { name: 'Buy YES' }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Approve & Buy YES' }),
+    ).toBeTruthy();
+  });
+
   it('opens and executes a curve trade with no account session/provider', async () => {
     render(<TradePanel market={market} />);
     const tradeButton = screen.getByRole('button', { name: 'Buy YES' });

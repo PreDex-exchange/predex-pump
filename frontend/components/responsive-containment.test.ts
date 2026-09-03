@@ -58,14 +58,49 @@ describe('responsive containment contracts', () => {
     expect(row).toContain('min-width: 700px');
   });
 
-  it('shows all five primary destinations in a width-constrained mobile grid', () => {
-    const css = source('components/layout/AppHeader.module.css');
-    const mobileBlock = css.slice(css.indexOf('@media (max-width: 700px)'));
+  it.each([320, 375, 390, 768])(
+    'shows all five primary destinations above the safe area at %ipx',
+    () => {
+      const css = source('components/layout/AppHeader.module.css');
+      const layout = source('app/layout.tsx');
+      const mobileBlock = css.slice(css.indexOf('@media (max-width: 900px)'));
 
-    expect(mobileBlock).toContain('grid-template-columns: repeat(5, minmax(0, 1fr))');
-    expect(mobileBlock).toContain('overflow-x: visible');
-    expect(mobileBlock).toContain('white-space: normal');
-  });
+      expect(layout).toContain("viewportFit: 'cover'");
+      expect(mobileBlock).toContain('position: fixed');
+      expect(mobileBlock).toContain(
+        'grid-template-columns: repeat(5, minmax(0, 1fr))',
+      );
+      expect(mobileBlock).toContain('env(safe-area-inset-bottom)');
+      expect(mobileBlock).toContain('overflow-x: visible');
+      expect(mobileBlock).toContain('white-space: normal');
+    },
+  );
+
+  it.each([320, 375, 390, 768])(
+    'keeps the mobile trade dock above the bottom navigation at %ipx',
+    () => {
+      const css = source('components/market/TradePanel.module.css');
+      const mobileBlock = css.slice(css.indexOf('@media (max-width: 900px)'));
+
+      expect(mobileBlock).toContain('.mobileDock');
+      expect(mobileBlock).toContain('var(--bottom-nav-height)');
+      expect(mobileBlock).toContain('env(safe-area-inset-bottom)');
+      expect(mobileBlock).toContain('width: min(100%, 520px)');
+      expect(mobileBlock).toContain('max-height: min(88dvh, 850px)');
+    },
+  );
+
+  it.each([1024, 1440])(
+    'retains the desktop navigation and sticky trade-panel defaults at %ipx',
+    () => {
+      const header = source('components/layout/AppHeader.module.css');
+      const trade = source('components/market/TradePanel.module.css');
+
+      expect(rule(header, '.nav')).toContain('display: flex');
+      expect(rule(trade, '.sticky')).toContain('position: sticky');
+      expect(rule(trade, '.mobileDock')).toContain('display: none');
+    },
+  );
 
   it('keeps populated portfolio rows inside the mobile card width', () => {
     const css = source('components/portfolio/PortfolioScreen.module.css');

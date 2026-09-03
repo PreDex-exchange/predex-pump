@@ -3,9 +3,52 @@
   top: 104px;
 }
 
+.ticketFrame {
+  min-width: 0;
+}
+
+.mobileDock {
+  display: none;
+}
+
+.mobileBackdrop {
+  display: none;
+}
+
+.sheetChrome {
+  display: none;
+}
+
+.panel {
+  position: relative;
+  overflow: hidden;
+  border-width: 2.5px;
+  border-radius: 22px;
+  box-shadow: 0 6px 0 var(--ink-14);
+}
+
+.panel::after {
+  display: block;
+  height: 8px;
+  margin: var(--space-6) calc(var(--space-6) * -1)
+    calc(var(--space-6) * -1);
+  background: repeating-linear-gradient(
+    90deg,
+    var(--brand) 0 18px,
+    var(--reward) 18px 36px,
+    var(--yes) 36px 54px,
+    var(--no) 54px 72px
+  );
+  content: '';
+}
+
 .panel > div:first-child {
   width: 100%;
   margin-bottom: var(--space-4);
+}
+
+.panel > div:first-child button {
+  min-height: 44px;
 }
 
 .sides {
@@ -17,6 +60,7 @@
 .side {
   display: flex;
   flex: 1;
+  min-height: 54px;
   align-items: flex-start;
   flex-direction: column;
   padding: 12px;
@@ -129,6 +173,7 @@
 
 .chips button {
   flex: 1;
+  min-height: 44px;
   padding: 6px;
   border: 2px solid var(--hairline);
   border-radius: var(--radius-pill);
@@ -253,5 +298,201 @@
 @media (max-width: 980px) {
   .sticky {
     position: static;
+  }
+}
+
+@media (max-width: 900px) {
+  .mobileDock {
+    position: fixed;
+    z-index: 80;
+    right: 12px;
+    bottom: calc(
+      var(--bottom-nav-height) + env(safe-area-inset-bottom) + 10px
+    );
+    left: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+    width: min(calc(100% - 24px), 560px);
+    min-height: 66px;
+    padding: 8px 8px 8px 13px;
+    margin: 0 auto;
+    border: 2px solid var(--outline);
+    border-radius: 18px;
+    background: var(--surface-94);
+    box-shadow:
+      0 6px 0 var(--ink-14),
+      0 12px 30px var(--ink-20);
+    backdrop-filter: blur(18px);
+  }
+
+  .dockPrices {
+    min-width: 0;
+  }
+
+  .dockPrices strong,
+  .dockPrices span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dockPrices strong {
+    font-size: 0.9rem;
+    font-weight: 800;
+  }
+
+  .dockPrices span {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+  }
+
+  .dockButton {
+    min-width: 112px;
+    min-height: 48px;
+    padding: 0 var(--space-4);
+    border: 2px solid var(--outline);
+    border-radius: 13px;
+    background: var(--yes);
+    box-shadow: var(--shadow-button);
+    color: var(--yes-button-ink);
+    cursor: pointer;
+    font-weight: 800;
+  }
+
+  .dockButton:active {
+    transform: translateY(3px);
+    box-shadow: 0 1px 0 var(--outline);
+  }
+
+  .mobileBackdrop {
+    position: fixed;
+    z-index: 85;
+    inset: 0;
+    display: block;
+    border: 0;
+    background: var(--ink-48);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-short) var(--ease-enter);
+    backdrop-filter: blur(4px);
+  }
+
+  .ticketFrame {
+    position: fixed;
+    z-index: 90;
+    bottom: 0;
+    left: 50%;
+    width: min(100%, 520px);
+    max-height: min(88dvh, 850px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 3px solid var(--outline);
+    border-bottom: 0;
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+    background: var(--surface);
+    box-shadow: 0 -12px 32px var(--ink-20);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, calc(100% + 16px));
+    transition:
+      transform var(--duration-medium) var(--ease-enter),
+      opacity var(--duration-short) var(--ease-enter),
+      visibility 0s var(--duration-medium);
+    visibility: hidden;
+  }
+
+  .mobileOpen .mobileBackdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .mobileOpen .ticketFrame {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
+    transition-delay: 0s;
+    visibility: visible;
+  }
+
+  .sheetChrome {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    align-items: center;
+    min-height: 66px;
+    padding: 13px 12px 7px;
+    border-bottom: 1px solid var(--hairline);
+    background: var(--surface);
+  }
+
+  .sheetGrabber {
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    width: 48px;
+    height: 5px;
+    border-radius: var(--radius-pill);
+    background: var(--hairline);
+    transform: translateX(-50%);
+  }
+
+  .sheetChrome strong {
+    grid-column: 2;
+    margin-top: 5px;
+    font-family: var(--font-fredoka), sans-serif;
+    font-size: 1.12rem;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  .sheetClose {
+    display: grid;
+    grid-column: 3;
+    width: 44px;
+    height: 44px;
+    margin-top: 5px;
+    place-items: center;
+    border: 1.5px solid var(--hairline);
+    border-radius: 50%;
+    background: var(--surface);
+    cursor: pointer;
+  }
+
+  .sheetClose svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 2;
+  }
+
+  .ticketFrame .panel {
+    padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .ticketFrame .panel::after {
+    display: none;
+  }
+}
+
+@media (max-width: 390px) {
+  .mobileDock {
+    right: 9px;
+    left: 9px;
+    width: calc(100% - 18px);
+  }
+
+  .dockButton {
+    min-width: 102px;
   }
 }

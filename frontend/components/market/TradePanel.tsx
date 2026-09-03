@@ -2,7 +2,7 @@
 
 import type { Market, Outcome, Position } from '@predex-pump/shared/domain';
 import { isOrderSizeGranular } from '@predex-pump/shared';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatUnits, parseUnits } from 'viem';
 import { useAccount } from 'wagmi';
 
@@ -51,6 +51,10 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
   const [outcome, setOutcome] = useState<Outcome>('YES');
   const [amount, setAmount] = useState('0.10');
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const mobilePanelRef = useRef<HTMLDivElement>(null);
+  const mobileTriggerRef = useRef<HTMLButtonElement>(null);
+  const sheetStateRef = useRef({ confirmOpen: false, txBusy: false });
   const { address, chainId, isConnected } = useAccount();
   const tx = useTxFlow();
   const amountRaw = inputToRaw(amount);
@@ -150,9 +154,133 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
           ? 'Reading live quote…'
           : actionLabel;
 
+  function closeMobileTrade() {
+    if (tx.isBusy || confirmOpen) return;
+    setMobileOpen(false);
+  }
+
+  useEffect(() => {
+    sheetStateRef.current = { confirmOpen, txBusy: tx.isBusy };
+  }, [confirmOpen, tx.isBusy]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+
+    const panel = mobilePanelRef.current;
+    const trigger = mobileTriggerRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    panel?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === 'Escape' &&
+        !sheetStateRef.current.confirmOpen &&
+        !sheetStateRef.current.txBusy
+      ) {
+        event.preventDefault();
+        setMobileOpen(false);
+        return;
+      }
+      if (
+        event.key !== 'Tab' ||
+        panel === null ||
+        sheetStateRef.current.confirmOpen
+      ) {
+        return;
+      }
+
+      const focusable = [
+        ...panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ),
+      ];
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || document.activeElement === panel)
+      ) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      trigger?.focus();
+    };
+  }, [mobileOpen]);
+
   return (
-    <aside className={styles.sticky}>
-      <Card className={styles.panel}>
+    <aside
+      className={`${styles.sticky} ${mobileOpen ? styles.mobileOpen : ''}`}
+    >
+      <div className={styles.mobileDock}>
+        <div className={styles.dockPrices}>
+          <strong>Trade this market</strong>
+          <span className="numeric">
+            YES {formatPrice(market.yesPriceRaw, 6)} · NO{' '}
+            {formatPrice(market.noPriceRaw, 6)}
+          </span>
+        </div>
+        <button
+          aria-controls="curve-trade-mobile-sheet"
+          aria-expanded={mobileOpen}
+          className={styles.dockButton}
+          onClick={() => setMobileOpen(true)}
+          ref={mobileTriggerRef}
+          type="button"
+        >
+          Trade
+        </button>
+      </div>
+
+      <button
+        aria-hidden="true"
+        className={styles.mobileBackdrop}
+        onClick={closeMobileTrade}
+        tabIndex={-1}
+        type="button"
+      />
+
+      <div
+        aria-labelledby={mobileOpen ? 'curve-trade-mobile-title' : undefined}
+        aria-modal={mobileOpen ? 'true' : undefined}
+        className={styles.ticketFrame}
+        id="curve-trade-mobile-sheet"
+        ref={mobilePanelRef}
+        role={mobileOpen ? 'dialog' : undefined}
+        tabIndex={-1}
+      >
+        <div className={styles.sheetChrome}>
+          <span aria-hidden="true" className={styles.sheetGrabber} />
+          <strong id="curve-trade-mobile-title">Trade</strong>
+          <button
+            aria-label="Close trade ticket"
+            className={styles.sheetClose}
+            disabled={tx.isBusy || confirmOpen}
+            onClick={closeMobileTrade}
+            type="button"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="m7 7 10 10M17 7 7 17" />
+            </svg>
+          </button>
+        </div>
+
+        <Card className={styles.panel}>
         <Tabs
           ariaLabel="Trade direction"
           onChange={(value) => {
@@ -342,7 +470,8 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
             <p className={styles.noPosition}>No {outcome} tokens held by this wallet.</p>
           )}
         </div>
-      </Card>
+        </Card>
+      </div>
 
       <ConfirmModal
         closeDisabled={tx.isBusy}
