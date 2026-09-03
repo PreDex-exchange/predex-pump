@@ -81,6 +81,12 @@ export interface CtfExchangeCollateralApprovalTxInput {
   amountRaw: bigint;
 }
 
+export interface CtfExchangeRegisterTokenTxInput {
+  tokenId: bigint;
+  complement: bigint;
+  conditionId: Hex;
+}
+
 export interface CtfExchangeFillOrderTxInput {
   order: CtfExchangeOrder;
   fillAmount: bigint;

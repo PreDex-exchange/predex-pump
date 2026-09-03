@@ -24,6 +24,13 @@ function pollMs(): number {
   return value;
 }
 
+function tokenRegistrationEnabled(): boolean {
+  const value = process.env.OPERATOR_REGISTER_TOKENS?.trim().toLowerCase();
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  throw new Error('OPERATOR_REGISTER_TOKENS must be true or false');
+}
+
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();
   const account = operatorAccountFromEnv();
@@ -38,19 +45,27 @@ async function main(): Promise<void> {
     info: (message: string): void => console.info(message),
     warn: (message: string): void => console.warn(message),
   };
+  const registrationEnabled = tokenRegistrationEnabled();
   const migrationOperator = new BookMigrationOperator(
     prisma,
     new ViemOrderChainReader(client),
     submitter,
     account,
     logger,
+    undefined,
+    undefined,
+    registrationEnabled,
   );
   // P4 runs inside the existing P2 operator loop. Migration gets first chance
   // so a post-cancel restart restores the book before new settlements proceed.
   const operator = {
     processOnce: async () => {
       const migration = await migrationOperator.processOnce();
-      return migration.outcome === 'IDLE'
+      const registrationDeferred =
+        migration.outcome === 'FAILED' &&
+        (migration.failureCode === 'REGISTRATION_DISABLED' ||
+          migration.failureCode === 'REGISTRATION_OUTCOME_UNKNOWN');
+      return migration.outcome === 'IDLE' || registrationDeferred
         ? settlementOperator.processOnce()
         : migration;
     },
@@ -59,7 +74,10 @@ async function main(): Promise<void> {
   const stop = (): void => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
-  console.info(`[operator] started account=${account.address.toLowerCase()}`);
+  console.info(
+    `[operator] started account=${account.address.toLowerCase()} ` +
+      `registerTokens=${registrationEnabled}`,
+  );
   try {
     await runOperatorLoop(operator, {
       signal: controller.signal,

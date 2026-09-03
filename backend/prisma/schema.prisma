@@ -259,18 +259,21 @@ model BookMigration {
   yesReplacementOrderHash String?
   noReplacementOrderHash  String?
 
-  approvalStatus      String  @default("UNCHECKED")
-  approvalTxHash      String?
-  approvalBlockNumber Int?
-  yesCancelStatus     String  @default("UNCHECKED")
-  noCancelStatus      String  @default("UNCHECKED")
-  yesCancelTxHash     String?
-  noCancelTxHash      String?
-  activeCancelOutcome String?
-  cancelBlockNumber   Int?
-  recoveryBlockNumber Int?
-  yesBalanceRaw       String?
-  noBalanceRaw        String?
+  approvalStatus          String  @default("UNCHECKED")
+  approvalTxHash          String?
+  approvalBlockNumber     Int?
+  registrationStatus      String  @default("UNCHECKED")
+  registrationTxHash      String?
+  registrationBlockNumber Int?
+  yesCancelStatus         String  @default("UNCHECKED")
+  noCancelStatus          String  @default("UNCHECKED")
+  yesCancelTxHash         String?
+  noCancelTxHash          String?
+  activeCancelOutcome     String?
+  cancelBlockNumber       Int?
+  recoveryBlockNumber     Int?
+  yesBalanceRaw           String?
+  noBalanceRaw            String?
 
   attemptCount       Int     @default(0)
   nextAttemptAt      Int     @default(0)

@@ -1,15 +1,22 @@
 import { ADDRESSES } from '@predex-pump/shared';
 import {
   Side,
+  ctfExchangeAbi,
   miniClobAbi,
   type CtfExchangeOrder,
   type TxRequest,
 } from '@predex-pump/shared/tx';
-import { decodeFunctionData, type Hex } from 'viem';
+import {
+  decodeFunctionData,
+  zeroHash,
+  type Hex,
+  type PublicClient,
+} from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getMarketBook } from '../src/api/queries.js';
+import { ViemOrderChainReader } from '../src/orderbook/chain-reader.js';
 import type {
   BookMigrationChainReader,
   BookMigrationChainState,
@@ -24,7 +31,12 @@ import type {
 } from '../src/orderbook/operator.js';
 import { resetDatabase, testPrisma } from './database.js';
 import { BOOK_NOW } from './orderbook-fixtures.js';
-import { MARKET_ONE_CONDITION, seedContractData } from './fixtures.js';
+import {
+  DEPLOYER,
+  MARKET_ONE_CONDITION,
+  MARKET_ONE_QUESTION,
+  seedContractData,
+} from './fixtures.js';
 
 const YES_SEED_ID = 20n;
 const NO_SEED_ID = 21n;
@@ -101,11 +113,23 @@ class FakeMigrationReader
 
 type SubmittedAction =
   | { type: 'APPROVE' }
+  | {
+      type: 'REGISTER';
+      tokenId: bigint;
+      complement: bigint;
+      conditionId: Hex;
+    }
   | { type: 'CANCEL'; orderId: bigint };
 
 class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
   approvalSubmissions = 0;
+  registrationSubmissions = 0;
   cancelSubmissions = 0;
+  unknownRegistrationOnce = false;
+  unknownRegistrationBroadcast = true;
+  registrationConfirmationFailureOnce = false;
+  registrationRevertOnce = false;
+  resolveOnRegistration = false;
   unknownCancelOnce = false;
   unknownCancelBroadcast = true;
   errorSecret = '';
@@ -118,6 +142,15 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
     const action = this.action(transaction);
     if (action.type === 'APPROVE') {
       this.approvalSubmissions += 1;
+    } else if (action.type === 'REGISTER') {
+      this.registrationSubmissions += 1;
+      if (this.unknownRegistrationOnce) {
+        this.unknownRegistrationOnce = false;
+        if (this.unknownRegistrationBroadcast) this.apply(action);
+        throw Object.assign(new Error('socket hang up during registration'), {
+          code: 'ECONNRESET',
+        });
+      }
     } else {
       this.cancelSubmissions += 1;
       if (this.unknownCancelOnce) {
@@ -138,6 +171,20 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
   async confirm(txHash: Hex): Promise<ConfirmedTransaction> {
     const action = this.actions.get(txHash);
     if (action === undefined) throw new Error('unknown test transaction');
+    if (
+      action.type === 'REGISTER' &&
+      this.registrationConfirmationFailureOnce
+    ) {
+      this.registrationConfirmationFailureOnce = false;
+      throw Object.assign(new Error('registration receipt unavailable'), {
+        code: 'ECONNRESET',
+      });
+    }
+    if (action.type === 'REGISTER' && this.registrationRevertOnce) {
+      this.registrationRevertOnce = false;
+      this.actions.delete(txHash);
+      return { status: 'reverted', blockNumber: this.state.blockNumber };
+    }
     this.apply(action);
     this.actions.delete(txHash);
     return { status: 'success', blockNumber: this.state.blockNumber };
@@ -146,6 +193,27 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
   private action(transaction: TxRequest): SubmittedAction {
     if (transaction.to.toLowerCase() === ADDRESSES.ctf.toLowerCase()) {
       return { type: 'APPROVE' };
+    }
+    if (transaction.to.toLowerCase() === ADDRESSES.ctfExchange.toLowerCase()) {
+      const decoded = decodeFunctionData({
+        abi: ctfExchangeAbi,
+        data: transaction.data,
+      });
+      const [tokenId, complement, conditionId] = decoded.args ?? [];
+      if (
+        decoded.functionName !== 'registerToken' ||
+        typeof tokenId !== 'bigint' ||
+        typeof complement !== 'bigint' ||
+        typeof conditionId !== 'string'
+      ) {
+        throw new Error('unexpected CTFExchange migration transaction');
+      }
+      return {
+        type: 'REGISTER',
+        tokenId,
+        complement,
+        conditionId: conditionId as Hex,
+      };
     }
     const decoded = decodeFunctionData({
       abi: miniClobAbi,
@@ -163,6 +231,18 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
     this.state.blockTimestamp += 1n;
     if (action.type === 'APPROVE') {
       this.state.ctfApprovedForAll = true;
+      return;
+    }
+    if (action.type === 'REGISTER') {
+      this.state.yesRegistration = {
+        complementTokenId: action.complement,
+        conditionId: action.conditionId,
+      };
+      this.state.noRegistration = {
+        complementTokenId: action.tokenId,
+        conditionId: action.conditionId,
+      };
+      if (this.resolveOnRegistration) this.state.payoutDenominator = 1n;
       return;
     }
     const order =
@@ -197,6 +277,9 @@ async function createHarness(input: {
   approved?: boolean;
   frozenYesPriceRaw?: bigint;
   minimumTickSizeRaw?: bigint;
+  registration?: 'registered' | 'absent' | 'half' | 'mismatched';
+  registrationAuthorized?: boolean;
+  registrationEnabled?: boolean;
 } = {}): Promise<Harness> {
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
@@ -221,21 +304,55 @@ async function createHarness(input: {
   const noInitiallyRecovered = noOrder.open
     ? 0n
     : noOrder.sizeRaw - noOrder.filledRaw;
+  const absentRegistration = {
+    complementTokenId: 0n,
+    conditionId: zeroHash,
+  } as const;
+  const registeredYes = {
+    complementTokenId: NO_TOKEN_ID,
+    conditionId: MARKET_ONE_CONDITION as Hex,
+  } as const;
+  const registeredNo = {
+    complementTokenId: YES_TOKEN_ID,
+    conditionId: MARKET_ONE_CONDITION as Hex,
+  } as const;
+  const registration = input.registration ?? 'registered';
   const state: BookMigrationChainState = {
     blockNumber: 500,
     blockTimestamp: BigInt(BOOK_NOW),
     makerNonce: 7n,
     ctfApprovedForAll: input.approved ?? true,
+    registrationAuthorized: input.registrationAuthorized ?? true,
+    exchangeCtfAddress: ADDRESSES.ctf,
+    exchangeCollateralAddress: ADDRESSES.usdc,
+    conditionPrepared: true,
     payoutDenominator: 0n,
     yesBalanceRaw: yesInitiallyRecovered,
     noBalanceRaw: noInitiallyRecovered,
-    yesRegistration: {
-      complementTokenId: NO_TOKEN_ID,
-      conditionId: MARKET_ONE_CONDITION as Hex,
+    yesRegistration:
+      registration === 'absent'
+        ? { ...absentRegistration }
+        : registration === 'mismatched'
+          ? { ...registeredYes, complementTokenId: NO_TOKEN_ID + 1n }
+          : { ...registeredYes },
+    noRegistration:
+      registration === 'absent' || registration === 'half'
+        ? { ...absentRegistration }
+        : { ...registeredNo },
+    registryLifecycle: {
+      creator: DEPLOYER,
+      marketTypeVersion: 2,
+      state: 3,
+      paused: false,
     },
-    noRegistration: {
-      complementTokenId: YES_TOKEN_ID,
+    registryBinding: {
+      collateralAddress: ADDRESSES.usdc,
+      ctfAddress: ADDRESSES.ctf,
+      oracleAddress: ADDRESSES.oracle,
+      questionId: MARKET_ONE_QUESTION as Hex,
       conditionId: MARKET_ONE_CONDITION as Hex,
+      yesTokenId: YES_TOKEN_ID,
+      noTokenId: NO_TOKEN_ID,
     },
     yesOrder,
     noOrder,
@@ -290,6 +407,8 @@ async function createHarness(input: {
     account,
     logger,
     () => clock.value,
+    undefined,
+    input.registrationEnabled ?? true,
   );
   return {
     account,
@@ -332,6 +451,115 @@ describe('graduated book migration', () => {
     await seedContractData();
   });
 
+  it('pins every registration prerequisite to one fresh block', async () => {
+    const getChainId = vi.fn(async () => 5_042_002);
+    const getBlock = vi.fn(async () => ({
+      number: 500n,
+      timestamp: BigInt(BOOK_NOW),
+    }));
+    const multicall = vi.fn(async (_parameters: unknown) => [
+      [
+        DEPLOYER,
+        MARKET_ONE_CONDITION,
+        YES_TOKEN_ID,
+        BigInt(Side.SELL),
+        600_000n,
+        5_000_000n,
+        0n,
+        true,
+      ],
+      [
+        DEPLOYER,
+        MARKET_ONE_CONDITION,
+        NO_TOKEN_ID,
+        BigInt(Side.SELL),
+        400_000n,
+        5_000_000n,
+        0n,
+        true,
+      ],
+      7n,
+      true,
+      0n,
+      0n,
+      [NO_TOKEN_ID, MARKET_ONE_CONDITION],
+      [YES_TOKEN_ID, MARKET_ONE_CONDITION],
+      0n,
+      [DEPLOYER, 2n, 3n, false],
+      [
+        ADDRESSES.usdc,
+        ADDRESSES.ctf,
+        ADDRESSES.oracle,
+        MARKET_ONE_QUESTION,
+        MARKET_ONE_CONDITION,
+        YES_TOKEN_ID,
+        NO_TOKEN_ID,
+      ],
+      true,
+      ADDRESSES.ctf,
+      ADDRESSES.usdc,
+      true,
+    ]);
+    const reader = new ViemOrderChainReader({
+      getChainId,
+      getBlock,
+      multicall,
+    } as unknown as PublicClient);
+
+    await expect(
+      reader.readBookMigrationState({
+        marketId: 1n,
+        maker: DEPLOYER,
+        conditionId: MARKET_ONE_CONDITION as Hex,
+        yesTokenId: YES_TOKEN_ID,
+        noTokenId: NO_TOKEN_ID,
+        yesSeedOrderId: YES_SEED_ID,
+        noSeedOrderId: NO_SEED_ID,
+      }),
+    ).resolves.toMatchObject({
+      blockNumber: 500,
+      conditionPrepared: true,
+      registrationAuthorized: true,
+      exchangeCtfAddress: ADDRESSES.ctf,
+      exchangeCollateralAddress: ADDRESSES.usdc,
+      registryLifecycle: {
+        creator: DEPLOYER,
+        marketTypeVersion: 2,
+        state: 3,
+        paused: false,
+      },
+      registryBinding: {
+        conditionId: MARKET_ONE_CONDITION,
+        yesTokenId: YES_TOKEN_ID,
+        noTokenId: NO_TOKEN_ID,
+      },
+    });
+    expect(getChainId).toHaveBeenCalledOnce();
+    expect(getBlock).toHaveBeenCalledWith({ blockTag: 'latest' });
+    const request = multicall.mock.calls[0]?.[0] as {
+      blockNumber: bigint;
+      contracts: Array<{ functionName: string }>;
+    };
+    expect(request.blockNumber).toBe(500n);
+    expect(request.contracts.map(({ functionName }) => functionName)).toEqual([
+      'getOrder',
+      'getOrder',
+      'makerNonce',
+      'isApprovedForAll',
+      'balanceOf',
+      'balanceOf',
+      'registry',
+      'registry',
+      'payoutDenominator',
+      'marketLifecycle',
+      'tokenBinding',
+      'isConditionPrepared',
+      'ctf',
+      'collateral',
+      'hasRole',
+    ]);
+  });
+
   it('stages first, migrates both unfilled seeds at complementary prices, and flips venue', async () => {
     const harness = await createHarness();
     const before = await getMarketBook(testPrisma, '1');
@@ -347,6 +575,7 @@ describe('graduated book migration', () => {
       await testPrisma.signedOrder.findMany({ select: { status: true } }),
     ).toEqual([{ status: 'STAGED' }, { status: 'STAGED' }]);
     expect(harness.submitter.cancelSubmissions).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
 
     await runToStatus(harness, 'MIGRATED');
     const replacements = await testPrisma.signedOrder.findMany({
@@ -488,6 +717,432 @@ describe('graduated book migration', () => {
       testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }),
     ).resolves.toMatchObject({ status: 'STAGED' });
     expect(harness.reader.migrationReads).toBe(1);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
+  it('treats an exact existing token registration as the idempotent success case', async () => {
+    const harness = await createHarness();
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({ status: 'STAGED' });
+  });
+
+  it('registers an absent token pair exactly once before staging or cancellation', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'DISCOVERED',
+      registrationStatus: 'CONFIRMED',
+      registrationBlockNumber: 501,
+    });
+    expect(harness.state.yesRegistration).toEqual({
+      complementTokenId: NO_TOKEN_ID,
+      conditionId: MARKET_ONE_CONDITION,
+    });
+    expect(harness.state.noRegistration).toEqual({
+      complementTokenId: YES_TOKEN_ID,
+      conditionId: MARKET_ONE_CONDITION,
+    });
+
+    await runToStatus(harness, 'MIGRATED');
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+  });
+
+  it('recovers only the legacy unregistered publish failure without cancelling seeds again', async () => {
+    const harness = await createHarness();
+    await runToStatus(harness, 'CANCELLED');
+    const cancellationsBeforeRecovery = harness.submitter.cancelSubmissions;
+    harness.state.yesRegistration = {
+      complementTokenId: 0n,
+      conditionId: zeroHash,
+    };
+    harness.state.noRegistration = {
+      complementTokenId: 0n,
+      conditionId: zeroHash,
+    };
+    await testPrisma.bookMigration.update({
+      where: { marketId: '1' },
+      data: {
+        status: 'STAGED',
+        registrationStatus: 'UNCHECKED',
+        registrationTxHash: null,
+        registrationBlockNumber: null,
+        nextAttemptAt: 0,
+        claimToken: null,
+        claimExpiresAt: null,
+        lastFailureCode: 'TOKEN_NOT_REGISTERED',
+        lastFailureMessage: 'Legacy publish failure',
+        lastFailureAt: BOOK_NOW - 1,
+      },
+    });
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'PROGRESSED',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(harness.submitter.cancelSubmissions).toBe(
+      cancellationsBeforeRecovery,
+    );
+    await runToStatus(harness, 'MIGRATED');
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(harness.submitter.cancelSubmissions).toBe(
+      cancellationsBeforeRecovery,
+    );
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'MIGRATED',
+      registrationStatus: 'CONFIRMED',
+      lastFailureCode: null,
+    });
+  });
+
+  it('leaves unrelated legacy FAILED migrations terminal', async () => {
+    const harness = await createHarness();
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'FAILED',
+        yesSeedOrderId: YES_SEED_ID.toString(),
+        noSeedOrderId: NO_SEED_ID.toString(),
+        lastFailureCode: 'INVALID_SEED',
+        lastFailureMessage: 'Unrelated terminal failure',
+        lastFailureAt: BOOK_NOW - 1,
+        createdAt: BOOK_NOW - 10,
+        updatedAt: BOOK_NOW - 1,
+      },
+    });
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'IDLE',
+    });
+    expect(harness.reader.migrationReads).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'FAILED',
+      lastFailureCode: 'INVALID_SEED',
+    });
+  });
+
+  it.each(['half', 'mismatched'] as const)(
+    'fails closed for a %s token registration without submitting or cancelling',
+    async (registration) => {
+      const harness = await createHarness({ registration });
+
+      await expect(harness.operator.processOnce()).resolves.toEqual({
+        outcome: 'FAILED',
+        marketId: '1',
+        retryAfterMs: 0,
+        failureCode: 'TOKEN_REGISTRATION_MISMATCH',
+      });
+      expect(harness.submitter.registrationSubmissions).toBe(0);
+      expect(harness.submitter.cancelSubmissions).toBe(0);
+      await expect(
+        testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+      ).resolves.toMatchObject({
+        status: 'FAILED',
+        lastFailureCode: 'TOKEN_REGISTRATION_MISMATCH',
+      });
+    },
+  );
+
+  it('fails closed when the operator lacks the registration role', async () => {
+    const harness = await createHarness({
+      registration: 'absent',
+      registrationAuthorized: false,
+    });
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'FAILED',
+      marketId: '1',
+      retryAfterMs: 0,
+      failureCode: 'REGISTRATION_UNAUTHORIZED',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
+  it('defers an absent registration while testnet auto-registration is disabled', async () => {
+    const harness = await createHarness({
+      registration: 'absent',
+      registrationEnabled: false,
+    });
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'REGISTRATION_DISABLED',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'DISCOVERED',
+      lastFailureCode: 'REGISTRATION_DISABLED',
+    });
+  });
+
+  it('fails closed when the fresh Conditional Tokens condition is unprepared', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.state.conditionPrepared = false;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'CONDITION_NOT_PREPARED',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
+  it('fails closed when the fresh registry lifecycle is not tradable', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.state.registryLifecycle.paused = true;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'REGISTRY_LIFECYCLE_MISMATCH',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
+  it('fails closed when the fresh registry token binding differs', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.state.registryBinding.yesTokenId += 1n;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'REGISTRY_BINDING_MISMATCH',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
+  it('stops safely when resolution races a successful registration', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.submitter.resolveOnRegistration = true;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'MARKET_RESOLVED',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({ status: 'FAILED' });
+  });
+
+  it('immediately reconciles a landed registration after its submit transport fails', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.submitter.unknownRegistrationOnce = true;
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'DISCOVERED',
+      registrationStatus: 'CONFIRMED',
+      registrationTxHash: null,
+      registrationBlockNumber: 501,
+    });
+  });
+
+  it('reconciles a persisted ambiguous registration from chain state after restart', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'REGISTRATION_SUBMISSION_UNKNOWN',
+        registrationStatus: 'SUBMISSION_UNKNOWN',
+        yesSeedOrderId: YES_SEED_ID.toString(),
+        noSeedOrderId: NO_SEED_ID.toString(),
+        createdAt: BOOK_NOW - 10,
+        updatedAt: BOOK_NOW - 1,
+      },
+    });
+    harness.state.yesRegistration = {
+      complementTokenId: NO_TOKEN_ID,
+      conditionId: MARKET_ONE_CONDITION as Hex,
+    };
+    harness.state.noRegistration = {
+      complementTokenId: YES_TOKEN_ID,
+      conditionId: MARKET_ONE_CONDITION as Hex,
+    };
+
+    const restarted = new BookMigrationOperator(
+      testPrisma,
+      harness.reader,
+      harness.submitter,
+      harness.account,
+      {
+        info: (message) => harness.messages.push(message),
+        warn: (message) => harness.messages.push(message),
+      },
+      () => harness.clock.value,
+    );
+    await expect(restarted.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'DISCOVERED',
+      registrationStatus: 'CONFIRMED',
+    });
+  });
+
+  it('quarantines an unlanded ambiguous submission until the exact pair appears', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.submitter.unknownRegistrationOnce = true;
+    harness.submitter.unknownRegistrationBroadcast = false;
+
+    await harness.operator.processOnce();
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    harness.clock.value += 5;
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'REGISTRATION_OUTCOME_UNKNOWN',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'REGISTRATION_SUBMISSION_UNKNOWN',
+      registrationStatus: 'SUBMISSION_UNKNOWN',
+      registrationTxHash: null,
+    });
+
+    harness.clock.value += 61;
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'REGISTRATION_OUTCOME_UNKNOWN',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+
+    harness.state.yesRegistration = {
+      complementTokenId: NO_TOKEN_ID,
+      conditionId: MARKET_ONE_CONDITION as Hex,
+    };
+    harness.state.noRegistration = {
+      complementTokenId: YES_TOKEN_ID,
+      conditionId: MARKET_ONE_CONDITION as Hex,
+    };
+    harness.clock.value += 61;
+    const restarted = new BookMigrationOperator(
+      testPrisma,
+      harness.reader,
+      harness.submitter,
+      harness.account,
+      {
+        info: (message) => harness.messages.push(message),
+        warn: (message) => harness.messages.push(message),
+      },
+      () => harness.clock.value,
+    );
+    await expect(restarted.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'DISCOVERED',
+      registrationStatus: 'CONFIRMED',
+    });
+  });
+
+  it('retains a submitted registration hash across receipt failure and restart', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.submitter.registrationConfirmationFailureOnce = true;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'REGISTRATION_CONFIRMATION_PENDING',
+    });
+    const submitted = await testPrisma.bookMigration.findUniqueOrThrow({
+      where: { marketId: '1' },
+    });
+    expect(submitted).toMatchObject({
+      status: 'REGISTRATION_SUBMITTED',
+      registrationStatus: 'SUBMITTED',
+    });
+    expect(submitted.registrationTxHash).not.toBeNull();
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+
+    harness.clock.value += 5;
+    const restarted = new BookMigrationOperator(
+      testPrisma,
+      harness.reader,
+      harness.submitter,
+      harness.account,
+      {
+        info: (message) => harness.messages.push(message),
+        warn: (message) => harness.messages.push(message),
+      },
+      () => harness.clock.value,
+    );
+    await expect(restarted.processOnce()).resolves.toMatchObject({
+      outcome: 'PROGRESSED',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'DISCOVERED',
+      registrationStatus: 'CONFIRMED',
+      registrationBlockNumber: 501,
+    });
+  });
+
+  it('fails terminally when a confirmed registration transaction reverted', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.submitter.registrationRevertOnce = true;
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'FAILED',
+      marketId: '1',
+      retryAfterMs: 0,
+      failureCode: 'REGISTRATION_REVERTED',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
+  it('never attempts registration when the condition is already resolved', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.state.payoutDenominator = 1n;
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'FAILED',
+      marketId: '1',
+      retryAfterMs: 0,
+      failureCode: 'MARKET_RESOLVED',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
     expect(harness.submitter.cancelSubmissions).toBe(0);
   });
 

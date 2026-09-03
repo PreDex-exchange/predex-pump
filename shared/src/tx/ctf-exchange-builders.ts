@@ -10,6 +10,7 @@ import type {
   CtfExchangeFillOrdersTxInput,
   CtfExchangeFillOrderTxInput,
   CtfExchangeMatchOrdersTxInput,
+  CtfExchangeRegisterTokenTxInput,
   TxRequest,
 } from './types';
 
@@ -42,6 +43,18 @@ export function buildCtfExchangeCollateralApprovalTx({
     spender: ADDRESSES.ctfExchange,
     amountRaw,
   });
+}
+
+export function buildCtfExchangeRegisterTokenTx({
+  tokenId,
+  complement,
+  conditionId,
+}: CtfExchangeRegisterTokenTxInput) {
+  return buildCtfExchangeTx('registerToken', [
+    tokenId,
+    complement,
+    conditionId,
+  ]);
 }
 
 export function buildCtfExchangeFillOrderTx({

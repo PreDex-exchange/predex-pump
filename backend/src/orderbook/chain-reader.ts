@@ -1,6 +1,9 @@
 import conditionalTokensAbiJson from '@predex-pump/shared/abis/ConditionalTokens.json' with {
   type: 'json',
 };
+import registryAbiJson from '@predex-pump/shared/abis/IncubatorRegistry.json' with {
+  type: 'json',
+};
 import { ADDRESSES, ARC } from '@predex-pump/shared';
 import {
   Side,
@@ -13,6 +16,8 @@ import {
   createPublicClient,
   fallback,
   http,
+  keccak256,
+  stringToHex,
   type Abi,
   type ContractFunctionParameters,
   type Hex,
@@ -22,6 +27,8 @@ import {
 import { ARC_CHAIN } from '../chain.js';
 
 const conditionalTokensAbi = conditionalTokensAbiJson as Abi;
+const registryAbi = registryAbiJson as Abi;
+const CTF_EXCHANGE_ADMIN_ROLE = keccak256(stringToHex('ADMIN_ROLE'));
 
 export { ARC_CHAIN };
 
@@ -62,6 +69,10 @@ export interface BookMigrationChainState {
   blockTimestamp: bigint;
   makerNonce: bigint;
   ctfApprovedForAll: boolean;
+  registrationAuthorized: boolean;
+  exchangeCtfAddress: Hex;
+  exchangeCollateralAddress: Hex;
+  conditionPrepared: boolean;
   payoutDenominator: bigint;
   yesBalanceRaw: bigint;
   noBalanceRaw: bigint;
@@ -73,12 +84,28 @@ export interface BookMigrationChainState {
     complementTokenId: bigint;
     conditionId: Hex;
   };
+  registryLifecycle: {
+    creator: Hex;
+    marketTypeVersion: number;
+    state: number;
+    paused: boolean;
+  };
+  registryBinding: {
+    collateralAddress: Hex;
+    ctfAddress: Hex;
+    oracleAddress: Hex;
+    questionId: Hex;
+    conditionId: Hex;
+    yesTokenId: bigint;
+    noTokenId: bigint;
+  };
   yesOrder: MiniClobSeedOrderState;
   noOrder: MiniClobSeedOrderState;
 }
 
 export interface BookMigrationChainReader {
   readBookMigrationState(input: {
+    marketId: bigint;
     maker: Hex;
     conditionId: Hex;
     yesTokenId: bigint;
@@ -131,6 +158,66 @@ function integerValue(value: unknown, field: string): bigint {
     return BigInt(value);
   }
   throw new Error(`MiniCLOB returned an unexpected ${field}`);
+}
+
+function outputFields(
+  value: unknown,
+  names: readonly string[],
+  label: string,
+): readonly unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+    return names.map((name) => record[name]);
+  }
+  throw new Error(`${label} returned an unexpected value`);
+}
+
+function registryLifecycleTuple(value: unknown): BookMigrationChainState['registryLifecycle'] {
+  const fields = outputFields(
+    value,
+    ['creator', 'marketTypeVersion', 'state', 'paused'],
+    'IncubatorRegistry marketLifecycle',
+  );
+  const creator = fields[0];
+  const paused = fields[3];
+  if (typeof creator !== 'string' || typeof paused !== 'boolean') {
+    throw new Error('IncubatorRegistry returned an unexpected market lifecycle');
+  }
+  return {
+    creator: creator as Hex,
+    marketTypeVersion: Number(integerValue(fields[1], 'marketTypeVersion')),
+    state: Number(integerValue(fields[2], 'market lifecycle state')),
+    paused,
+  };
+}
+
+function registryBindingTuple(value: unknown): BookMigrationChainState['registryBinding'] {
+  const fields = outputFields(
+    value,
+    [
+      'collateral_',
+      'ctf_',
+      'oracle_',
+      'questionId',
+      'conditionId',
+      'yesTokenId',
+      'noTokenId',
+    ],
+    'IncubatorRegistry tokenBinding',
+  );
+  if (fields.slice(0, 5).some((field) => typeof field !== 'string')) {
+    throw new Error('IncubatorRegistry returned an unexpected token binding');
+  }
+  return {
+    collateralAddress: fields[0] as Hex,
+    ctfAddress: fields[1] as Hex,
+    oracleAddress: fields[2] as Hex,
+    questionId: fields[3] as Hex,
+    conditionId: fields[4] as Hex,
+    yesTokenId: integerValue(fields[5], 'YES token id'),
+    noTokenId: integerValue(fields[6], 'NO token id'),
+  };
 }
 
 function miniClobOrderTuple(
@@ -284,6 +371,7 @@ export class ViemOrderChainReader
   }
 
   async readBookMigrationState(input: {
+    marketId: bigint;
     maker: Hex;
     conditionId: Hex;
     yesTokenId: bigint;
@@ -291,6 +379,12 @@ export class ViemOrderChainReader
     yesSeedOrderId: bigint;
     noSeedOrderId: bigint;
   }): Promise<BookMigrationChainState> {
+    const chainId = await this.client.getChainId();
+    if (chainId !== ARC.chainId) {
+      throw new Error(
+        `Operator RPC chain=${chainId} does not match Arc chain=${ARC.chainId}`,
+      );
+    }
     const block = await this.client.getBlock({ blockTag: 'latest' });
     if (block.number === null) throw new Error('Latest Arc block omitted its number');
     const results = await this.client.multicall({
@@ -351,6 +445,40 @@ export class ViemOrderChainReader
           functionName: 'payoutDenominator',
           args: [input.conditionId],
         },
+        {
+          address: ADDRESSES.registry,
+          abi: registryAbi,
+          functionName: 'marketLifecycle',
+          args: [input.marketId],
+        },
+        {
+          address: ADDRESSES.registry,
+          abi: registryAbi,
+          functionName: 'tokenBinding',
+          args: [input.marketId],
+        },
+        {
+          address: ADDRESSES.ctf,
+          abi: conditionalTokensAbi,
+          functionName: 'isConditionPrepared',
+          args: [input.conditionId],
+        },
+        {
+          address: ADDRESSES.ctfExchange,
+          abi: ctfExchangeAbi as Abi,
+          functionName: 'ctf',
+        },
+        {
+          address: ADDRESSES.ctfExchange,
+          abi: ctfExchangeAbi as Abi,
+          functionName: 'collateral',
+        },
+        {
+          address: ADDRESSES.ctfExchange,
+          abi: ctfExchangeAbi as Abi,
+          functionName: 'hasRole',
+          args: [CTF_EXCHANGE_ADMIN_ROLE, input.maker],
+        },
       ],
     });
     const makerNonce = results[2];
@@ -358,12 +486,22 @@ export class ViemOrderChainReader
     const yesBalanceRaw = results[4];
     const noBalanceRaw = results[5];
     const payoutDenominator = results[8];
+    const registryLifecycle = registryLifecycleTuple(results[9]);
+    const registryBinding = registryBindingTuple(results[10]);
+    const conditionPrepared = results[11];
+    const exchangeCtfAddress = results[12];
+    const exchangeCollateralAddress = results[13];
+    const registrationAuthorized = results[14];
     if (
       typeof makerNonce !== 'bigint' ||
       typeof approved !== 'boolean' ||
       typeof yesBalanceRaw !== 'bigint' ||
       typeof noBalanceRaw !== 'bigint' ||
-      typeof payoutDenominator !== 'bigint'
+      typeof payoutDenominator !== 'bigint' ||
+      typeof conditionPrepared !== 'boolean' ||
+      typeof exchangeCtfAddress !== 'string' ||
+      typeof exchangeCollateralAddress !== 'string' ||
+      typeof registrationAuthorized !== 'boolean'
     ) {
       throw new Error('Arc returned unexpected migration validation state');
     }
@@ -374,6 +512,10 @@ export class ViemOrderChainReader
       blockTimestamp: block.timestamp,
       makerNonce,
       ctfApprovedForAll: approved,
+      registrationAuthorized,
+      exchangeCtfAddress: exchangeCtfAddress as Hex,
+      exchangeCollateralAddress: exchangeCollateralAddress as Hex,
+      conditionPrepared,
       payoutDenominator,
       yesBalanceRaw,
       noBalanceRaw,
@@ -385,6 +527,8 @@ export class ViemOrderChainReader
         complementTokenId: noComplementTokenId,
         conditionId: noConditionId,
       },
+      registryLifecycle,
+      registryBinding,
       yesOrder: miniClobOrderTuple(input.yesSeedOrderId, results[0]),
       noOrder: miniClobOrderTuple(input.noSeedOrderId, results[1]),
     };

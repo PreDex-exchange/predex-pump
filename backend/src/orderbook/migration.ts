@@ -8,6 +8,7 @@ import {
   type SignedOrder,
 } from '@prisma/client';
 import {
+  ADDRESSES,
   ALLOWED_MINIMUM_TICK_SIZES_RAW,
   ORDER_PRICE_SCALE_RAW,
   assertAllowedMinimumTickSizeRaw,
@@ -19,6 +20,7 @@ import {
   Side,
   buildCtfExchangeApprovalForAllTx,
   buildCtfExchangeOrder,
+  buildCtfExchangeRegisterTokenTx,
   buildMiniClobCancelTx,
   ctfExchangeOrderTerms,
   generateOrderSalt,
@@ -48,6 +50,7 @@ import { preflightSignedOrder } from './preflight.js';
 import { persistOrderValidationSnapshot } from './service.js';
 
 const CLAIM_LEASE_SECONDS = 120;
+const REGISTRATION_UNKNOWN_RECHECK_MS = 60_000;
 const MAX_MIGRATION_PRICE_DEVIATION_RAW =
   ALLOWED_MINIMUM_TICK_SIZES_RAW.at(-1)! - 1n;
 
@@ -55,7 +58,12 @@ const MAX_MIGRATION_PRICE_DEVIATION_RAW =
  * Durable state machine (all replacement rows remain status=STAGED until the
  * final database transaction):
  *
- *   DISCOVERED ──snapshot/sign──> STAGED
+ *   DISCOVERED ──registration missing──> REGISTRATION_SUBMITTING
+ *       │                                      │ send returned hash
+ *       │                                      v
+ *       │                               REGISTRATION_SUBMITTED
+ *       │                                      │ confirmed + re-read
+ *       └─registration exact───────────────────┴──> snapshot/sign ──> STAGED
  *       STAGED ──approval needed──> APPROVAL_SUBMITTING
  *          │                            │ send returned hash
  *          │                            v
@@ -82,7 +90,9 @@ const MAX_MIGRATION_PRICE_DEVIATION_RAW =
  *                                                            v
  *                                                        MIGRATED
  *
- * APPROVAL_SUBMISSION_UNKNOWN follows the same re-read-before-retry rule.
+ * REGISTRATION_SUBMISSION_UNKNOWN and APPROVAL_SUBMISSION_UNKNOWN follow the
+ * same re-read-before-retry rule. Registration status, hash, and confirmation
+ * block stay on this same per-market migration row.
  * Any in-flight state is restartable; MIGRATED and FAILED are terminal.
  */
 
@@ -101,6 +111,14 @@ type Outcome = 'YES' | 'NO';
 class MigrationInvariantError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
+  }
+}
+
+class RegistrationCheckpointError extends Error {
+  constructor(cause: unknown) {
+    super('Registration was submitted but its transaction hash was not checkpointed', {
+      cause,
+    });
   }
 }
 
@@ -138,19 +156,38 @@ function hasReplacements(migration: BookMigration): boolean {
   );
 }
 
+type RegistrationDisposition = 'REGISTERED' | 'ABSENT' | 'MISMATCHED';
+
+function isRegistrationFailure(code: string): boolean {
+  return (
+    code === 'TOKEN_REGISTRATION_MISMATCH' ||
+    code === 'REGISTRATION_UNAUTHORIZED' ||
+    code === 'REGISTRATION_REVERTED' ||
+    code === 'REGISTRATION_NOT_APPLIED' ||
+    code.startsWith('REGISTRATION_SUBMIT_')
+  );
+}
+
 function safeMessage(code: string): string {
   const messages: Record<string, string> = {
     APPROVAL_REVERTED: 'CTFExchange token approval transaction reverted',
     CANCEL_REVERTED: 'MiniCLOB seed cancellation transaction reverted',
     CANCEL_NOT_APPLIED: 'Confirmed MiniCLOB cancellation left the seed order open',
     INVALID_SEED: 'MiniCLOB seed state does not match the graduated market',
+    CONDITION_NOT_PREPARED: 'Conditional Tokens condition is not prepared',
+    EXCHANGE_IMMUTABLE_MISMATCH: 'CTFExchange immutable bindings do not match the configured deployment',
     INVALID_TICK_SIZE: 'Market minimum tick size is outside the supported policy',
     MARKET_RESOLVED: 'Market resolved before its book migration completed',
     MISSING_RECOVERED_BALANCE: 'Recovered position-token balance is below the staged order size',
     MIGRATION_PRICE_OUT_OF_RANGE: 'Tick quantization moved a replacement price outside the supported range',
     MIGRATION_PRICE_DEVIATION: 'Tick quantization exceeded the bounded migration tolerance',
     UNREPRESENTABLE_PRICE: 'Quantized replacement price was not exactly representable',
-    TOKEN_NOT_REGISTERED: 'Market position tokens are not registered on CTFExchange',
+    REGISTRATION_NOT_APPLIED: 'Confirmed CTFExchange registration did not register the token pair',
+    REGISTRATION_REVERTED: 'CTFExchange token registration transaction reverted',
+    REGISTRATION_UNAUTHORIZED: 'Operator is not authorized to register CTFExchange tokens',
+    REGISTRY_BINDING_MISMATCH: 'Fresh registry token binding conflicts with the indexed market',
+    REGISTRY_LIFECYCLE_MISMATCH: 'Fresh registry lifecycle is not the expected graduated market',
+    TOKEN_REGISTRATION_MISMATCH: 'CTFExchange token registration is partial or conflicts with the market',
     WRONG_NONCE: 'Operator nonce changed before migration publication',
   };
   return messages[code] ?? 'Book migration failed an invariant check';
@@ -165,6 +202,7 @@ export class BookMigrationOperator {
     private readonly logger: OperatorLogger,
     private readonly now: () => number = unixNow,
     private readonly claimLeaseSeconds = CLAIM_LEASE_SECONDS,
+    private readonly registrationEnabled = false,
   ) {}
 
   async processOnce(): Promise<MigrationIterationResult> {
@@ -178,6 +216,11 @@ export class BookMigrationOperator {
         case 'DISCOVERED':
         case 'STAGING':
           return await this.stageFromFreshSnapshot(migration);
+        case 'REGISTRATION_SUBMITTING':
+        case 'REGISTRATION_SUBMISSION_UNKNOWN':
+          return await this.reconcileUnknownRegistration(migration);
+        case 'REGISTRATION_SUBMITTED':
+          return await this.confirmRegistration(migration);
         case 'STAGED':
           return await this.prepareApprovalOrCancellation(migration);
         case 'APPROVAL_SUBMITTING':
@@ -204,7 +247,21 @@ export class BookMigrationOperator {
       }
     } catch (error) {
       if (error instanceof MigrationInvariantError) {
-        return this.failTerminal(migration, error.code, safeMessage(error.code));
+        return this.failTerminal(
+          migration,
+          error.code,
+          safeMessage(error.code),
+          isRegistrationFailure(error.code)
+            ? { registrationStatus: 'FAILED' }
+            : {},
+        );
+      }
+      if (error instanceof RegistrationCheckpointError) {
+        // REGISTRATION_SUBMITTING was persisted before broadcast. Keep that
+        // ambiguity state intact so the next lease holder re-reads both
+        // mappings instead of treating a database checkpoint failure as a
+        // terminal contract failure.
+        return this.retry(migration, 'REGISTRATION_CHECKPOINT_PENDING', 1_000);
       }
       const failure = operatorFailure(error, migration.attemptCount + 1);
       if (failure.code.startsWith('RPC_')) {
@@ -300,6 +357,7 @@ export class BookMigrationOperator {
       throw new MigrationInvariantError('INVALID_SEED', 'Market token binding is missing');
     }
     return {
+      marketId: BigInt(market.id),
       maker: this.account.address as Hex,
       conditionId: market.conditionId as Hex,
       yesTokenId: BigInt(market.yesTokenId),
@@ -326,8 +384,59 @@ export class BookMigrationOperator {
     if (state.payoutDenominator !== 0n) {
       throw new MigrationInvariantError('MARKET_RESOLVED', 'Market is resolved');
     }
+    if (!state.conditionPrepared) {
+      throw new MigrationInvariantError(
+        'CONDITION_NOT_PREPARED',
+        'Conditional Tokens condition is not prepared',
+      );
+    }
     if (market.yesTokenId === null || market.noTokenId === null) {
       throw new MigrationInvariantError('INVALID_SEED', 'Market token binding is missing');
+    }
+    if (state.registryLifecycle.state >= 4) {
+      throw new MigrationInvariantError(
+        'MARKET_RESOLVED',
+        'Registry reports a resolved market',
+      );
+    }
+    if (
+      state.registryLifecycle.state !== 3 ||
+      state.registryLifecycle.paused ||
+      !isAddressEqual(
+        state.registryLifecycle.creator,
+        market.creator as Hex,
+      ) ||
+      state.registryLifecycle.marketTypeVersion !== market.marketTypeVersion
+    ) {
+      throw new MigrationInvariantError(
+        'REGISTRY_LIFECYCLE_MISMATCH',
+        'Registry lifecycle does not match the graduated market',
+      );
+    }
+    if (
+      !isAddressEqual(state.registryBinding.collateralAddress, ADDRESSES.usdc) ||
+      !isAddressEqual(state.registryBinding.ctfAddress, ADDRESSES.ctf) ||
+      !isAddressEqual(state.registryBinding.oracleAddress, ADDRESSES.oracle) ||
+      state.registryBinding.questionId.toLowerCase() !==
+        market.questionId.toLowerCase() ||
+      state.registryBinding.conditionId.toLowerCase() !==
+        market.conditionId.toLowerCase() ||
+      state.registryBinding.yesTokenId !== BigInt(market.yesTokenId) ||
+      state.registryBinding.noTokenId !== BigInt(market.noTokenId)
+    ) {
+      throw new MigrationInvariantError(
+        'REGISTRY_BINDING_MISMATCH',
+        'Registry token binding does not match the indexed market',
+      );
+    }
+    if (
+      !isAddressEqual(state.exchangeCtfAddress, ADDRESSES.ctf) ||
+      !isAddressEqual(state.exchangeCollateralAddress, ADDRESSES.usdc)
+    ) {
+      throw new MigrationInvariantError(
+        'EXCHANGE_IMMUTABLE_MISMATCH',
+        'CTFExchange immutable bindings do not match the deployment',
+      );
     }
     const expected = [
       [state.yesOrder, BigInt(market.yesTokenId)],
@@ -364,7 +473,272 @@ export class BookMigrationOperator {
   private async stageFromFreshSnapshot(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
-    return this.stageFromState(migration, await this.readState(migration));
+    const state = await this.readState(migration);
+    const registration = await this.registerIfNeeded(migration, state);
+    return registration ?? this.stageFromState(migration, state);
+  }
+
+  private registrationDisposition(
+    migration: ClaimedMigration,
+    state: BookMigrationChainState,
+  ): RegistrationDisposition {
+    const { conditionId, yesTokenId, noTokenId } = this.stateInput(migration);
+    const yesAbsent =
+      state.yesRegistration.complementTokenId === 0n &&
+      state.yesRegistration.conditionId.toLowerCase() === zeroHash;
+    const noAbsent =
+      state.noRegistration.complementTokenId === 0n &&
+      state.noRegistration.conditionId.toLowerCase() === zeroHash;
+    if (yesAbsent && noAbsent) return 'ABSENT';
+    const expectedCondition = conditionId.toLowerCase();
+    if (
+      state.yesRegistration.complementTokenId === noTokenId &&
+      state.noRegistration.complementTokenId === yesTokenId &&
+      state.yesRegistration.conditionId.toLowerCase() === expectedCondition &&
+      state.noRegistration.conditionId.toLowerCase() === expectedCondition
+    ) {
+      return 'REGISTERED';
+    }
+    return 'MISMATCHED';
+  }
+
+  private assertRegistrationNotMismatched(
+    disposition: RegistrationDisposition,
+  ): void {
+    if (disposition === 'MISMATCHED') {
+      throw new MigrationInvariantError(
+        'TOKEN_REGISTRATION_MISMATCH',
+        'CTFExchange token registration is partial or mismatched',
+      );
+    }
+  }
+
+  private registrationResumeStatus(migration: ClaimedMigration): string {
+    return hasReplacements(migration) ? 'STAGED' : 'DISCOVERED';
+  }
+
+  private async resumeAfterRegistration(
+    migration: ClaimedMigration,
+    blockNumber: number,
+  ): Promise<MigrationIterationResult> {
+    await this.checkpoint(migration, {
+      status: this.registrationResumeStatus(migration),
+      registrationStatus: 'CONFIRMED',
+      registrationBlockNumber: blockNumber,
+      lastFailureCode: null,
+      lastFailureMessage: null,
+      lastFailureAt: null,
+    });
+    this.logger.info(`[migration] market=${migration.marketId} tokens registered`);
+    return { outcome: 'PROGRESSED', marketId: migration.marketId };
+  }
+
+  private async registerIfNeeded(
+    migration: ClaimedMigration,
+    state: BookMigrationChainState,
+  ): Promise<MigrationIterationResult | null> {
+    const disposition = this.registrationDisposition(migration, state);
+    this.assertRegistrationNotMismatched(disposition);
+    if (disposition === 'REGISTERED') {
+      if (
+        migration.registrationStatus !== 'CONFIRMED' ||
+        migration.registrationBlockNumber === null
+      ) {
+        await this.holdCheckpoint(migration, {
+          registrationStatus: 'CONFIRMED',
+          registrationBlockNumber: state.blockNumber,
+        });
+      }
+      return null;
+    }
+    if (!this.registrationEnabled) {
+      return this.retry(migration, 'REGISTRATION_DISABLED', 60_000);
+    }
+    if (!state.registrationAuthorized) {
+      throw new MigrationInvariantError(
+        'REGISTRATION_UNAUTHORIZED',
+        'Operator lacks CTFExchange ADMIN_ROLE',
+      );
+    }
+
+    const { conditionId, yesTokenId, noTokenId } = this.stateInput(migration);
+    await this.holdCheckpoint(migration, {
+      status: 'REGISTRATION_SUBMITTING',
+      registrationStatus: 'SUBMITTING',
+      registrationTxHash: null,
+      registrationBlockNumber: null,
+      attemptCount: { increment: 1 },
+    });
+    let txHash: Hex;
+    try {
+      txHash = await this.submitter.submit(
+        buildCtfExchangeRegisterTokenTx({
+          tokenId: yesTokenId,
+          complement: noTokenId,
+          conditionId,
+        }),
+      );
+    } catch (error) {
+      // A provider can fail after broadcast. Chain state is the idempotency
+      // authority, so observe both mappings before choosing retry or failure.
+      const refreshed = await this.readState(migration);
+      const refreshedDisposition = this.registrationDisposition(
+        migration,
+        refreshed,
+      );
+      this.assertRegistrationNotMismatched(refreshedDisposition);
+      if (refreshedDisposition === 'REGISTERED') {
+        return this.resumeAfterRegistration(migration, refreshed.blockNumber);
+      }
+      const failure = operatorFailure(error, migration.attemptCount + 1);
+      if (failure.code.startsWith('RPC_')) {
+        return this.registrationSubmissionUnknown(migration, failure);
+      }
+      return this.failTerminal(
+        migration,
+        `REGISTRATION_${failure.code}`,
+        'CTFExchange token registration submission failed',
+        { registrationStatus: 'FAILED' },
+      );
+    }
+    try {
+      await this.holdCheckpoint(migration, {
+        status: 'REGISTRATION_SUBMITTED',
+        registrationStatus: 'SUBMITTED',
+        registrationTxHash: txHash.toLowerCase(),
+      });
+    } catch (error) {
+      throw new RegistrationCheckpointError(error);
+    }
+    return this.confirmRegistration({
+      ...migration,
+      status: 'REGISTRATION_SUBMITTED',
+      registrationStatus: 'SUBMITTED',
+      registrationTxHash: txHash.toLowerCase(),
+    });
+  }
+
+  private async reconcileUnknownRegistration(
+    migration: ClaimedMigration,
+  ): Promise<MigrationIterationResult> {
+    const state = await this.readState(migration);
+    const disposition = this.registrationDisposition(migration, state);
+    this.assertRegistrationNotMismatched(disposition);
+    if (disposition === 'REGISTERED') {
+      const result = await this.resumeAfterRegistration(
+        migration,
+        state.blockNumber,
+      );
+      this.logger.info(
+        `[migration] market=${migration.marketId} ambiguous registration ` +
+          'reconciled=landed',
+      );
+      return result;
+    }
+
+    // Both-zero still cannot distinguish a dropped transaction from one that
+    // remains pending. Keep the migration quarantined until the exact pair is
+    // observable; never submit a second admin transaction automatically.
+    const now = this.now();
+    await this.checkpoint(migration, {
+      status: 'REGISTRATION_SUBMISSION_UNKNOWN',
+      registrationStatus: 'SUBMISSION_UNKNOWN',
+      nextAttemptAt:
+        now + Math.ceil(REGISTRATION_UNKNOWN_RECHECK_MS / 1_000),
+      lastFailureCode: 'REGISTRATION_OUTCOME_UNKNOWN',
+      lastFailureMessage:
+        'Token registration outcome remains unknown; awaiting exact on-chain pair',
+      lastFailureAt: now,
+    });
+    this.logger.warn(
+      `[migration] market=${migration.marketId} ` +
+        'code=REGISTRATION_OUTCOME_UNKNOWN',
+    );
+    return {
+      outcome: 'FAILED',
+      marketId: migration.marketId,
+      retryAfterMs: REGISTRATION_UNKNOWN_RECHECK_MS,
+      failureCode: 'REGISTRATION_OUTCOME_UNKNOWN',
+    };
+  }
+
+  private async confirmRegistration(
+    migration: ClaimedMigration,
+  ): Promise<MigrationIterationResult> {
+    if (migration.registrationTxHash === null) {
+      return this.reconcileUnknownRegistration(migration);
+    }
+    let receipt;
+    try {
+      receipt = await this.submitter.confirm(migration.registrationTxHash as Hex);
+    } catch (error) {
+      const state = await this.readState(migration);
+      const disposition = this.registrationDisposition(migration, state);
+      this.assertRegistrationNotMismatched(disposition);
+      if (disposition === 'REGISTERED') {
+        return this.resumeAfterRegistration(migration, state.blockNumber);
+      }
+      const failure = operatorFailure(error, migration.attemptCount + 1);
+      return this.retry(
+        migration,
+        'REGISTRATION_CONFIRMATION_PENDING',
+        failure.retryAfterMs,
+      );
+    }
+
+    // Even a reverted or apparently successful receipt is secondary to the
+    // exact pair now stored by CTFExchange. This also handles another actor
+    // registering the same pair while our transaction was pending.
+    const state = await this.readState(migration);
+    const disposition = this.registrationDisposition(migration, state);
+    this.assertRegistrationNotMismatched(disposition);
+    if (disposition === 'REGISTERED') {
+      return this.resumeAfterRegistration(
+        migration,
+        Math.max(receipt.blockNumber, state.blockNumber),
+      );
+    }
+    if (receipt.status === 'reverted') {
+      return this.failTerminal(
+        migration,
+        'REGISTRATION_REVERTED',
+        safeMessage('REGISTRATION_REVERTED'),
+        { registrationStatus: 'REVERTED' },
+      );
+    }
+    return this.failTerminal(
+      migration,
+      'REGISTRATION_NOT_APPLIED',
+      safeMessage('REGISTRATION_NOT_APPLIED'),
+      { registrationStatus: 'FAILED' },
+    );
+  }
+
+  private async registrationSubmissionUnknown(
+    migration: ClaimedMigration,
+    failure: ReturnType<typeof operatorFailure>,
+  ): Promise<MigrationIterationResult> {
+    const now = this.now();
+    await this.checkpoint(migration, {
+      status: 'REGISTRATION_SUBMISSION_UNKNOWN',
+      registrationStatus: 'SUBMISSION_UNKNOWN',
+      registrationTxHash: null,
+      registrationBlockNumber: null,
+      nextAttemptAt: now + Math.max(1, Math.ceil(failure.retryAfterMs / 1_000)),
+      lastFailureCode: failure.code,
+      lastFailureMessage:
+        'Transport failed after token registration may have been broadcast',
+      lastFailureAt: now,
+    });
+    this.logger.warn(
+      `[migration] market=${migration.marketId} code=${failure.code}`,
+    );
+    return {
+      outcome: 'FAILED',
+      marketId: migration.marketId,
+      retryAfterMs: failure.retryAfterMs,
+      failureCode: failure.code,
+    };
   }
 
   private async stageFromState(
@@ -594,6 +968,8 @@ export class BookMigrationOperator {
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
     const state = await this.readState(migration);
+    const registration = await this.registerIfNeeded(migration, state);
+    if (registration !== null) return registration;
     if (!(await this.stagedMatches(migration, state))) {
       return this.stageFromState(migration, state);
     }
@@ -709,6 +1085,8 @@ export class BookMigrationOperator {
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
     const state = await this.readState(migration);
+    const registration = await this.registerIfNeeded(migration, state);
+    if (registration !== null) return registration;
     if (hasReplacements(migration) && !state.ctfApprovedForAll) {
       await this.checkpoint(migration, {
         status: 'STAGED',
@@ -881,28 +1259,6 @@ export class BookMigrationOperator {
     return { outcome: 'PROGRESSED', marketId: migration.marketId };
   }
 
-  private validateRegistration(
-    migration: ClaimedMigration,
-    state: BookMigrationChainState,
-  ): void {
-    const { yesTokenId, noTokenId } = this.stateInput(migration);
-    if (
-      state.yesRegistration.conditionId.toLowerCase() === zeroHash ||
-      state.noRegistration.conditionId.toLowerCase() === zeroHash ||
-      state.yesRegistration.conditionId.toLowerCase() !==
-        migration.market.conditionId.toLowerCase() ||
-      state.noRegistration.conditionId.toLowerCase() !==
-        migration.market.conditionId.toLowerCase() ||
-      state.yesRegistration.complementTokenId !== noTokenId ||
-      state.noRegistration.complementTokenId !== yesTokenId
-    ) {
-      throw new MigrationInvariantError(
-        'TOKEN_NOT_REGISTERED',
-        'CTFExchange token registration mismatch',
-      );
-    }
-  }
-
   private validateReplacementPreflight(
     row: SignedOrder,
     state: FreshOrderChainState,
@@ -936,6 +1292,8 @@ export class BookMigrationOperator {
       migration = { ...migration, status: 'PUBLISHING' };
     }
     const state = await this.readState(migration);
+    const registration = await this.registerIfNeeded(migration, state);
+    if (registration !== null) return registration;
     if (
       (state.yesOrder.open && remaining(state.yesOrder) > 0n) ||
       (state.noOrder.open && remaining(state.noOrder) > 0n)
@@ -957,7 +1315,6 @@ export class BookMigrationOperator {
       });
       return { outcome: 'PROGRESSED', marketId: migration.marketId };
     }
-    if (hashes.length > 0) this.validateRegistration(migration, state);
     const yesRecovered = remaining(state.yesOrder);
     const noRecovered = remaining(state.noOrder);
     if (
@@ -1126,9 +1483,11 @@ export class BookMigrationOperator {
     migration: ClaimedMigration,
     failureCode: string,
     failureMessage: string,
+    extraData: Prisma.BookMigrationUpdateManyMutationInput = {},
   ): Promise<MigrationIterationResult> {
     const now = this.now();
     await this.checkpoint(migration, {
+      ...extraData,
       status: 'FAILED',
       lastFailureCode: failureCode,
       lastFailureMessage: failureMessage,

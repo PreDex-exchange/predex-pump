@@ -2,8 +2,10 @@
 
 Non-custodial Arc read model: a TypeScript/viem indexer reads the deployed incubator's logs and
 writes a replay-safe Postgres projection through Prisma. A Fastify serving layer exposes the
-shared REST contract and a subscription WebSocket from the same process. It contains no wallet,
-private-key, or transaction-signing code.
+shared REST contract and a subscription WebSocket from the same process. That serving process
+contains no wallet, private-key, or transaction-signing code. A separate optional operator
+process signs Hybrid settlement and graduated-book migration transactions without taking custody
+of user funds.
 
 ## Run locally
 
@@ -33,6 +35,26 @@ pnpm summary
 pnpm build
 pnpm test
 ```
+
+## Graduated-book operator
+
+Apply database migrations before starting the operator, then inject `OPERATOR_PRIVATE_KEY` from a
+runtime secret store. The key must belong to the configured CTFExchange operator address.
+
+`OPERATOR_REGISTER_TOKENS=false` is the safe default. On the current Arc Testnet deployment, set it
+to `true` only after confirming that address still has CTFExchange `ADMIN_ROLE`. The operator then
+registers the deterministic YES/NO pair before it cancels either MiniCLOB seed order. Partial or
+mismatched registrations fail closed. An unknown broadcast is quarantined and observed again; it
+is never automatically resubmitted.
+
+```sh
+pnpm db:migrate
+OPERATOR_REGISTER_TOKENS=true pnpm operator
+```
+
+This hot-admin arrangement is testnet-only. Before a real-value deployment, registration must move
+to Registry-bound or narrowly scoped registrar authority, and the settlement signer must lose its
+admin roles.
 
 `DATABASE_URL` selects Postgres. `ARC_RPC_URL` selects the preferred Arc endpoint and defaults to
 `ARC.rpcUrls[0]`; the other RPC URL from `shared` is an automatic read-only failover. The indexer
