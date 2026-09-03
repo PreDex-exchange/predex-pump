@@ -34,10 +34,15 @@ import {
   backendRestClient as apiClient,
   REST_READ_TIMEOUT_MS,
 } from './rest-client';
-import { backendWsClient } from './websocket';
+import {
+  backendWsClient,
+  type BackendConnectionStatus,
+} from './websocket';
 
 const MARKET_BACKGROUND_REFRESH_MS = 60_000;
 const MARKET_DETAIL_FALLBACK_REFRESH_MS = 15_000;
+const ORDER_BOOK_LIVE_REFRESH_MS = 15_000;
+const ORDER_BOOK_FALLBACK_REFRESH_MS = 4_000;
 const HEALTH_REFRESH_MS = 15_000;
 export const MARKET_DETAIL_RETRY_COUNT = 3;
 const API_RETRY_BASE_DELAY_MS = 1_000;
@@ -62,6 +67,14 @@ export const MARKET_DETAIL_MAX_FAILURE_DISCLOSURE_MS =
   // schedule. Round that timer/observer/render overhead up to a whole second.
   MARKET_DETAIL_FAILURE_DISCLOSURE_OVERHEAD_MS;
 
+export function orderBookRefreshIntervalMs(
+  connectionStatus: BackendConnectionStatus,
+) {
+  return connectionStatus === 'live'
+    ? ORDER_BOOK_LIVE_REFRESH_MS
+    : ORDER_BOOK_FALLBACK_REFRESH_MS;
+}
+
 interface ResourceState<T> {
   data: T | null;
   isLoading: boolean;
@@ -72,6 +85,7 @@ interface ResourceState<T> {
 
 interface ResourceOptions {
   refetchInterval?: number;
+  refetchOnWindowFocus?: boolean | 'always';
   enabled?: boolean;
   retry?: boolean | number;
   retryDelay?: number | ((failureCount: number, error: Error) => number);
@@ -117,6 +131,7 @@ function useApiResource<T>(
     staleTime: 30_000,
     refetchInterval: options.refetchInterval,
     refetchIntervalInBackground: false,
+    refetchOnWindowFocus: options.refetchOnWindowFocus,
     enabled: options.enabled,
     retry: options.retry,
     retryDelay: options.retryDelay,
@@ -340,6 +355,8 @@ export function usePosition(
 
 export function useOrderBook(marketId: string) {
   const queryClient = useQueryClient();
+  const [connectionStatus, setConnectionStatus] =
+    useState<BackendConnectionStatus>('idle');
   const load = useCallback(() => apiClient.getOrderBook(marketId), [marketId]);
   useEffect(() => {
     if (!marketId || marketId === 'preview') return;
@@ -350,8 +367,15 @@ export function useOrderBook(marketId: string) {
       });
     });
   }, [marketId, queryClient]);
+  useEffect(
+    () => backendWsClient.subscribeStatus(setConnectionStatus),
+    [],
+  );
 
-  return useApiResource<MarketBookResponse>(['order-book', marketId], load);
+  return useApiResource<MarketBookResponse>(['order-book', marketId], load, {
+    refetchInterval: orderBookRefreshIntervalMs(connectionStatus),
+    refetchOnWindowFocus: 'always',
+  });
 }
 
 export function useActivity(query: ActivityQuery = {}) {

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import {
+  focusManager,
   QueryClient,
   QueryClientProvider,
 } from '@tanstack/react-query';
@@ -11,13 +12,22 @@ import {
 } from '@testing-library/react';
 import {
   afterEach,
+  beforeEach,
   describe,
   expect,
   it,
   vi,
 } from 'vitest';
 
-import { useDedupCheck, useMarket, useMarkets } from './hooks';
+import {
+  orderBookRefreshIntervalMs,
+  useDedupCheck,
+  useMarket,
+  useMarkets,
+  useOrderBook,
+} from './hooks';
+
+type ConnectionStatus = 'idle' | 'connecting' | 'live' | 'reconnecting';
 
 const mocks = vi.hoisted(() => ({
   dedupCheck: vi.fn(async () => ({
@@ -27,7 +37,12 @@ const mocks = vi.hoisted(() => ({
     candidates: [],
   })),
   getMarket: vi.fn(async () => null),
+  getOrderBook: vi.fn(async () => ({})),
   listMarkets: vi.fn(),
+  connectionStatus: 'idle' as ConnectionStatus,
+  statusListener: null as ((status: ConnectionStatus) => void) | null,
+  subscribe: vi.fn(),
+  subscribeStatus: vi.fn(),
 }));
 
 vi.mock('./rest-client', () => ({
@@ -35,22 +50,131 @@ vi.mock('./rest-client', () => ({
   backendRestClient: {
     dedupCheck: mocks.dedupCheck,
     getMarket: mocks.getMarket,
+    getOrderBook: mocks.getOrderBook,
     listMarkets: mocks.listMarkets,
   },
 }));
 
 vi.mock('./websocket', () => ({
   backendWsClient: {
-    subscribe: vi.fn(),
+    subscribe: mocks.subscribe,
+    subscribeStatus: mocks.subscribeStatus,
   },
 }));
 
+beforeEach(() => {
+  mocks.connectionStatus = 'idle';
+  mocks.statusListener = null;
+  mocks.subscribe.mockReset().mockReturnValue(vi.fn());
+  mocks.subscribeStatus.mockReset().mockImplementation(
+    (listener: (status: ConnectionStatus) => void) => {
+      mocks.statusListener = listener;
+      listener(mocks.connectionStatus);
+      return () => {
+        if (mocks.statusListener === listener) mocks.statusListener = null;
+      };
+    },
+  );
+  mocks.getOrderBook.mockClear();
+});
+
 afterEach(() => {
   cleanup();
+  focusManager.setFocused(undefined);
   vi.useRealTimers();
   mocks.dedupCheck.mockClear();
   mocks.getMarket.mockClear();
+  mocks.getOrderBook.mockClear();
   mocks.listMarkets.mockReset();
+});
+
+describe('order-book REST fallback', () => {
+  it.each([
+    ['idle', 4_000],
+    ['connecting', 4_000],
+    ['reconnecting', 4_000],
+    ['live', 15_000],
+  ] as const)(
+    'selects the REST interval while the WebSocket is %s (%ims)',
+    (connectionStatus, expectedInterval) => {
+      expect(orderBookRefreshIntervalMs(connectionStatus)).toBe(expectedInterval);
+    },
+  );
+
+  it('polls every four seconds while disconnected, pauses in the background, and refetches on focus', async () => {
+    vi.useFakeTimers();
+    focusManager.setFocused(true);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+
+    renderHook(() => useOrderBook('17'), { wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledOnce();
+    expect(mocks.subscribe).toHaveBeenCalledWith(
+      'book:17',
+      expect.any(Function),
+    );
+    expect(mocks.subscribeStatus).toHaveBeenCalledOnce();
+
+    focusManager.setFocused(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_999);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledTimes(3);
+  });
+
+  it('backs the interval off to fifteen seconds once the WebSocket is live', async () => {
+    vi.useFakeTimers();
+    focusManager.setFocused(true);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+
+    renderHook(() => useOrderBook('17'), { wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      mocks.statusListener?.('live');
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(14_999);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledOnce();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(mocks.getOrderBook).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('market detail failure disclosure', () => {
