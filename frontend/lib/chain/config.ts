@@ -4,9 +4,13 @@ import {
   createStorage,
   http,
 } from 'wagmi';
-import { injected } from 'wagmi/connectors';
+import { injected, metaMask } from 'wagmi/connectors';
 
 import { arcTestnet } from './arc';
+import {
+  PREDEX_QA_CONNECTOR_ID,
+  type PredexQaProviderWindow,
+} from './wallet-connectors';
 
 // Market, book and position data all come from the indexed REST/WebSocket API,
 // so the browser needs the chain only for wallet balance and for sending
@@ -16,9 +20,36 @@ import { arcTestnet } from './arc';
 const CHAIN_POLLING_INTERVAL_MS = 30_000;
 
 function createWagmiConfig() {
+  const dappUrl =
+    typeof window === 'undefined' ? 'https://predex.fun' : window.location.origin;
   return createConfig({
     chains: [arcTestnet],
-    connectors: [injected()],
+    connectors: [
+      metaMask({
+        dapp: {
+          name: 'Predex',
+          url: dappUrl,
+        },
+      }),
+      ...(process.env.NODE_ENV === 'production'
+        ? []
+        : [
+            injected({
+              target: {
+                id: PREDEX_QA_CONNECTOR_ID,
+                name: 'Predex QA Wallet',
+                provider(browserWindow) {
+                  const candidate = browserWindow as
+                    | PredexQaProviderWindow
+                    | undefined;
+                  return candidate?.ethereum?.isPredexQaWallet === true
+                    ? candidate.ethereum
+                    : undefined;
+                },
+              },
+            }),
+          ]),
+    ],
     pollingInterval: CHAIN_POLLING_INTERVAL_MS,
     transports: {
       [arcTestnet.id]: http(arcTestnet.rpcUrls.default.http[0]),

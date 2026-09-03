@@ -238,7 +238,7 @@ interface MiniClobOrder {
 function assertConnectedAccount(expectedAccount: Address) {
   const account = getAccount(wagmiConfig);
   if (!account.isConnected || !account.address) {
-    throw new Error('Connect an injected wallet before continuing.');
+    throw new Error('Connect MetaMask before continuing.');
   }
   if (account.chainId !== ARC.chainId) {
     throw new Error(`Switch the wallet to ${ARC.name} (${ARC.chainId}) first.`);
@@ -699,7 +699,7 @@ export async function createMarketOnArc({
       metadataHash,
     }),
     {
-      awaiting: 'Confirm createMarket in the injected wallet.',
+      awaiting: 'Confirm createMarket in MetaMask.',
       pending: 'Market creation is pending on Arc…',
       confirmed: 'Market creation confirmed on Arc.',
     },
@@ -813,7 +813,7 @@ export async function buyOnArc({
       deadline: fresh.deadline,
     }),
     {
-      awaiting: `Confirm ${functionName} in the injected wallet.`,
+      awaiting: `Confirm ${functionName} in MetaMask.`,
       pending: `${functionName} is pending on Arc…`,
       confirmed: `${functionName} confirmed on Arc.`,
     },
@@ -1337,7 +1337,7 @@ export async function sellOnArc({
       deadline,
     }),
     {
-      awaiting: `Confirm ${functionName} in the injected wallet.`,
+      awaiting: `Confirm ${functionName} in MetaMask.`,
       pending: `${functionName} is pending on Arc…`,
       confirmed: `${functionName} confirmed on Arc.`,
     },
@@ -1417,7 +1417,7 @@ export async function graduateOnArc({
     account,
     buildGraduateIfQualifiedTx({ marketId }),
     {
-      awaiting: 'Confirm graduateIfQualified in the injected wallet.',
+      awaiting: 'Confirm graduateIfQualified in MetaMask.',
       pending: 'Graduation is pending on Arc…',
       confirmed: 'Graduation confirmed on Arc. The order book handoff is live.',
     },
@@ -1615,7 +1615,7 @@ export async function resolveOnArc({
       signatures: [signature],
     }),
     {
-      awaiting: 'Confirm CommitteeOracleAdapterV2.resolve in the injected wallet.',
+      awaiting: 'Confirm CommitteeOracleAdapterV2.resolve in MetaMask.',
       pending: 'Committee resolution is pending on Arc…',
       confirmed: `${outcome} resolution confirmed on Arc. It can now be observed by the LMSR.`,
     },
@@ -1669,7 +1669,7 @@ export async function observeResolutionOnArc({
     account,
     buildObserveResolutionTx({ marketId }),
     {
-      awaiting: 'Confirm IncubatorLMSR.observeResolution in the injected wallet.',
+      awaiting: 'Confirm IncubatorLMSR.observeResolution in MetaMask.',
       pending: 'Resolution observation is pending on Arc…',
       confirmed: 'Resolution observed. The incubator lifecycle is now ready for closeout.',
     },
@@ -1765,7 +1765,7 @@ export async function closeoutOnArc({
     account,
     buildCloseoutTx({ marketId }),
     {
-      awaiting: 'Confirm IncubatorLMSR.closeout in the injected wallet.',
+      awaiting: 'Confirm IncubatorLMSR.closeout in MetaMask.',
       pending: 'Market closeout is pending on Arc…',
       confirmed: 'Market closeout confirmed on Arc.',
     },
@@ -1829,7 +1829,7 @@ export async function claimFundingResidualOnArc({
     account,
     buildClaimFundingResidualTx({ marketId }),
     {
-      awaiting: 'Confirm IncubatorLMSR.claimFundingResidual in the injected wallet.',
+      awaiting: 'Confirm IncubatorLMSR.claimFundingResidual in MetaMask.',
       pending: 'Funding residual claim is pending on Arc…',
       confirmed: 'Funding residual claimed on Arc.',
     },
@@ -1879,7 +1879,7 @@ export async function sweepProtocolAfterCloseoutOnArc({
     buildSweepProtocolAfterCloseoutTx({ marketId }),
     {
       awaiting:
-        'Confirm IncubatorLMSR.sweepProtocolAfterCloseout in the injected wallet.',
+        'Confirm IncubatorLMSR.sweepProtocolAfterCloseout in MetaMask.',
       pending: 'Protocol closeout sweep is pending on Arc…',
       confirmed: 'Protocol fees and PnL swept to the protocol depth account.',
     },

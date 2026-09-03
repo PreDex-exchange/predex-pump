@@ -12,6 +12,11 @@ import type { ReactNode } from 'react';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
 import { collateralErc20Abi } from '@/lib/chain/contracts';
+import {
+  hasPredexQaProvider,
+  METAMASK_CONNECTOR_ID,
+  PREDEX_QA_CONNECTOR_ID,
+} from '@/lib/chain/wallet-connectors';
 import { formatUsdc, shortAddress } from '@/lib/format';
 import { publicWalletErrorMessage } from '@/lib/wallet-errors';
 
@@ -78,7 +83,11 @@ export function WalletBar() {
   });
 
   if (!isConnected || !address) {
-    const connector = connectors[0];
+    const qaConnector = hasPredexQaProvider()
+      ? connectors.find(({ id }) => id === PREDEX_QA_CONNECTOR_ID)
+      : undefined;
+    const connector =
+      qaConnector ?? connectors.find(({ id }) => id === METAMASK_CONNECTOR_ID);
     return (
       <WalletControls error={authFeedback ?? connectFeedback}>
         <span className={styles.network}>
@@ -89,14 +98,14 @@ export function WalletBar() {
           className={styles.wallet}
           disabled={!connector || isConnecting}
           onClick={() => connector && connect({ connector })}
-          title="Connect an injected wallet"
+          title="Connect MetaMask"
           type="button"
         >
           {isConnecting
             ? 'Connecting…'
             : connector
-              ? 'Connect wallet'
-              : 'No wallet found'}
+              ? 'Connect MetaMask'
+              : 'MetaMask unavailable'}
         </button>
       </WalletControls>
     );

@@ -39,7 +39,7 @@ Run the backend separately on port 3001 before opening the app.
   MiniCLOB order/minimum-fill state, payout state, and committee membership are
   re-read from Arc before signing.
 - All create, trade, graduate, MiniCLOB, resolution, observation, redemption,
-  and closeout writes go through the injected wallet and wait for receipts.
+  and closeout writes go through MetaMask and wait for receipts.
 - All collateral and CTF sizes use six-decimal raw integers. No flow sends native `value`.
 
 ## Backend URLs and LAN phones

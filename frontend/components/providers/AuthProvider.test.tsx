@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
   switchChain: vi.fn(),
+  hasQaProvider: false,
+  includeQaConnector: true,
 }));
 
 function authenticatedSession(address = mocks.address) {
@@ -62,6 +64,12 @@ vi.mock('@/lib/api/rest-client', () => ({
   },
 }));
 
+vi.mock('@/lib/chain/wallet-connectors', () => ({
+  METAMASK_CONNECTOR_ID: 'metaMaskSDK',
+  PREDEX_QA_CONNECTOR_ID: 'predexQa',
+  hasPredexQaProvider: () => mocks.hasQaProvider,
+}));
+
 vi.mock('wagmi', () => ({
   useAccount: () => ({
     address: mocks.isConnected ? mocks.address : undefined,
@@ -71,7 +79,11 @@ vi.mock('wagmi', () => ({
   }),
   useConnect: () => ({
     connect: mocks.connect,
-    connectors: [{ id: 'injected' }],
+    connectors: [
+      { id: 'some-other-wallet' },
+      { id: 'metaMaskSDK' },
+      ...(mocks.includeQaConnector ? [{ id: 'predexQa' }] : []),
+    ],
     error: null,
     isPending: false,
   }),
@@ -159,6 +171,8 @@ beforeEach(() => {
   mocks.connect.mockReset();
   mocks.disconnect.mockReset();
   mocks.switchChain.mockReset();
+  mocks.hasQaProvider = false;
+  mocks.includeQaConnector = true;
 });
 
 afterEach(cleanup);
@@ -183,23 +197,36 @@ describe('AuthProvider wallet-bound sessions', () => {
 
     expect(screen.getAllByRole('button')).toHaveLength(1);
     expect(
-      screen.getByRole('button', { name: 'Connect wallet' }),
+      screen.getByRole('button', { name: 'Connect MetaMask' }),
     ).toBeTruthy();
     expect(screen.queryByText(/checking sign-in|sign in|sign out/iu)).toBeNull();
 
     await screen.findByText('anonymous');
     expect(screen.getAllByRole('button')).toHaveLength(1);
     expect(
-      screen.getByRole('button', { name: 'Connect wallet' }),
+      screen.getByRole('button', { name: 'Connect MetaMask' }),
     ).toBeTruthy();
   });
 
-  it('automatically creates and saves the server-issued EIP-4361 session', async () => {
+  it('does not request SIWE merely because MetaMask is connected', async () => {
+    mocks.getSession.mockResolvedValue({ authenticated: false });
+    renderAuth();
+
+    await screen.findByText('anonymous');
+    expect(mocks.getSiweNonce).not.toHaveBeenCalled();
+    expect(mocks.signMessageAsync).not.toHaveBeenCalled();
+    expect(mocks.verifySiwe).not.toHaveBeenCalled();
+  });
+
+  it('creates and saves the server-issued EIP-4361 session after an explicit saved-feature action', async () => {
     mocks.getSession.mockResolvedValue({ authenticated: false });
     mocks.signMessageAsync.mockResolvedValue(SIGNATURE);
     mocks.verifySiwe.mockResolvedValue(authenticatedSession());
-    renderAuth();
+    renderAuth({ showFeatureAction: true });
 
+    await screen.findByText('anonymous');
+    expect(mocks.signMessageAsync).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Use saved feature' }));
     await screen.findByText(`signed:${FIRST_ADDRESS}`);
     expect(mocks.getSiweNonce).toHaveBeenCalledOnce();
     expect(mocks.signMessageAsync).toHaveBeenCalledOnce();
@@ -228,8 +255,13 @@ describe('AuthProvider wallet-bound sessions', () => {
         cause: { code: 4001, message: rawProviderMessage },
       }),
     );
-    const { queryClient, rendered } = renderAuth({ showHeader: true });
+    const { queryClient, rendered } = renderAuth({
+      showFeatureAction: true,
+      showHeader: true,
+    });
 
+    await screen.findByText('anonymous');
+    fireEvent.click(screen.getByRole('button', { name: 'Use saved feature' }));
     await waitFor(() =>
       expect(screen.getAllByText(WALLET_REQUEST_DECLINED_MESSAGE)).toHaveLength(2),
     );
@@ -262,7 +294,7 @@ describe('AuthProvider wallet-bound sessions', () => {
     expect(mocks.verifySiwe).not.toHaveBeenCalled();
   });
 
-  it('allows a saved feature to retry after an automatic signature was declined', async () => {
+  it('allows a saved feature to retry after an explicit signature was declined', async () => {
     mocks.getSession.mockResolvedValue({ authenticated: false });
     mocks.signMessageAsync
       .mockRejectedValueOnce(Object.assign(new Error('declined'), { code: 4001 }))
@@ -270,6 +302,8 @@ describe('AuthProvider wallet-bound sessions', () => {
     mocks.verifySiwe.mockResolvedValue(authenticatedSession());
     renderAuth({ showFeatureAction: true });
 
+    await screen.findByText('anonymous');
+    fireEvent.click(screen.getByRole('button', { name: 'Use saved feature' }));
     await screen.findByText(WALLET_REQUEST_DECLINED_MESSAGE);
     fireEvent.click(screen.getByRole('button', { name: 'Use saved feature' }));
 
@@ -278,17 +312,22 @@ describe('AuthProvider wallet-bound sessions', () => {
     expect(mocks.verifySiwe).toHaveBeenCalledOnce();
   });
 
-  it('hides an old session immediately and replaces it after an account switch', async () => {
+  it('hides an old session after an account switch and waits for explicit sign-in', async () => {
     mocks.getSession.mockResolvedValue(authenticatedSession(FIRST_ADDRESS));
     mocks.signMessageAsync.mockResolvedValue(SIGNATURE);
-    const { queryClient, rendered } = renderAuth();
+    const { queryClient, rendered } = renderAuth({ showFeatureAction: true });
     await screen.findByText(`signed:${FIRST_ADDRESS}`);
 
     mocks.address = SECOND_ADDRESS;
     mocks.verifySiwe.mockResolvedValue(authenticatedSession(SECOND_ADDRESS));
-    rendered.rerender(<AuthTree queryClient={queryClient} />);
+    rendered.rerender(
+      <AuthTree queryClient={queryClient} showFeatureAction />,
+    );
 
     expect(screen.queryByText(`signed:${FIRST_ADDRESS}`)).toBeNull();
+    await screen.findByText('anonymous');
+    expect(mocks.signMessageAsync).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Use saved feature' }));
     await screen.findByText(`signed:${SECOND_ADDRESS}`);
     expect(mocks.signOut).toHaveBeenCalledOnce();
     expect(mocks.getSiweNonce).toHaveBeenCalledOnce();
@@ -322,9 +361,54 @@ describe('AuthProvider wallet-bound sessions', () => {
     await screen.findByText('anonymous');
     await waitFor(() => expect(mocks.signOut).toHaveBeenCalledOnce());
     expect(
-      screen.getByRole('button', { name: 'Connect wallet' }),
+      screen.getByRole('button', { name: 'Connect MetaMask' }),
     ).toBeTruthy();
     expect(screen.queryByText(FIRST_ADDRESS)).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(1);
+  });
+
+  it('selects MetaMask by connector identity rather than connector order', async () => {
+    mocks.isConnected = false;
+    mocks.getSession.mockResolvedValue({ authenticated: false });
+    renderAuth({ showHeader: true });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Connect MetaMask' }),
+    );
+
+    expect(mocks.connect).toHaveBeenCalledWith({
+      connector: expect.objectContaining({ id: 'metaMaskSDK' }),
+    });
+  });
+
+  it('uses the isolated QA connector only when the QA provider is present', async () => {
+    mocks.isConnected = false;
+    mocks.hasQaProvider = true;
+    mocks.getSession.mockResolvedValue({ authenticated: false });
+    renderAuth({ showHeader: true });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Connect MetaMask' }),
+    );
+
+    expect(mocks.connect).toHaveBeenCalledWith({
+      connector: expect.objectContaining({ id: 'predexQa' }),
+    });
+  });
+
+  it('falls back to MetaMask when no QA connector is registered', async () => {
+    mocks.isConnected = false;
+    mocks.hasQaProvider = true;
+    mocks.includeQaConnector = false;
+    mocks.getSession.mockResolvedValue({ authenticated: false });
+    renderAuth({ showHeader: true });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Connect MetaMask' }),
+    );
+
+    expect(mocks.connect).toHaveBeenCalledWith({
+      connector: expect.objectContaining({ id: 'metaMaskSDK' }),
+    });
   });
 });

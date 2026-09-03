@@ -13,8 +13,8 @@ describe('user-facing copy guard', () => {
       <div>
         <p>Do not expose createMarket or MarketCreated in prose.</p>
         <p>
-          MiniCLOB, PnL, USDC, and LMSR are legitimate product terms. A genuine
-          sample such as <code>claimFundingResidual</code> is code.
+          MetaMask, MiniCLOB, PnL, USDC, and LMSR are legitimate product terms.
+          A genuine sample such as <code>claimFundingResidual</code> is code.
         </p>
       </div>,
     );
@@ -31,7 +31,7 @@ describe('user-facing copy guard', () => {
         return (
           <div>
             <p>Do not expose createMarket in prose.</p>
-            <p>MiniCLOB, PnL, USDC, and LMSR remain allowed.</p>
+            <p>MetaMask, MiniCLOB, PnL, USDC, and LMSR remain allowed.</p>
             <code>MarketCreated and claimFundingResidual</code>
           </div>
         );

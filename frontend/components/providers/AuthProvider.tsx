@@ -68,9 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const connectedAddressKey = addressKey(connectedAddress);
   const currentAddressRef = useRef<Address | undefined>(connectedAddress);
   const previousAddressRef = useRef<Address | undefined>(connectedAddress);
-  // Refetches and reconnects may rerender indefinitely; an address gets only
-  // one automatic wallet prompt until a feature explicitly requests a retry.
-  const attemptedAddressesRef = useRef(new Set<string>());
+  // Explicit sign-in requests for the same wallet share one in-flight prompt.
   const inFlightAttemptsRef = useRef(new Map<string, Promise<boolean>>());
   // Keep account changes and disconnects behind any older wallet prompt so a
   // late verification can never win over the currently connected address.
@@ -105,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const requestSessionForAddress = useCallback(
-    (targetAddress: Address, allowRetry: boolean): Promise<boolean> => {
+    (targetAddress: Address): Promise<boolean> => {
       const targetKey = targetAddress.toLowerCase();
       const currentSession = queryClient.getQueryData<SessionResponse>(
         AUTH_SESSION_QUERY_KEY,
@@ -119,10 +117,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const inFlight = inFlightAttemptsRef.current.get(targetKey);
       if (inFlight) return inFlight;
-      if (!allowRetry && attemptedAddressesRef.current.has(targetKey)) {
-        return Promise.resolve(false);
-      }
-      attemptedAddressesRef.current.add(targetKey);
 
       const request = enqueueAuthWork(async () => {
         if (addressKey(currentAddressRef.current) !== targetKey) return false;
@@ -222,12 +216,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
       return false;
     }
-    return requestSessionForAddress(currentAddress, true);
+    return requestSessionForAddress(currentAddress);
   }, [requestSessionForAddress]);
 
   const clearSession = useCallback((): Promise<void> => {
-    const currentKey = addressKey(currentAddressRef.current);
-    if (currentKey) attemptedAddressesRef.current.add(currentKey);
     const inFlight = clearInFlightRef.current;
     if (inFlight) return inFlight;
 
@@ -259,17 +251,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void request.then(removeInFlightClear, removeInFlightClear);
     return request;
   }, [enqueueAuthWork, queryClient]);
-
-  useEffect(() => {
-    if (!sessionQuery.isFetched || !connectedAddress) return;
-    if (sessionMatchesAddress(sessionQuery.data, connectedAddress)) return;
-    void requestSessionForAddress(connectedAddress, false);
-  }, [
-    connectedAddress,
-    requestSessionForAddress,
-    sessionQuery.data,
-    sessionQuery.isFetched,
-  ]);
 
   useEffect(() => {
     const previousAddress = previousAddressRef.current;

@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@metamask/connect-evm": "2.1.1",
     "@predex-pump/shared": "link:../shared",
     "@tanstack/react-query": "^5.90.5",
     "next": "16.2.11",

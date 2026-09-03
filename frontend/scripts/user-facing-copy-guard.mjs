@@ -7,6 +7,7 @@ const CODE_IDENTIFIER_PATTERN =
   /\b(?:[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+)\b/gu;
 const ALLOWED_USER_FACING_TERMS = new Set([
   'MiniCLOB',
+  'MetaMask',
   'PnL',
   'USDC',
   'LMSR',

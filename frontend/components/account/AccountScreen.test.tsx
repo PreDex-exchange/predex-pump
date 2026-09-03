@@ -1,6 +1,6 @@
 import type { AccountProfileResponse } from '@predex-pump/shared/rest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WALLET_REQUEST_DECLINED_MESSAGE } from '@/lib/wallet-errors';
@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   sessionLoading: false,
   isConnected: false,
   authError: null as Error | null,
+  ensureSession: vi.fn(),
 }));
 
 vi.mock('wagmi', () => ({
@@ -36,7 +37,7 @@ vi.mock('@/components/providers/AuthProvider', () => ({
     isLoading: mocks.sessionLoading,
     isEstablishingSession: false,
     error: mocks.authError,
-    ensureSession: vi.fn(),
+    ensureSession: mocks.ensureSession,
   }),
 }));
 
@@ -72,6 +73,7 @@ beforeEach(() => {
   mocks.sessionLoading = false;
   mocks.isConnected = false;
   mocks.authError = null;
+  mocks.ensureSession.mockReset().mockResolvedValue(false);
 });
 
 afterEach(cleanup);
@@ -92,6 +94,20 @@ describe('AccountScreen money states', () => {
 
     expect(screen.getByText(WALLET_REQUEST_DECLINED_MESSAGE)).toBeTruthy();
     expect(rendered.container.innerHTML).not.toMatch(/viem|Details:|Version:/u);
+  });
+
+  it('asks for SIWE only after a connected user chooses saved account features', () => {
+    mocks.isConnected = true;
+    renderScreen();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Sign in with MetaMask' }),
+    );
+
+    expect(mocks.ensureSession).toHaveBeenCalledOnce();
+    expect(
+      screen.getByText(/trading remains wallet-only/iu),
+    ).toBeTruthy();
   });
 
   it('does not render a backend code identifier as profile-error prose', () => {
