@@ -66,7 +66,18 @@ assert_contains "$compose_call" '<compose><--project-name><qa-stack-test>'
 help_output="$($SCRIPT --help)"
 assert_contains "$help_output" 'QA_COMPOSE_PROJECT=backend'
 assert_contains "$help_output" 'QA_COMPOSE_PROJECT=my-qa-stack'
+assert_contains "$help_output" '--fixtures'
+assert_contains "$help_output" 'opened, graduated, and resolved markets'
 assert_contains "$help_output" 'Attached Postgres/Qdrant containers are never stopped or removed'
+
+# Docker's Linux port publishing can be reachable through NAT without a
+# userspace listener visible to lsof. Fall back to an actual loopback probe.
+bash -c '
+  source "$1"
+  lsof() { return 1; }
+  nc() { return 0; }
+  port_is_listening 5432
+' _ "$SCRIPT" || fail 'expected nc to confirm a port that lsof cannot see'
 
 attachment_output="$(bash -c '
   source "$1"

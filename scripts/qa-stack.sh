@@ -4,13 +4,14 @@
 # QA entry points (the operator supplies the key; this script never prints or
 # persists it):
 #   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --read-only
+#   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --read-only --fixtures
 #   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --broadcast
 #   ./scripts/qa-stack.sh down
 #
 # The frontend is always http://127.0.0.1:3002 (never port 3000). Useful pages:
 # /, /create, /market/1, /market/2, /portfolio, /account, and /activity.
-# Market 1 is live on HYBRID (price tick 1000 raw / 0.001; size multiple 1000);
-# market 2 is resolved. By default the stack attaches to the canonical `backend`
+# With --fixtures, market 1 is live on HYBRID, market 2 is resolved, and market 3
+# is open on the curve. By default the stack attaches to the canonical `backend`
 # Compose project's Postgres/Qdrant containers. Set QA_COMPOSE_PROJECT to use a
 # different, isolated Compose project. `down` never removes attached containers
 # and never removes Docker networks or volumes.
@@ -28,6 +29,7 @@ BACKEND_URL="http://127.0.0.1:3001"
 WALLET_URL="http://127.0.0.1:3003"
 WALLET_SCRIPT_URL="$WALLET_URL/provider.js"
 MODE="read-only"
+SEED_FIXTURES=false
 # When set, QA runs the wallet shim + frontend ONLY, against an already
 # deployed backend. This is the only way to exercise the cross-site session
 # cookie, the nginx /pump route and the WebSocket proxy — a local backend
@@ -44,6 +46,7 @@ usage() {
   cat <<'HELP'
 Usage:
   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up [--read-only]
+  QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --read-only --fixtures
   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --broadcast
   ./scripts/qa-stack.sh down
   ./scripts/qa-stack.sh --help
@@ -51,6 +54,8 @@ Usage:
 Modes:
   --read-only  Default. Signs SIWE messages and EIP-712 orders, but rejects
                eth_sendTransaction before any network request. No chain writes.
+  --fixtures   Reset the selected loopback QA database and seed deterministic
+               opened, graduated, and resolved markets before services start.
   --remote-api URL
                Run the wallet shim and frontend ONLY, against an already
                deployed backend (e.g. https://api.predex.exchange/pump).
@@ -89,6 +94,7 @@ Pages and useful fixtures:
   /create        create flow
   /market/1      live HYBRID venue; tick=1000 raw (0.001), size multiple=1000 raw
   /market/2      resolved market
+  /market/3      open bonding-curve market and mobile trade sheet
   /portfolio     connected-wallet positions
   /account       SIWE account/profile
   /activity      indexed activity
@@ -159,13 +165,16 @@ compose_running_service_container_id() {
 
 port_is_listening() {
   local port="$1"
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1
-    return
+  if command -v lsof >/dev/null 2>&1 &&
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
+    return 0
   fi
   if command -v nc >/dev/null 2>&1; then
     nc -z 127.0.0.1 "$port" >/dev/null 2>&1
     return
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    return 1
   fi
   fail 'port checks require lsof or nc'
 }
@@ -723,6 +732,18 @@ up() {
     DATABASE_URL="$DATABASE_URL" ./node_modules/.bin/prisma generate
   )
 
+  if [[ "$SEED_FIXTURES" == true ]]; then
+    printf 'Seeding deterministic QA market fixtures...\n'
+    (
+      cd "$ROOT_DIR/backend"
+      unset QA_WALLET_PRIVATE_KEY OPENAI_API_KEY
+      DATABASE_URL="$DATABASE_URL" \
+        TEST_DATABASE_URL="$DATABASE_URL" \
+        PREDEX_QA_FIXTURES=1 \
+        ./node_modules/.bin/tsx tests/seed-qa-database.ts
+    )
+  fi
+
   fi
 
   launch_wallet
@@ -813,6 +834,9 @@ main() {
         case "$1" in
           --read-only)
             MODE=read-only
+            ;;
+          --fixtures)
+            SEED_FIXTURES=true
             ;;
           --remote-api)
             shift
