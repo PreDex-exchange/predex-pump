@@ -45,6 +45,8 @@ services:
       ]
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    tmpfs:
+      - "/data:rw,noexec,nosuid,nodev,size=67108864,mode=0700"
     healthcheck:
       test: ["CMD", "redis-cli", "--raw", "PING"]
       interval: 2s

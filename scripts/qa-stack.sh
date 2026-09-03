@@ -14,8 +14,8 @@
 # is open on the curve. By default the stack attaches to the canonical `backend`
 # Compose project's Postgres/Qdrant/Redis containers. Set QA_COMPOSE_PROJECT to use a
 # different, isolated Compose project. `down` never removes attached containers
-# and never removes Docker networks or volumes. Redis itself is disposable and
-# has no volume.
+# and never removes Docker networks or named volumes. Anonymous volumes on
+# QA-created containers are removed; Redis itself is disposable and tmpfs-backed.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -118,8 +118,9 @@ Teardown:
   `down` stops only the signer, backend, and frontend processes recorded by `up`.
   Attached Postgres/Qdrant/Redis containers are never stopped or removed. A previously
   stopped container started by `up` is stopped again; a container created by
-  `up` is removed by exact container ID. Docker networks and volumes are always
-  retained, as are the non-secret process logs under .qa/logs/.
+  `up` is removed by exact container ID. Docker networks and named volumes are
+  always retained. Anonymous volumes on QA-created containers are removed, while
+  non-secret process logs remain under .qa/logs/.
 HELP
 }
 
@@ -535,7 +536,7 @@ teardown_recorded_containers() {
         ;;
       remove)
         printf 'Removing %s container created by this QA run (%s)...\n' "$service" "$container_id"
-        docker_command container rm --force "$container_id" >/dev/null || result=1
+        docker_command container rm --force --volumes "$container_id" >/dev/null || result=1
         ;;
       *)
         fail "unknown Docker teardown action: $action"
@@ -827,7 +828,7 @@ down() {
     if ((docker_status != 0)); then
       fail 'one or more recorded Docker services could not be safely torn down; ownership records were retained'
     fi
-    docker_result='Only containers recorded by exact ID were restored or removed. Docker networks and volumes were retained.'
+    docker_result='Only containers recorded by exact ID were restored or removed. Docker networks and named volumes were retained; anonymous volumes on QA-created containers were removed.'
   elif [[ -f "$STATE_DIR/docker.started" ]]; then
     printf 'Legacy Docker state has no exact container ownership records; leaving all Docker services unchanged.\n' >&2
     docker_result='No Docker container, network, or volume was changed.'

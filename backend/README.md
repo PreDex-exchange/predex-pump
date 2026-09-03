@@ -44,10 +44,11 @@ The Prisma pool is explicitly bounded by `DATABASE_POOL_SIZE` (default 32) with
 parameters take precedence.
 
 `REDIS_URL` selects the disposable read cache and invalidation bus. Local Compose binds Redis to
-`127.0.0.1:6379`; it has no volume or persistence and is capped at 128 MB with `volatile-lru`
-eviction. Postgres and Arc remain authoritative, so restarting or flushing Redis must not lose
-durable application state. Keep non-local Redis endpoints on a private network rather than
-publishing port 6379.
+`127.0.0.1:6379`; its `/data` directory is a bounded, hardened tmpfs rather than a persistent
+volume, persistence is disabled, and memory is capped at 128 MB with `volatile-lru` eviction.
+Postgres and Arc remain authoritative, so restarting or flushing Redis must not lose durable
+application state. Keep non-local Redis endpoints on a private network rather than publishing
+port 6379.
 
 `pnpm test` uses `TEST_DATABASE_URL`, defaulting to the isolated `contract_test` schema in the
 local Compose Postgres. It applies the Prisma schema before running the REST contract and
