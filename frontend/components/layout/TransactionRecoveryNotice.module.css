@@ -1,0 +1,117 @@
+.stack {
+  display: grid;
+  width: calc(100% - 32px);
+  max-width: var(--content-max);
+  margin: var(--space-3) auto 0;
+  gap: var(--space-2);
+}
+
+.notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 14px;
+  border: 2px solid var(--warning-border);
+  border-radius: var(--radius-input);
+  background: var(--reward-pale);
+  box-shadow: var(--shadow-chunky);
+  color: var(--ink);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--warning-strong);
+}
+
+.checking .dot {
+  animation: recovery-pulse 1.2s ease-in-out infinite;
+}
+
+.confirmed {
+  border-color: var(--yes-border);
+  background: var(--yes-soft);
+}
+
+.confirmed .dot {
+  background: var(--yes);
+}
+
+.reverted {
+  border-color: var(--error);
+  background: var(--error-soft);
+}
+
+.reverted .dot {
+  background: var(--error);
+}
+
+.copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.copy strong {
+  font-size: var(--text-small);
+}
+
+.copy span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.actions a,
+.actions button {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+@keyframes recovery-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (max-width: 900px) {
+  .stack {
+    width: 100%;
+    margin-top: 0;
+    padding: var(--space-2) var(--space-3) 0;
+  }
+
+  .notice {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-2);
+    padding: 10px 12px;
+  }
+
+  .dot {
+    margin-top: 5px;
+  }
+
+  .actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}

@@ -71,6 +71,10 @@ import { ADDRESSES, ARC } from '@/lib/shared/addresses';
 import { arcPublicClient } from './client';
 import { wagmiConfig } from './config';
 import {
+  recordPendingArcTransaction,
+  removePendingArcTransaction,
+} from './tx-journal';
+import {
   committeeOracleAbi,
   collateralErc20Abi,
   conditionalTokensAbi,
@@ -276,6 +280,11 @@ async function sendAndConfirm(
       ...(options.gas === undefined ? {} : { gas: options.gas }),
     } as never,
   );
+  recordPendingArcTransaction({
+    account,
+    hash,
+    message: labels.pending,
+  });
   report({
     phase: labels.approval ? 'approval-pending' : 'pending',
     message: labels.pending,
@@ -287,8 +296,10 @@ async function sendAndConfirm(
     confirmations: 1,
   });
   if (receipt.status !== 'success') {
+    removePendingArcTransaction(hash);
     throw new OnchainTransactionRevertedError(hash);
   }
+  removePendingArcTransaction(hash);
   report({
     phase: labels.approval ? 'checking' : 'confirmed',
     message: labels.confirmed,

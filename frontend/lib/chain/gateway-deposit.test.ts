@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   sendTransaction: vi.fn(),
   waitForTransactionReceipt: vi.fn(),
   readContract: vi.fn(),
+  recordPendingArcTransaction: vi.fn(),
+  removePendingArcTransaction: vi.fn(),
 }));
 
 vi.mock('wagmi/actions', () => ({
@@ -29,6 +31,11 @@ vi.mock('./config', () => ({ wagmiConfig: { test: true } }));
 vi.mock('./client', () => ({
   arcPublicClient: { readContract: mocks.readContract },
   readSettlementEventState: vi.fn(),
+}));
+
+vi.mock('./tx-journal', () => ({
+  recordPendingArcTransaction: mocks.recordPendingArcTransaction,
+  removePendingArcTransaction: mocks.removePendingArcTransaction,
 }));
 
 beforeEach(() => {
@@ -46,12 +53,19 @@ beforeEach(() => {
     .mockResolvedValueOnce(mocks.depositHash);
   mocks.waitForTransactionReceipt.mockReset();
   mocks.waitForTransactionReceipt.mockImplementation(
-    async (_config: unknown, input: { hash: `0x${string}` }) => ({
-      status: 'success',
-      transactionHash: input.hash,
-      logs: [],
-    }),
+    async (_config: unknown, input: { hash: `0x${string}` }) => {
+      expect(mocks.recordPendingArcTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ account: mocks.address, hash: input.hash }),
+      );
+      return {
+        status: 'success',
+        transactionHash: input.hash,
+        logs: [],
+      };
+    },
   );
+  mocks.recordPendingArcTransaction.mockReset();
+  mocks.removePendingArcTransaction.mockReset();
 });
 
 describe('connected-wallet Circle Gateway deposit', () => {
@@ -64,6 +78,8 @@ describe('connected-wallet Circle Gateway deposit', () => {
     });
 
     expect(mocks.sendTransaction).toHaveBeenCalledTimes(2);
+    expect(mocks.recordPendingArcTransaction).toHaveBeenCalledTimes(2);
+    expect(mocks.removePendingArcTransaction).toHaveBeenCalledTimes(2);
     expect(mocks.sendTransaction.mock.calls[0]?.[1]).toMatchObject({
       ...buildCircleGatewayApprovalTx(1_000_000n),
       chainId: 5_042_002,
@@ -83,5 +99,28 @@ describe('connected-wallet Circle Gateway deposit', () => {
         expect.stringContaining('Step 2 of 2'),
       ]),
     );
+  });
+
+  it('retains a submitted hash when Arc receipt lookup is temporarily unavailable', async () => {
+    mocks.waitForTransactionReceipt.mockRejectedValueOnce(
+      new Error('temporary transport failure'),
+    );
+
+    await expect(
+      depositToCircleGatewayOnArc({
+        account: mocks.address,
+        amountRaw: 1_000_000n,
+        report: vi.fn(),
+      }),
+    ).rejects.toThrow('temporary transport failure');
+
+    expect(mocks.sendTransaction).toHaveBeenCalledOnce();
+    expect(mocks.recordPendingArcTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: mocks.address,
+        hash: mocks.approvalHash,
+      }),
+    );
+    expect(mocks.removePendingArcTransaction).not.toHaveBeenCalled();
   });
 });

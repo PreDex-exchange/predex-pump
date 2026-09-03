@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { cookieToInitialState } from 'wagmi';
 
 import { AppHeader } from '@/components/layout/AppHeader';
+import { TransactionRecoveryNotice } from '@/components/layout/TransactionRecoveryNotice';
 import { AppProviders } from '@/components/providers/AppProviders';
 import { getWagmiConfig } from '@/lib/chain/config';
 
@@ -69,6 +70,7 @@ export default async function RootLayout({
       <body className={`${fredoka.variable} ${nunito.variable} ${dmMono.variable}`}>
         <AppProviders initialState={initialState}>
           <AppHeader />
+          <TransactionRecoveryNotice />
           {children}
         </AppProviders>
       </body>
