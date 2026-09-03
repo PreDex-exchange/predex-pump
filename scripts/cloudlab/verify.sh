@@ -76,12 +76,59 @@ run trader_test agents/trader test
 run trader_build agents/trader build
 run backend_typecheck backend typecheck
 run backend_build backend build
+
+command -v docker >/dev/null 2>&1 || {
+  printf 'Docker is required for the isolated backend test database.\n' >&2
+  exit 1
+}
+postgres_name="predex-test-${source_id:0:20}-$$"
+postgres_id="$(docker run --detach --rm \
+  --name "$postgres_name" \
+  --env POSTGRES_DB=predex_pump \
+  --env POSTGRES_USER=predex \
+  --env POSTGRES_PASSWORD=predex \
+  --publish 127.0.0.1::5432/tcp \
+  --health-cmd='pg_isready -U predex -d predex_pump' \
+  --health-interval=1s \
+  --health-timeout=3s \
+  --health-retries=30 \
+  postgres:17-alpine)"
+cleanup_postgres() {
+  docker container rm --force "$postgres_id" >/dev/null 2>&1 || true
+}
+trap cleanup_postgres EXIT
+
+postgres_status=''
+for _ in {1..30}; do
+  postgres_status="$(docker container inspect \
+    --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+    "$postgres_id" 2>/dev/null || true)"
+  [[ "$postgres_status" == healthy ]] && break
+  [[ "$postgres_status" == unhealthy || "$postgres_status" == exited ]] && break
+  sleep 1
+done
+[[ "$postgres_status" == healthy ]] || {
+  printf 'Isolated PostgreSQL did not become healthy (status=%s).\n' "$postgres_status" >&2
+  exit 1
+}
+postgres_mapping="$(docker container port "$postgres_id" 5432/tcp)"
+postgres_port="${postgres_mapping##*:}"
+printf '\n== backend_test ==\n'
+(
+  cd "$source_dir/backend"
+  TEST_DATABASE_URL="postgresql://predex:predex@127.0.0.1:${postgres_port}/predex_pump?schema=contract_test" \
+    pnpm run test
+)
+printf 'backend_test=pass\n' >> "$evidence_dir/manifest.txt"
+cleanup_postgres
+trap - EXIT
+
 run frontend_lint frontend lint
 run frontend_typecheck frontend typecheck
 run frontend_test frontend test
 run frontend_build frontend build
 
-printf 'backend_test=not_run_requires_postgres\nfinished_at=%s\n' \
+printf 'finished_at=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$evidence_dir/manifest.txt"
 printf '\nVerification passed. Evidence: %s\n' "$evidence_dir"
 REMOTE
