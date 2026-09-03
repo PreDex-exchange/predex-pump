@@ -64,8 +64,10 @@ describe('responsive containment contracts', () => {
       const css = source('components/layout/AppHeader.module.css');
       const layout = source('app/layout.tsx');
       const mobileBlock = css.slice(css.indexOf('@media (max-width: 900px)'));
+      const mobileHeader = rule(mobileBlock, '.header');
 
       expect(layout).toContain("viewportFit: 'cover'");
+      expect(mobileHeader).toContain('backdrop-filter: none');
       expect(mobileBlock).toContain('position: fixed');
       expect(mobileBlock).toContain(
         'grid-template-columns: repeat(5, minmax(0, 1fr))',

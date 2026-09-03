@@ -124,6 +124,7 @@
     border-width: 0 0 2px;
     border-radius: 0;
     box-shadow: none;
+    backdrop-filter: none;
   }
 
   .actions {
