@@ -95,6 +95,7 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <head>
+        <meta content="yes" name="apple-mobile-web-app-capable" />
         {qaWalletScriptUrl ? (
           <Script src={qaWalletScriptUrl} strategy="beforeInteractive" />
         ) : null}
