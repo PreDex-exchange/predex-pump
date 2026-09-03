@@ -15,6 +15,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -116,25 +117,39 @@ const openMiniClobOrder: Order = {
 
 const mocks = vi.hoisted(() => ({
   address: `0x${'12'.repeat(20)}` as const,
+  accountRefetch: vi.fn(),
   account: null as AccountResponse | null,
   accountError: null as Error | null,
   accountLoading: false,
+  authenticated: true,
+  authError: null as Error | null,
   activity: { items: [], nextCursor: null } as ActivityResponse,
   activityError: null as Error | null,
   activityLoading: false,
   activityRefetch: vi.fn(),
+  cancelOrder: vi.fn(),
+  chainId: 5_042_002,
+  ensureSession: vi.fn(),
+  isConnected: true,
+  isEstablishingSession: false,
   markets: { items: [], nextCursor: null } as ListMarketsResponse,
   marketsError: null as Error | null,
   marketsLoading: false,
   makerOrders: null as MakerOrdersResponse | null,
+  ordersRefetch: vi.fn(),
+  sessionAddress: `0x${'12'.repeat(20)}` as const,
+  sessionLoading: false,
+  txExecute: vi.fn(),
+  txIsBusy: false,
+  txReset: vi.fn(),
   useMyOrders: vi.fn(),
 }));
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({
     address: mocks.address,
-    chainId: 5_042_002,
-    isConnected: true,
+    chainId: mocks.chainId,
+    isConnected: mocks.isConnected,
   }),
   useConnect: () => ({
     connect: vi.fn(),
@@ -155,26 +170,32 @@ vi.mock('@/lib/chain/useQuote', () => ({
 
 vi.mock('@/lib/chain/transactions', () => ({
   buyOnArc: vi.fn(),
+  cancelOrderOnArc: mocks.cancelOrder,
   sellOnArc: vi.fn(),
 }));
 
 vi.mock('@/lib/chain/useTxFlow', () => ({
   useTxFlow: () => ({
     state: { phase: 'idle', message: 'Ready.' },
-    execute: vi.fn(),
-    reset: vi.fn(),
-    isBusy: false,
+    execute: mocks.txExecute,
+    reset: mocks.txReset,
+    isBusy: mocks.txIsBusy,
   }),
 }));
 
 vi.mock('@/components/providers/AuthProvider', () => ({
   useAuth: () => ({
-    session: {
-      authenticated: true,
-      address: mocks.address,
-      expiresAt: '2033-01-01T00:00:00.000Z',
-    },
-    isLoading: false,
+    session: mocks.authenticated
+      ? {
+          authenticated: true,
+          address: mocks.sessionAddress,
+          expiresAt: '2033-01-01T00:00:00.000Z',
+        }
+      : { authenticated: false },
+    isLoading: mocks.sessionLoading,
+    isEstablishingSession: mocks.isEstablishingSession,
+    error: mocks.authError,
+    ensureSession: mocks.ensureSession,
   }),
 }));
 
@@ -183,7 +204,7 @@ vi.mock('@/lib/api/hooks', () => ({
     data: mocks.account,
     isLoading: mocks.accountLoading,
     error: mocks.accountError,
-    refetch: vi.fn(),
+    refetch: mocks.accountRefetch,
   }),
   useActivity: () => ({
     data: mocks.activity,
@@ -203,19 +224,40 @@ vi.mock('@/lib/api/hooks', () => ({
       data: mocks.makerOrders,
       isLoading: false,
       error: null,
-      refetch: vi.fn(),
+      refetch: mocks.ordersRefetch,
     };
   },
 }));
 
 beforeEach(() => {
+  mocks.accountRefetch.mockReset();
   mocks.accountError = null;
   mocks.accountLoading = false;
+  mocks.authenticated = true;
+  mocks.authError = null;
   mocks.activityError = null;
   mocks.activityLoading = false;
   mocks.activityRefetch.mockReset();
+  mocks.cancelOrder.mockReset().mockResolvedValue({
+    orderId: 24n,
+    refundRaw: 912_000n,
+  });
+  mocks.chainId = 5_042_002;
+  mocks.ensureSession.mockReset().mockResolvedValue(false);
+  mocks.isConnected = true;
+  mocks.isEstablishingSession = false;
   mocks.marketsError = null;
   mocks.marketsLoading = false;
+  mocks.ordersRefetch.mockReset();
+  mocks.sessionAddress = ADDRESS;
+  mocks.sessionLoading = false;
+  mocks.txExecute.mockReset().mockImplementation(
+    async (
+      operation: (report: (state: unknown) => void) => Promise<unknown>,
+    ) => operation(vi.fn()),
+  );
+  mocks.txIsBusy = false;
+  mocks.txReset.mockReset();
   mocks.account = {
     account: {
       address: ADDRESS,
@@ -271,10 +313,18 @@ describe('Portfolio open orders', () => {
     expect(within(miniClobRow as HTMLElement).getAllByText('2')).toHaveLength(2);
     expect(within(miniClobRow as HTMLElement).getByText('Open')).toBeTruthy();
     expect(
-      within(miniClobRow as HTMLElement).getByRole('link', {
-        name: /Manage on market/u,
+      within(miniClobRow as HTMLElement).getByRole('button', {
+        name: 'Cancel & refund',
       }),
     ).toBeTruthy();
+    expect(
+      within(miniClobRow as HTMLElement).getByText('Escrow managed here'),
+    ).toBeTruthy();
+    expect(
+      within(miniClobRow as HTMLElement).queryByRole('link', {
+        name: /Manage on market/u,
+      }),
+    ).toBeNull();
     expect(screen.getByText('No positions yet')).toBeTruthy();
   });
 
@@ -303,6 +353,192 @@ describe('Portfolio open orders', () => {
     expect(within(section).getByText('Cancel on-chain · gas')).toBeTruthy();
     expect(section.textContent).toContain('removes an order from this operator’s book only');
     expect(section.textContent).toContain('invalidates the signature');
+  });
+
+  it('offers explicit SIWE for order management without prompting automatically', () => {
+    mocks.authenticated = false;
+
+    render(<PortfolioScreen />);
+
+    expect(mocks.useMyOrders).toHaveBeenCalledWith(ADDRESS, false);
+    expect(mocks.ensureSession).not.toHaveBeenCalled();
+    const signIn = screen.getByRole('button', {
+      name: 'Sign in to manage orders',
+    });
+    fireEvent.click(signIn);
+    expect(mocks.ensureSession).toHaveBeenCalledOnce();
+  });
+
+  it('keeps order-management sign-in recoverable without exposing provider errors', () => {
+    mocks.authenticated = false;
+    mocks.authError = new Error('Sensitive provider rejection details');
+
+    render(<PortfolioScreen />);
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Sign-in was not completed',
+    );
+    expect(document.body.textContent).not.toContain(
+      'Sensitive provider rejection details',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Sign in to manage orders' }),
+    ).toBeTruthy();
+  });
+
+  it('cancels the exact MiniCLOB order, removes it optimistically, and refreshes account data', async () => {
+    render(<PortfolioScreen />);
+    const orders = screen.getByRole('table', {
+      name: /Live Hybrid and MiniCLOB maker orders/u,
+    });
+    const miniClobRow = within(orders).getByText('MINICLOB').closest('tr');
+    expect(miniClobRow).not.toBeNull();
+
+    fireEvent.click(
+      within(miniClobRow as HTMLElement).getByRole('button', {
+        name: 'Cancel & refund',
+      }),
+    );
+    const dialog = screen.getByRole('dialog', {
+      name: 'Cancel MiniCLOB order #24',
+    });
+    expect(within(dialog).getByText(/re-read order #24 from Arc/u)).toBeTruthy();
+    expect(
+      [...dialog.querySelectorAll('p')].some((paragraph) =>
+        paragraph.textContent?.includes('remaining USDC escrow'),
+      ),
+    ).toBe(true);
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Cancel & refund escrow' }),
+    );
+
+    await waitFor(() => expect(mocks.cancelOrder).toHaveBeenCalledOnce());
+    expect(mocks.cancelOrder).toHaveBeenCalledWith({
+      account: ADDRESS,
+      orderId: 24n,
+      report: expect.any(Function),
+    });
+    await waitFor(() =>
+      expect(within(orders).queryByText('MINICLOB')).toBeNull(),
+    );
+    expect(mocks.ordersRefetch).toHaveBeenCalledOnce();
+    expect(mocks.accountRefetch).toHaveBeenCalledOnce();
+    expect(
+      within(dialog).getByText(
+        'MiniCLOB order #24 cancelled. 0.912000 USDC escrow was returned by the contract.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('disables MiniCLOB cancellation on the wrong network', () => {
+    mocks.chainId = 1;
+
+    render(<PortfolioScreen />);
+
+    const miniClobRow = screen.getByText('MINICLOB').closest('tr');
+    expect(miniClobRow).not.toBeNull();
+    const action = within(miniClobRow as HTMLElement).getByRole('button', {
+      name: 'Switch to Arc',
+    });
+    expect(action.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(action);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(mocks.cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it('synchronously rejects a rapid duplicate cancellation click', async () => {
+    let releaseCancel: (value: { orderId: bigint; refundRaw: bigint }) => void =
+      () => {
+        throw new Error('Cancellation promise was not created');
+      };
+    mocks.cancelOrder.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseCancel = resolve;
+        }),
+    );
+    render(<PortfolioScreen />);
+    const miniClobRow = screen.getByText('MINICLOB').closest('tr');
+    expect(miniClobRow).not.toBeNull();
+    fireEvent.click(
+      within(miniClobRow as HTMLElement).getByRole('button', {
+        name: 'Cancel & refund',
+      }),
+    );
+    const dialog = screen.getByRole('dialog', {
+      name: 'Cancel MiniCLOB order #24',
+    });
+    const confirm = within(dialog).getByRole('button', {
+      name: 'Cancel & refund escrow',
+    });
+
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(mocks.cancelOrder).toHaveBeenCalledOnce();
+
+    releaseCancel({ orderId: 24n, refundRaw: 912_000n });
+    await waitFor(() => expect(mocks.ordersRefetch).toHaveBeenCalledOnce());
+  });
+
+  it('keeps every cancel control disabled while a cancellation is busy', () => {
+    mocks.txIsBusy = true;
+
+    render(<PortfolioScreen />);
+
+    const miniClobRow = screen.getByText('MINICLOB').closest('tr');
+    expect(miniClobRow).not.toBeNull();
+    expect(
+      within(miniClobRow as HTMLElement)
+        .getByRole('button', { name: 'Cancel & refund' })
+        .hasAttribute('disabled'),
+    ).toBe(true);
+  });
+
+  it('keeps the order and confirmation recoverable when cancellation fails', async () => {
+    mocks.cancelOrder.mockRejectedValueOnce(new Error('wallet unavailable'));
+    mocks.txExecute.mockImplementationOnce(
+      async (
+        operation: (report: (state: unknown) => void) => Promise<unknown>,
+      ) => {
+        try {
+          return await operation(vi.fn());
+        } catch {
+          return null;
+        }
+      },
+    );
+    render(<PortfolioScreen />);
+    const orders = screen.getByRole('table', {
+      name: /Live Hybrid and MiniCLOB maker orders/u,
+    });
+    const miniClobRow = within(orders).getByText('MINICLOB').closest('tr');
+    expect(miniClobRow).not.toBeNull();
+    fireEvent.click(
+      within(miniClobRow as HTMLElement).getByRole('button', {
+        name: 'Cancel & refund',
+      }),
+    );
+    const dialog = screen.getByRole('dialog', {
+      name: 'Cancel MiniCLOB order #24',
+    });
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Cancel & refund escrow' }),
+    );
+    await waitFor(() => expect(mocks.cancelOrder).toHaveBeenCalledOnce());
+
+    expect(within(orders).getByText('MINICLOB')).toBeTruthy();
+    expect(
+      screen.getByRole('dialog', { name: 'Cancel MiniCLOB order #24' }),
+    ).toBeTruthy();
+    expect(
+      within(dialog)
+        .getByRole('button', { name: 'Cancel & refund escrow' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+    expect(mocks.ordersRefetch).not.toHaveBeenCalled();
+    expect(mocks.accountRefetch).not.toHaveBeenCalled();
   });
 });
 

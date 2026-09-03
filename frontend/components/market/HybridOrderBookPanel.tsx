@@ -255,7 +255,13 @@ export function HybridOrderBookPanel({
       enabled: Boolean(address) && chainId === arcTestnet.id,
     },
   });
-  const { session, isLoading: sessionLoading } = useAuth();
+  const {
+    session,
+    isLoading: sessionLoading,
+    isEstablishingSession,
+    error: authError,
+    ensureSession,
+  } = useAuth();
   const authenticated =
     session?.authenticated === true &&
     Boolean(address) &&
@@ -290,6 +296,8 @@ export function HybridOrderBookPanel({
   const [cancelled, setCancelled] = useState(() => new Set<string>());
   const [orderActionBusy, setOrderActionBusy] = useState<string | null>(null);
   const [orderActionError, setOrderActionError] = useState<string | null>(null);
+  const [makerSessionAttemptFailed, setMakerSessionAttemptFailed] =
+    useState(false);
   const [nowSeconds, setNowSeconds] = useState(() =>
     Math.floor(Date.now() / 1_000),
   );
@@ -622,6 +630,16 @@ export function HybridOrderBookPanel({
       );
     } finally {
       setOrderActionBusy(null);
+    }
+  }
+
+  async function requestMakerSession() {
+    if (isEstablishingSession) return;
+    setMakerSessionAttemptFailed(false);
+    try {
+      if (!(await ensureSession())) setMakerSessionAttemptFailed(true);
+    } catch {
+      setMakerSessionAttemptFailed(true);
     }
   }
 
@@ -1161,16 +1179,34 @@ export function HybridOrderBookPanel({
           </p>
           {!isConnected ? (
             <p className={styles.stateText}>Connect the maker wallet to see its orders.</p>
-          ) : sessionLoading ? (
+          ) : sessionLoading && !isEstablishingSession ? (
             <p className={styles.stateText} role="status">
               Preparing your private order list…
             </p>
           ) : !authenticated ? (
             <div className={styles.privateState}>
-              <p>
-                Your private order list is unavailable for this connection. Public
-                orders and wallet-only trading remain available.
-              </p>
+              <div>
+                <p>
+                  Sign in to view and manage orders created by this wallet. Public
+                  orders and wallet-only trading remain available without signing in.
+                </p>
+                {(makerSessionAttemptFailed || authError) && (
+                  <p className={styles.inlineError} role="alert">
+                    Sign-in was not completed. Try again when ready; public order
+                    placement and fills remain available.
+                  </p>
+                )}
+              </div>
+              <Button
+                disabled={isEstablishingSession}
+                onClick={() => void requestMakerSession()}
+                size="small"
+                variant="neutral"
+              >
+                {isEstablishingSession
+                  ? 'Check MetaMask…'
+                  : 'Sign in to manage orders'}
+              </Button>
             </div>
           ) : myOrders.isLoading ? (
             <p className={styles.stateText} role="status">

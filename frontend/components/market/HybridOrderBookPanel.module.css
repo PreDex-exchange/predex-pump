@@ -475,6 +475,10 @@
   margin: 0;
 }
 
+.privateState > button {
+  min-height: 44px;
+}
+
 .myOrderList {
   display: grid;
   gap: var(--space-3);

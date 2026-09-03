@@ -36,6 +36,9 @@ import { OrderBookPanel } from './OrderBookPanel';
 const mocks = vi.hoisted(() => ({
   address: `0x${'12'.repeat(20)}` as const,
   authenticated: true,
+  authError: null as Error | null,
+  ensureSession: vi.fn(),
+  isEstablishingSession: false,
   approvals: {
     data: {
       owner: `0x${'12'.repeat(20)}` as const,
@@ -97,6 +100,9 @@ vi.mock('@/components/providers/AuthProvider', () => ({
         }
       : { authenticated: false },
     isLoading: false,
+    isEstablishingSession: mocks.isEstablishingSession,
+    error: mocks.authError,
+    ensureSession: mocks.ensureSession,
   }),
 }));
 
@@ -326,6 +332,8 @@ function renderLivePanel(
 
 beforeEach(() => {
   mocks.authenticated = true;
+  mocks.authError = null;
+  mocks.isEstablishingSession = false;
   mocks.approvals.data = {
     owner: mocks.address,
     ctfApprovedForAll: true,
@@ -361,6 +369,7 @@ beforeEach(() => {
     mocks.collateralBalance.refetch,
     mocks.approvalReset,
     mocks.actionReset,
+    mocks.ensureSession,
   ]) {
     mock.mockReset();
   }
@@ -368,6 +377,7 @@ beforeEach(() => {
   mocks.approveTokens.mockResolvedValue({});
   mocks.fillOrder.mockResolvedValue({});
   mocks.submitCancel.mockResolvedValue({});
+  mocks.ensureSession.mockResolvedValue(false);
 });
 
 afterEach(() => {
@@ -376,6 +386,65 @@ afterEach(() => {
 });
 
 describe('Hybrid human trading surface', () => {
+  it('offers maker sign-in without prompting on render', () => {
+    mocks.authenticated = false;
+
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'a1')));
+
+    expect(
+      screen.getByRole('button', { name: 'Sign in to manage orders' }),
+    ).toBeTruthy();
+    expect(mocks.ensureSession).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('button', { name: 'Review binding order' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+  });
+
+  it('requests the maker session exactly once from the explicit action', async () => {
+    mocks.authenticated = false;
+    mocks.ensureSession.mockResolvedValue(true);
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'a2')));
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Sign in to manage orders' }),
+    );
+
+    await waitFor(() => expect(mocks.ensureSession).toHaveBeenCalledOnce());
+  });
+
+  it('keeps public trading usable after maker sign-in is declined', async () => {
+    mocks.authenticated = false;
+    mocks.ensureSession.mockResolvedValue(false);
+    const response = books(offchainOrder(OTHER_MAKER, 'a3'));
+    const rendered = renderPanel(response);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Sign in to manage orders' }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Sign-in was not completed/u),
+      ).toBeTruthy(),
+    );
+    expect(
+      screen.getByRole('button', { name: 'Review binding order' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+    expect(
+      screen.getByRole('button', { name: 'Fill' }).hasAttribute('disabled'),
+    ).toBe(false);
+
+    mocks.authError = new Error('Unsafe provider rejection details');
+    rendered.rerender(
+      <HybridOrderBookPanel books={response} market={market} positions={[]} />,
+    );
+    expect(document.body.textContent).not.toContain(
+      'Unsafe provider rejection details',
+    );
+  });
+
   it('defaults and clamps expiry into the future after the trading window ended', () => {
     const nowSeconds = 1_786_406_400;
     vi.spyOn(Date, 'now').mockReturnValue(nowSeconds * 1_000);
@@ -779,6 +848,7 @@ describe('Hybrid human trading surface', () => {
       }),
     );
     expect(mocks.postOrder).toHaveBeenCalledOnce();
+    expect(mocks.ensureSession).not.toHaveBeenCalled();
     expect(mocks.approveCollateral).not.toHaveBeenCalled();
     expect(mocks.approveTokens).not.toHaveBeenCalled();
     expect(mocks.approvalReset).toHaveBeenCalledOnce();
@@ -962,5 +1032,6 @@ describe('Hybrid human trading surface', () => {
       }),
     );
     expect(mocks.approveCollateral).not.toHaveBeenCalled();
+    expect(mocks.ensureSession).not.toHaveBeenCalled();
   });
 });

@@ -8,15 +8,17 @@ import type {
   Trade,
 } from '@predex-pump/shared/domain';
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useAccount as useWalletAccount, useConnect } from 'wagmi';
 
 import { ActivityList } from '@/components/feed/ActivityList';
 import { OutcomeBadge } from '@/components/ui/Badge';
 import { Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { StatePanel } from '@/components/ui/StatePanel';
+import { TxStatus } from '@/components/ui/TxStatus';
 import { useAuth } from '@/components/providers/AuthProvider';
 import {
   useAccount as useIndexedAccount,
@@ -24,6 +26,9 @@ import {
   useMarkets,
   useMyOrders,
 } from '@/lib/api/hooks';
+import { arcTestnet } from '@/lib/chain/arc';
+import { cancelOrderOnArc } from '@/lib/chain/transactions';
+import { useTxFlow } from '@/lib/chain/useTxFlow';
 import {
   formatPrice,
   formatRaw,
@@ -50,10 +55,9 @@ interface PositionRow {
   estimatedPnlRaw: string;
 }
 
-interface OpenOrderRow {
+interface OpenOrderRowBase {
   key: string;
   marketId: string;
-  venue: 'HYBRID' | 'MINICLOB';
   side: OffchainOrder['side'];
   outcome: OffchainOrder['outcome'];
   priceRaw: string;
@@ -62,6 +66,18 @@ interface OpenOrderRow {
   status: string;
   createdAt: number;
 }
+
+interface HybridOpenOrderRow extends OpenOrderRowBase {
+  venue: 'HYBRID';
+}
+
+interface MiniClobOpenOrderRow extends OpenOrderRowBase {
+  venue: 'MINICLOB';
+  maker: string;
+  orderId: string;
+}
+
+type OpenOrderRow = HybridOpenOrderRow | MiniClobOpenOrderRow;
 
 function averageCostRaw(position: Position) {
   const quantity = BigInt(position.qtyRaw);
@@ -105,8 +121,14 @@ function orderStatusLabel(status: OffchainOrder['status']) {
 }
 
 export function PortfolioScreen() {
-  const { address, isConnected } = useWalletAccount();
-  const { session, isLoading: sessionLoading } = useAuth();
+  const { address, chainId, isConnected } = useWalletAccount();
+  const {
+    session,
+    isLoading: sessionLoading,
+    isEstablishingSession,
+    error: authError,
+    ensureSession,
+  } = useAuth();
   const authenticated =
     session?.authenticated === true &&
     Boolean(address) &&
@@ -141,6 +163,15 @@ export function PortfolioScreen() {
     error: ordersError,
     refetch: refetchOrders,
   } = useMyOrders(address, authenticated);
+  const cancelTx = useTxFlow();
+  const cancelSubmissionOrderId = useRef<string | null>(null);
+  const [cancelTarget, setCancelTarget] =
+    useState<MiniClobOpenOrderRow | null>(null);
+  const [cancelledMiniClobOrders, setCancelledMiniClobOrders] = useState(
+    () => new Set<string>(),
+  );
+  const [cancelCompletion, setCancelCompletion] = useState<string | null>(null);
+  const wrongNetwork = isConnected && chainId !== arcTestnet.id;
 
   const marketById = useMemo(
     () =>
@@ -192,12 +223,15 @@ export function PortfolioScreen() {
         (order) =>
           order.open &&
           BigInt(order.remainingRaw) > 0n &&
+          !cancelledMiniClobOrders.has(order.orderId) &&
           order.maker.toLowerCase() === normalizedAddress,
       )
       .map((order): OpenOrderRow => ({
         key: `miniclob:${order.orderId}`,
         marketId: order.marketId,
+        maker: order.maker,
         venue: 'MINICLOB',
+        orderId: order.orderId,
         side: order.side,
         outcome: order.outcome,
         priceRaw: order.priceRaw,
@@ -209,7 +243,80 @@ export function PortfolioScreen() {
     return [...hybrid, ...miniclob].sort(
       (left, right) => right.createdAt - left.createdAt,
     );
-  }, [address, makerOrders?.onchainOrders, makerOrders?.orders]);
+  }, [
+    address,
+    cancelledMiniClobOrders,
+    makerOrders?.onchainOrders,
+    makerOrders?.orders,
+  ]);
+
+  const canCancelMiniClob =
+    cancelTarget !== null &&
+    authenticated &&
+    isConnected &&
+    Boolean(address) &&
+    !wrongNetwork &&
+    cancelTarget.maker.toLowerCase() === address?.toLowerCase();
+
+  function openMiniClobCancel(order: MiniClobOpenOrderRow) {
+    cancelTx.reset();
+    setCancelCompletion(null);
+    setCancelTarget(order);
+  }
+
+  function closeMiniClobCancel() {
+    if (cancelTx.isBusy) return;
+    cancelSubmissionOrderId.current = null;
+    setCancelTarget(null);
+    setCancelCompletion(null);
+    cancelTx.reset();
+  }
+
+  async function cancelMiniClobOrder() {
+    if (
+      !address ||
+      !cancelTarget ||
+      !canCancelMiniClob ||
+      cancelSubmissionOrderId.current !== null
+    ) {
+      return;
+    }
+    const orderId = cancelTarget.orderId;
+    cancelSubmissionOrderId.current = orderId;
+    let confirmed = false;
+    try {
+      const result = await cancelTx.execute((report) =>
+        cancelOrderOnArc({
+          account: address,
+          orderId: BigInt(orderId),
+          report,
+        }),
+      );
+      if (!result) return;
+      confirmed = true;
+
+      setCancelledMiniClobOrders((current) => {
+        const next = new Set(current);
+        next.add(orderId);
+        return next;
+      });
+      setCancelCompletion(
+        cancelTarget.side === 'BID'
+          ? `MiniCLOB order #${orderId} cancelled. ${formatUsdc(
+              result.refundRaw.toString(),
+              6,
+            )} USDC escrow was returned by the contract.`
+          : `MiniCLOB order #${orderId} cancelled. ${formatRaw(
+              result.refundRaw.toString(),
+              { minimumFractionDigits: 0, maximumFractionDigits: 6 },
+            )} ${cancelTarget.outcome} escrow was returned by the contract.`,
+      );
+      refetchOrders();
+      refetchAccount();
+    } finally {
+      if (!confirmed) cancelSubmissionOrderId.current = null;
+    }
+  }
 
   const totalPositionValueRaw = positionRows
     .reduce((total, row) => total + BigInt(row.currentValueRaw), 0n)
@@ -414,20 +521,39 @@ export function PortfolioScreen() {
         <p className={styles.orderSafety}>
           <strong>Withdraw · free</strong> removes an order from this operator’s
           book only. <strong>Cancel on-chain · gas</strong> invalidates the
-          signature; otherwise it can remain valid until expiry. MiniCLOB orders
-          hold escrow on-chain and can be managed from their market page.
+          signature; otherwise it can remain valid until expiry. MiniCLOB escrow
+          is cancelled and refunded directly from this portfolio, even after its
+          market moves to Hybrid or settles.
         </p>
 
-        {sessionLoading ? (
+        {sessionLoading && !isEstablishingSession ? (
           <p className={styles.inlineState} role="status">
             Preparing the private order list…
           </p>
         ) : !authenticated ? (
           <Card className={styles.inlineState} quiet>
-            <p>
-              The private live-order list is unavailable for this connection. Your
-              on-chain portfolio and wallet-only trading remain available.
-            </p>
+            <div>
+              <p>
+                Sign in only when you want to load and manage this wallet&apos;s live
+                Hybrid commitments and MiniCLOB escrow. Trading remains wallet-only.
+              </p>
+              {authError && (
+                <p className={styles.sessionError} role="alert">
+                  Sign-in was not completed. Try again when ready; wallet-only
+                  trading remains available.
+                </p>
+              )}
+            </div>
+            <Button
+              disabled={isEstablishingSession}
+              onClick={() => void ensureSession()}
+              size="small"
+              variant="neutral"
+            >
+              {isEstablishingSession
+                ? 'Check MetaMask…'
+                : 'Sign in to manage orders'}
+            </Button>
           </Card>
         ) : ordersLoading ? (
           <p className={styles.inlineState} role="status">
@@ -462,6 +588,7 @@ export function PortfolioScreen() {
                   <th className={styles.numericHeading} scope="col">Original</th>
                   <th className={styles.numericHeading} scope="col">Remaining</th>
                   <th scope="col">Status</th>
+                  <th scope="col">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -470,14 +597,23 @@ export function PortfolioScreen() {
                   return (
                     <tr key={order.key}>
                       <td className={styles.marketCell} data-label="Market">
-                        <Link href={`/market/${order.marketId}`}>
-                          <strong>
-                            {orderMarket?.question ?? `Market #${order.marketId}`}
-                          </strong>
-                          <span>
-                            Manage on market <span aria-hidden="true">→</span>
-                          </span>
-                        </Link>
+                        {order.venue === 'HYBRID' ? (
+                          <Link href={`/market/${order.marketId}`}>
+                            <strong>
+                              {orderMarket?.question ?? `Market #${order.marketId}`}
+                            </strong>
+                            <span>
+                              Manage on market <span aria-hidden="true">→</span>
+                            </span>
+                          </Link>
+                        ) : (
+                          <div>
+                            <strong>
+                              {orderMarket?.question ?? `Market #${order.marketId}`}
+                            </strong>
+                            <span>Escrow managed here</span>
+                          </div>
+                        )}
                       </td>
                       <td data-label="Venue">
                         <span className={styles.venue}>{order.venue}</span>
@@ -506,6 +642,31 @@ export function PortfolioScreen() {
                           {order.status}
                         </span>
                       </td>
+                      <td data-label="Action">
+                        {order.venue === 'MINICLOB' ? (
+                          <Button
+                            className={styles.orderAction}
+                            disabled={wrongNetwork || cancelTx.isBusy}
+                            onClick={() => openMiniClobCancel(order)}
+                            size="small"
+                            variant="neutral"
+                          >
+                            {wrongNetwork
+                              ? 'Switch to Arc'
+                              : cancelTx.isBusy &&
+                                  cancelTarget?.orderId === order.orderId
+                                ? 'Cancelling…'
+                                : 'Cancel & refund'}
+                          </Button>
+                        ) : (
+                          <Link
+                            className={styles.manageLink}
+                            href={`/market/${order.marketId}`}
+                          >
+                            Manage
+                          </Link>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -517,6 +678,86 @@ export function PortfolioScreen() {
           Withdrawal is off-chain only; on-chain cancellation is authoritative.
         </span>
       </section>
+
+      <ConfirmModal
+        closeDisabled={cancelTx.isBusy}
+        closeOnConfirm={false}
+        confirmDisabled={
+          !canCancelMiniClob ||
+          cancelTx.isBusy ||
+          cancelTx.state.phase === 'confirmed' ||
+          cancelCompletion !== null
+        }
+        confirmLabel={
+          cancelTx.state.phase === 'confirmed' || cancelCompletion !== null
+            ? 'Cancelled & refunded'
+            : cancelTx.state.phase === 'failed' ||
+                cancelTx.state.phase === 'rejected' ||
+                cancelTx.state.phase === 'reverted'
+              ? 'Retry cancel & refund'
+              : 'Cancel & refund escrow'
+        }
+        kicker="On-chain MiniCLOB escrow"
+        onClose={closeMiniClobCancel}
+        onConfirm={cancelMiniClobOrder}
+        open={cancelTarget !== null}
+        title={
+          cancelTarget
+            ? `Cancel MiniCLOB order #${cancelTarget.orderId}`
+            : 'Cancel MiniCLOB order'
+        }
+      >
+        {cancelTarget && (
+          <>
+            <p>
+              Predex will re-read order #{cancelTarget.orderId} from Arc, verify
+              that this connected wallet is still its maker and that the order is
+              still open, then ask MetaMask to call <code>MiniCLOB.cancel</code>.
+            </p>
+            <p>
+              The contract returns the remaining{' '}
+              <strong>
+                {cancelTarget.side === 'BID'
+                  ? 'USDC'
+                  : `${cancelTarget.outcome} position-token`}{' '}
+                escrow
+              </strong>{' '}
+              to this wallet. This remains available after a Hybrid handoff or
+              market settlement.
+            </p>
+            <dl className={styles.confirmRows}>
+              <div>
+                <dt>Market</dt>
+                <dd>#{cancelTarget.marketId}</dd>
+              </div>
+              <div>
+                <dt>Remaining</dt>
+                <dd className="numeric">
+                  {formatRaw(cancelTarget.remainingRaw, {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 6,
+                  })}{' '}
+                  {cancelTarget.outcome}
+                </dd>
+              </div>
+              <div>
+                <dt>Escrow returned as</dt>
+                <dd>
+                  {cancelTarget.side === 'BID'
+                    ? 'USDC'
+                    : cancelTarget.outcome}
+                </dd>
+              </div>
+            </dl>
+          </>
+        )}
+        {cancelCompletion && (
+          <p className={styles.completion} role="status">
+            {cancelCompletion}
+          </p>
+        )}
+        <TxStatus state={cancelTx.state} />
+      </ConfirmModal>
 
       <section className={styles.positions}>
         <div className={styles.sectionHeading}>
