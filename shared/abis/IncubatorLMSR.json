@@ -733,6 +733,16 @@
             "internalType": "uint32"
           },
           {
+            "name": "minTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxTradingWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
             "name": "minimumTimeOpen",
             "type": "uint32",
             "internalType": "uint32"

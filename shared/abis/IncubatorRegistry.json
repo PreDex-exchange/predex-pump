@@ -1792,6 +1792,27 @@
   },
   {
     "type": "error",
+    "name": "Registry__TradingWindowOutOfRange",
+    "inputs": [
+      {
+        "name": "tradingWindowSeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minTradingWindowSeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxTradingWindowSeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "Registry__ZeroAddress",
     "inputs": []
   },
