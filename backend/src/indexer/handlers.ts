@@ -1257,21 +1257,16 @@ async function handleExchangeTokenRegistered(
   });
 }
 
-async function handleExchangeOrderFilled(
+async function applySignedOrderFill(
   tx: Tx,
   event: DecodedEvent,
+  order: SignedOrder,
+  fillSize: bigint,
 ): Promise<void> {
-  const orderHash = stringArg(event.args, 'orderHash').toLowerCase();
-  const order = await tx.signedOrder.findUnique({ where: { orderHash } });
-  if (order === null) return;
-  const fillSize =
-    order.exchangeSide === 0
-      ? bigintArg(event.args, 'takerAmountFilled')
-      : bigintArg(event.args, 'makerAmountFilled');
   const filled = BigInt(order.filledRaw) + fillSize;
   const size = BigInt(order.sizeRaw);
   if (filled > size) {
-    throw new Error(`Exchange fill exceeds signed order size for ${orderHash}`);
+    throw new Error(`Exchange fill exceeds signed order size for ${order.orderHash}`);
   }
   const remaining = size - filled;
   const status =
@@ -1281,7 +1276,7 @@ async function handleExchangeOrderFilled(
         ? 'PARTIALLY_FILLED'
         : order.status;
   await tx.signedOrder.update({
-    where: { orderHash },
+    where: { orderHash: order.orderHash },
     data: {
       filledRaw: filled.toString(),
       remainingRaw: remaining.toString(),
@@ -1291,10 +1286,75 @@ async function handleExchangeOrderFilled(
       updatedAt: event.ts,
     },
   });
-  await tx.settlementMatch.updateMany({
-    where: { txHash: event.txHash.toLowerCase(), status: 'SUBMITTED' },
+}
+
+async function handleExchangeOrderFilled(
+  tx: Tx,
+  event: DecodedEvent,
+): Promise<void> {
+  const orderHash = stringArg(event.args, 'orderHash').toLowerCase();
+  const makerOrder = await tx.signedOrder.findUnique({ where: { orderHash } });
+  if (makerOrder === null) return;
+  const makerFillSize =
+    makerOrder.exchangeSide === 0
+      ? bigintArg(event.args, 'takerAmountFilled')
+      : bigintArg(event.args, 'makerAmountFilled');
+  const eventTxHash = event.txHash.toLowerCase();
+  const settlements = await tx.settlementMatch.findMany({
+    where: {
+      txHash: eventTxHash,
+      makerOrderHash: orderHash,
+      status: 'SUBMITTED',
+    },
+    include: { takerOrder: true },
+    take: 2,
+  });
+  if (settlements.length > 1) {
+    throw new Error(`Exchange fill matches multiple submitted settlements for ${orderHash}`);
+  }
+  const settlement = settlements[0] ?? null;
+
+  if (settlement === null) {
+    const unattributedSettlement = await tx.settlementMatch.findFirst({
+      where: {
+        makerOrderHash: orderHash,
+        txHash: null,
+        status: { in: ['SUBMITTING', 'SUBMISSION_UNKNOWN'] },
+      },
+      select: { id: true },
+    });
+    if (unattributedSettlement !== null) {
+      throw new Error(
+        `Exchange fill arrived before settlement ${unattributedSettlement.id} had a known transaction hash`,
+      );
+    }
+    await applySignedOrderFill(tx, event, makerOrder, makerFillSize);
+    return;
+  }
+
+  const matchedFillSize = BigInt(settlement.fillSizeRaw);
+  const eventMaker = lowerAddress(stringArg(event.args, 'maker'));
+  const eventTaker = lowerAddress(stringArg(event.args, 'taker'));
+  const eventTokenId = bigintArg(event.args, 'tokenId').toString();
+  if (
+    makerFillSize !== matchedFillSize ||
+    makerOrder.maker !== eventMaker ||
+    settlement.takerOrder.maker !== eventTaker ||
+    makerOrder.tokenId !== eventTokenId ||
+    settlement.takerOrder.tokenId !== eventTokenId ||
+    settlement.tokenId !== eventTokenId
+  ) {
+    throw new Error(`Exchange fill does not match submitted settlement ${settlement.id}`);
+  }
+  await applySignedOrderFill(tx, event, makerOrder, matchedFillSize);
+  await applySignedOrderFill(tx, event, settlement.takerOrder, matchedFillSize);
+  const confirmed = await tx.settlementMatch.updateMany({
+    where: { id: settlement.id, txHash: eventTxHash, status: 'SUBMITTED' },
     data: { status: 'CONFIRMED', updatedAt: event.ts },
   });
+  if (confirmed.count !== 1) {
+    throw new Error(`Submitted settlement changed while indexing ${settlement.id}`);
+  }
 }
 
 async function handleExchangeOrderCancelled(

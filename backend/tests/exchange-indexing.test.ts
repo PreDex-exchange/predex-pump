@@ -243,7 +243,6 @@ describe('exchange approval and lifecycle indexing', () => {
       conditionId: MARKET_ONE_CONDITION,
       blockNumber: 220,
     });
-
     await apply(
       event(
         'CTF_EXCHANGE',
@@ -258,5 +257,183 @@ describe('exchange approval and lifecycle indexing', () => {
       remainingRaw: '600000',
     });
     expect((await getMarketBook(testPrisma, '1'))?.yes.offchainOrders).toHaveLength(0);
+  });
+
+  it('projects an operator match fill onto both signed orders', async () => {
+    const maker = await ingestSell(205n);
+    const unrelatedMaker = await ingestSell(207n);
+    const taker = await signedOrderRequest({
+      side: Side.BUY,
+      priceRaw: 700_000n,
+      sizeRaw: 2_000_000n,
+      salt: 206n,
+    });
+    reader.state = validChainState({
+      approvalKind: 'COLLATERAL_ALLOWANCE',
+      collateralAllowance: 10_000_000n,
+      ctfApprovedForAll: null,
+    });
+    await service.ingest(taker.request);
+
+    const blockNumber = 223;
+    const txHash = `0x${blockNumber.toString(16).padStart(64, '0')}`;
+    const makerOrderHash = maker.request.orderHash.toLowerCase();
+    const takerOrderHash = taker.request.orderHash.toLowerCase();
+    await testPrisma.signedOrder.update({
+      where: { orderHash: takerOrderHash },
+      data: { filledRaw: '250000', remainingRaw: '1750000', status: 'PARTIALLY_FILLED' },
+    });
+    await testPrisma.settlementMatch.create({
+      data: {
+        id: 'operator-match-fill',
+        matchKey: 'operator-match-fill',
+        makerOrderHash,
+        takerOrderHash,
+        tokenId: '101',
+        fillSizeRaw: '1000000',
+        makerFilledBeforeRaw: '0',
+        takerFilledBeforeRaw: '0',
+        status: 'SUBMITTING',
+        createdAt: BOOK_NOW,
+        updatedAt: BOOK_NOW,
+      },
+    });
+    await testPrisma.settlementMatch.create({
+      data: {
+        id: 'unrelated-submitted-match',
+        matchKey: 'unrelated-submitted-match',
+        makerOrderHash: unrelatedMaker.request.orderHash.toLowerCase(),
+        takerOrderHash,
+        tokenId: '101',
+        fillSizeRaw: '1000',
+        makerFilledBeforeRaw: '0',
+        takerFilledBeforeRaw: '0',
+        status: 'SUBMITTED',
+        txHash,
+        createdAt: BOOK_NOW,
+        updatedAt: BOOK_NOW,
+      },
+    });
+
+    const fillEvent = event(
+      'CTF_EXCHANGE',
+      ADDRESSES.ctfExchange,
+      'OrderFilled',
+      {
+        orderHash: makerOrderHash,
+        maker: maker.account.address,
+        taker: taker.account.address,
+        tokenId: 101n,
+        makerAmountFilled: 1_000_000n,
+        takerAmountFilled: 650_000n,
+      },
+      blockNumber,
+    );
+    await expect(apply(fillEvent)).rejects.toThrow(
+      'arrived before settlement operator-match-fill had a known transaction hash',
+    );
+    expect(
+      await testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: makerOrderHash },
+      }),
+    ).toMatchObject({ filledRaw: '0', remainingRaw: '1000000', status: 'OPEN' });
+    expect(
+      await testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: takerOrderHash },
+      }),
+    ).toMatchObject({
+      filledRaw: '250000',
+      remainingRaw: '1750000',
+      status: 'PARTIALLY_FILLED',
+    });
+
+    await testPrisma.settlementMatch.update({
+      where: { id: 'operator-match-fill' },
+      data: { status: 'SUBMISSION_UNKNOWN' },
+    });
+    await expect(apply(fillEvent)).rejects.toThrow(
+      'arrived before settlement operator-match-fill had a known transaction hash',
+    );
+    await testPrisma.settlementMatch.update({
+      where: { id: 'operator-match-fill' },
+      data: { status: 'SUBMITTED', txHash },
+    });
+    await testPrisma.settlementMatch.create({
+      data: {
+        id: 'ambiguous-submitted-match',
+        matchKey: 'ambiguous-submitted-match',
+        makerOrderHash,
+        takerOrderHash,
+        tokenId: '101',
+        fillSizeRaw: '1000000',
+        makerFilledBeforeRaw: '0',
+        takerFilledBeforeRaw: '0',
+        status: 'SUBMITTED',
+        txHash,
+        createdAt: BOOK_NOW,
+        updatedAt: BOOK_NOW,
+      },
+    });
+    await expect(apply(fillEvent)).rejects.toThrow(
+      `Exchange fill matches multiple submitted settlements for ${makerOrderHash}`,
+    );
+    await testPrisma.settlementMatch.update({
+      where: { id: 'ambiguous-submitted-match' },
+      data: { status: 'FAILED' },
+    });
+    for (const args of [
+      { ...fillEvent.args, makerAmountFilled: 999_000n },
+      { ...fillEvent.args, tokenId: 102n },
+      { ...fillEvent.args, maker: '0x3333333333333333333333333333333333333333' },
+      { ...fillEvent.args, taker: '0x3333333333333333333333333333333333333333' },
+    ]) {
+      await expect(apply({ ...fillEvent, args })).rejects.toThrow(
+        'Exchange fill does not match submitted settlement operator-match-fill',
+      );
+    }
+    await apply(fillEvent);
+
+    expect(
+      await testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: makerOrderHash },
+      }),
+    ).toMatchObject({
+      filledRaw: '1000000',
+      remainingRaw: '0',
+      status: 'FILLED',
+      lastOnchainTxHash: txHash,
+      lastOnchainBlock: blockNumber,
+    });
+    expect(
+      await testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: takerOrderHash },
+      }),
+    ).toMatchObject({
+      filledRaw: '1250000',
+      remainingRaw: '750000',
+      status: 'PARTIALLY_FILLED',
+      lastOnchainTxHash: txHash,
+      lastOnchainBlock: blockNumber,
+    });
+    expect(
+      await testPrisma.settlementMatch.findUniqueOrThrow({
+        where: { id: 'operator-match-fill' },
+      }),
+    ).toMatchObject({ status: 'CONFIRMED' });
+    expect(
+      await testPrisma.settlementMatch.findUniqueOrThrow({
+        where: { id: 'unrelated-submitted-match' },
+      }),
+    ).toMatchObject({ status: 'SUBMITTED' });
+    expect(await apply(fillEvent)).toBe(0);
+    expect(
+      await testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: takerOrderHash },
+      }),
+    ).toMatchObject({ filledRaw: '1250000', remainingRaw: '750000' });
+    expect((await getMarketBook(testPrisma, '1'))?.yes.offchainOrders).toMatchObject([
+      { orderHash: takerOrderHash, remainingRaw: '750000' },
+      { orderHash: unrelatedMaker.request.orderHash.toLowerCase() },
+    ]);
   });
 });
