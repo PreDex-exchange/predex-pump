@@ -6,6 +6,7 @@
 #   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --read-only
 #   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --read-only --fixtures
 #   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --broadcast
+#   ./scripts/qa-stack.sh up --external-wallet
 #   ./scripts/qa-stack.sh down
 #
 # The frontend is always http://127.0.0.1:3002 (never port 3000). Useful pages:
@@ -33,6 +34,7 @@ WALLET_SCRIPT_URL="$WALLET_URL/provider.js"
 FRONTEND_WS_URL="${QA_FRONTEND_WS_URL:-ws://127.0.0.1:3001/ws}"
 MODE="read-only"
 SEED_FIXTURES=false
+EXTERNAL_WALLET=false
 # When set, QA runs the wallet shim + frontend ONLY, against an already
 # deployed backend. This is the only way to exercise the cross-site session
 # cookie, the nginx /pump route and the WebSocket proxy — a local backend
@@ -51,6 +53,7 @@ Usage:
   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up [--read-only]
   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --read-only --fixtures
   QA_WALLET_PRIVATE_KEY=<set-in-shell> ./scripts/qa-stack.sh up --broadcast
+  ./scripts/qa-stack.sh up --external-wallet
   ./scripts/qa-stack.sh down
   ./scripts/qa-stack.sh --help
 
@@ -67,11 +70,16 @@ Modes:
                proxy; a local backend exercises none of those.
   --broadcast  Enables eth_sendTransaction for approvals and fills. The local
                signer signs and broadcasts to Arc testnet. Use deliberately.
+  --external-wallet
+               Starts no signer and injects no QA provider. Use this mode to
+               test the real MetaMask connector. Wallet confirmations can
+               broadcast, so the wallet operator controls every chain write.
 
 Runtime key:
-  QA_WALLET_PRIVATE_KEY is required only by `up`. It must be a 0x-prefixed
-  32-byte private key supplied by the operator at runtime. The value is never
-  printed, logged, saved to a file, passed to Next/backend, or built into assets.
+  QA_WALLET_PRIVATE_KEY is required by `up` unless --external-wallet is used.
+  It must be a 0x-prefixed 32-byte private key supplied by the operator at
+  runtime. The value is never printed, logged, saved to a file, passed to
+  Next/backend, or built into assets.
 
 State services:
   QA_COMPOSE_PROJECT=backend is the default. It attaches to the canonical
@@ -243,6 +251,14 @@ assert_ports_usable() {
 }
 
 install_runtime_dependencies() {
+  if [[ ! -f "$ROOT_DIR/shared/node_modules/viem/package.json" ]]; then
+    printf 'Installing shared dependencies from the frozen lockfile...\n'
+    (
+      cd "$ROOT_DIR/shared"
+      unset QA_WALLET_PRIVATE_KEY OPENAI_API_KEY
+      pnpm install --frozen-lockfile
+    )
+  fi
   if [[ ! -x "$ROOT_DIR/backend/node_modules/.bin/prisma" || ! -x "$ROOT_DIR/backend/node_modules/.bin/tsx" ]]; then
     printf 'Installing backend dependencies from the frozen lockfile...\n'
     (
@@ -634,6 +650,11 @@ frontend_is_healthy() {
   local html
   local provider_script
   html="$(curl --fail --silent --show-error --max-time 5 "$FRONTEND_URL/")" || return 1
+  if [[ "$EXTERNAL_WALLET" == true ]]; then
+    [[ "$html" != *"$WALLET_SCRIPT_URL"* ]] || return 1
+    ! port_is_listening 3003
+    return
+  fi
   [[ "$html" == *"$WALLET_SCRIPT_URL"* ]] || return 1
   provider_script="$(curl --fail --silent --show-error --max-time 3 "$WALLET_SCRIPT_URL")" || return 1
   [[ "$provider_script" == *PREDEX_QA_INJECTED_PROVIDER_V1* ]]
@@ -675,8 +696,7 @@ launch_frontend() {
     cd "$ROOT_DIR/frontend"
     unset QA_WALLET_PRIVATE_KEY OPENAI_API_KEY
     export NODE_ENV=development
-    export QA_WALLET_ENABLED=1
-    export QA_WALLET_SCRIPT_URL="$WALLET_SCRIPT_URL"
+    configure_frontend_wallet
     if [[ -n "$REMOTE_API" ]]; then
       export NEXT_PUBLIC_API_URL="$REMOTE_API"
       export NEXT_PUBLIC_WS_URL="$(printf '%s' "$REMOTE_API" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')/ws"
@@ -691,15 +711,32 @@ launch_frontend() {
   printf '%s\n' "$!" > "$STATE_DIR/frontend.pid"
 }
 
+configure_frontend_wallet() {
+  if [[ "$EXTERNAL_WALLET" == true ]]; then
+    unset QA_WALLET_ENABLED QA_WALLET_SCRIPT_URL
+    return
+  fi
+  export QA_WALLET_ENABLED=1
+  export QA_WALLET_SCRIPT_URL="$WALLET_SCRIPT_URL"
+}
+
+prepare_wallet_mode() {
+  if [[ "$EXTERNAL_WALLET" == true ]]; then
+    unset QA_WALLET_PRIVATE_KEY
+    return
+  fi
+  [[ -n "${QA_WALLET_PRIVATE_KEY:-}" ]] ||
+    fail 'QA_WALLET_PRIVATE_KEY must be supplied by the operator at runtime'
+  [[ "$QA_WALLET_PRIVATE_KEY" =~ ^0x[0-9a-fA-F]{64}$ ]] ||
+    fail 'QA_WALLET_PRIVATE_KEY must be a 0x-prefixed 32-byte private key'
+}
+
 up() {
   [[ ! -e "$STATE_DIR/active" && ! -e "$STATE_DIR/docker.started" &&
     ! -e "$COMPOSE_PROJECT_FILE" && ! -e "$CREATED_CONTAINERS_FILE" &&
     ! -e "$STARTED_CONTAINERS_FILE" ]] ||
     fail 'QA state already exists; run ./scripts/qa-stack.sh down first'
-  [[ -n "${QA_WALLET_PRIVATE_KEY:-}" ]] ||
-    fail 'QA_WALLET_PRIVATE_KEY must be supplied by the operator at runtime'
-  [[ "$QA_WALLET_PRIVATE_KEY" =~ ^0x[0-9a-fA-F]{64}$ ]] ||
-    fail 'QA_WALLET_PRIVATE_KEY must be a 0x-prefixed 32-byte private key'
+  prepare_wallet_mode
 
   require_command node
   require_command pnpm
@@ -763,27 +800,39 @@ up() {
 
   fi
 
-  launch_wallet
-  # The already-running signer is the only child allowed to retain the key.
-  unset QA_WALLET_PRIVATE_KEY
-  wait_until 'QA wallet signer' "$STATE_DIR/wallet.pid" 30 wallet_is_healthy
+  if [[ "$EXTERNAL_WALLET" == false ]]; then
+    launch_wallet
+    # The already-running signer is the only child allowed to retain the key.
+    unset QA_WALLET_PRIVATE_KEY
+    wait_until 'QA wallet signer' "$STATE_DIR/wallet.pid" 30 wallet_is_healthy
+  fi
   if [[ -z "$REMOTE_API" ]]; then
     launch_backend
     wait_until 'Backend/indexer' "$STATE_DIR/backend.pid" 240 backend_is_healthy
   fi
   launch_frontend
-  wait_until 'Frontend/provider injection' "$STATE_DIR/frontend.pid" 180 frontend_is_healthy
+  if [[ "$EXTERNAL_WALLET" == true ]]; then
+    wait_until 'Frontend without QA provider' "$STATE_DIR/frontend.pid" 180 frontend_is_healthy
+  else
+    wait_until 'Frontend/provider injection' "$STATE_DIR/frontend.pid" 180 frontend_is_healthy
+  fi
 
   : > "$STATE_DIR/active"
   trap - ERR INT TERM
   local wallet_account
-  wallet_account="$(curl --fail --silent --show-error "$WALLET_URL/healthz" |
-    node -e '
-      let raw = "";
-      process.stdin.on("data", (chunk) => { raw += chunk; });
-      process.stdin.on("end", () => process.stdout.write(JSON.parse(raw).account));
-    ')"
-  printf '\nPredex QA stack is ready (mode: %s).\n' "$MODE"
+  local displayed_mode="$MODE"
+  if [[ "$EXTERNAL_WALLET" == true ]]; then
+    wallet_account='external MetaMask (no QA provider)'
+    displayed_mode='external-wallet'
+  else
+    wallet_account="$(curl --fail --silent --show-error "$WALLET_URL/healthz" |
+      node -e '
+        let raw = "";
+        process.stdin.on("data", (chunk) => { raw += chunk; });
+        process.stdin.on("end", () => process.stdout.write(JSON.parse(raw).account));
+      ')"
+  fi
+  printf '\nPredex QA stack is ready (mode: %s).\n' "$displayed_mode"
   printf 'Frontend:      %s\n' "$FRONTEND_URL"
   if [[ -n "$REMOTE_API" ]]; then
     printf 'Backend REST:  %s  (deployed)\n' "$REMOTE_API"
@@ -867,6 +916,9 @@ main() {
             ;;
           --broadcast)
             MODE=broadcast
+            ;;
+          --external-wallet)
+            EXTERNAL_WALLET=true
             ;;
           --help|-h)
             usage

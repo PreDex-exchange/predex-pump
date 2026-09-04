@@ -86,6 +86,17 @@ void main() {
       (504, 504),
     );
   });
+
+  test('app resume wakes the browser wallet transport without a JS bridge', () {
+    final browser = File('lib/src/predex_browser.dart').readAsStringSync();
+
+    expect(browser, contains('with WidgetsBindingObserver'));
+    expect(browser, contains('WidgetsBinding.instance.addObserver(this)'));
+    expect(browser, contains('WidgetsBinding.instance.removeObserver(this)'));
+    expect(browser, contains('state == AppLifecycleState.resumed'));
+    expect(browser, contains("window.dispatchEvent(new Event('focus'))"));
+    expect(browser, isNot(contains('addJavaScriptChannel')));
+  });
 }
 
 (int, int) _pngDimensions(String path) {

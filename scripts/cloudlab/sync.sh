@@ -33,6 +33,22 @@ source_hash="$({
 } | shasum -a 256 | awk '{print $1}')"
 source_id="$(git -C "$repo_root" rev-parse --short=12 HEAD)-${source_hash:0:12}"
 
+ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" bash -s -- "$source_dir" <<'REMOTE'
+set -euo pipefail
+source_dir="$1"
+case "$source_dir" in
+  /users/span14/predex-builds/predex-pump/source) ;;
+  *)
+    printf 'Refusing unexpected remote source: %s\n' "$source_dir" >&2
+    exit 1
+    ;;
+esac
+if [[ -e "$source_dir/.qa/active" ]]; then
+  printf 'Refusing to sync over an active QA stack; run qa-stack.sh down first.\n' >&2
+  exit 1
+fi
+REMOTE
+
 ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" mkdir -p "$source_dir"
 ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" rm -f "$source_dir/.git"
 

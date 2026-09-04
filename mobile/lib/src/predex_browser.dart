@@ -29,7 +29,8 @@ class PredexBrowser extends StatefulWidget {
   State<PredexBrowser> createState() => _PredexBrowserState();
 }
 
-class _PredexBrowserState extends State<PredexBrowser> {
+class _PredexBrowserState extends State<PredexBrowser>
+    with WidgetsBindingObserver {
   late final NavigationPolicy _navigationPolicy;
   late final WebViewController _controller;
   double _progress = 0;
@@ -38,6 +39,7 @@ class _PredexBrowserState extends State<PredexBrowser> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _navigationPolicy = NavigationPolicy(appOrigin: widget.config.origin);
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -71,6 +73,31 @@ class _PredexBrowserState extends State<PredexBrowser> {
         ),
       );
     unawaited(_controller.loadRequest(widget.config.appUri));
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_notifyWebViewResumed());
+    }
+  }
+
+  Future<void> _notifyWebViewResumed() async {
+    try {
+      // Android WebView can become visible without promptly emitting the
+      // browser focus event MetaMask Connect uses to resume its transport.
+      await _controller.runJavaScript(
+        "window.dispatchEvent(new Event('focus'));",
+      );
+    } on Object {
+      // The first lifecycle event can arrive before the initial page is ready.
+    }
   }
 
   NavigationDecision _handleNavigation(NavigationRequest request) {

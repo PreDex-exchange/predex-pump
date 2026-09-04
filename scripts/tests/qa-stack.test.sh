@@ -67,8 +67,90 @@ help_output="$($SCRIPT --help)"
 assert_contains "$help_output" 'QA_COMPOSE_PROJECT=backend'
 assert_contains "$help_output" 'QA_COMPOSE_PROJECT=my-qa-stack'
 assert_contains "$help_output" '--fixtures'
+assert_contains "$help_output" '--external-wallet'
 assert_contains "$help_output" 'opened, graduated, and resolved markets'
 assert_contains "$help_output" 'Attached Postgres/Qdrant/Redis containers are never stopped or removed'
+
+bash -c '
+  source "$1"
+  EXTERNAL_WALLET=true
+  unset QA_WALLET_PRIVATE_KEY
+  prepare_wallet_mode
+' _ "$SCRIPT" || fail 'external-wallet mode unexpectedly required a QA private key'
+
+if missing_key_output="$(bash -c '
+  source "$1"
+  EXTERNAL_WALLET=false
+  unset QA_WALLET_PRIVATE_KEY
+  prepare_wallet_mode
+' _ "$SCRIPT" 2>&1)"; then
+  fail 'shim mode unexpectedly accepted a missing QA private key'
+fi
+assert_contains "$missing_key_output" 'QA_WALLET_PRIVATE_KEY must be supplied'
+
+external_frontend_env="$(bash -c '
+  source "$1"
+  EXTERNAL_WALLET=true
+  export QA_WALLET_ENABLED=1
+  export QA_WALLET_SCRIPT_URL=http://127.0.0.1:3003/provider.js
+  configure_frontend_wallet
+  printf "%s|%s" "${QA_WALLET_ENABLED-unset}" "${QA_WALLET_SCRIPT_URL-unset}"
+' _ "$SCRIPT")"
+[[ "$external_frontend_env" == 'unset|unset' ]] ||
+  fail 'external-wallet mode retained QA provider environment variables'
+
+shim_frontend_env="$(bash -c '
+  source "$1"
+  EXTERNAL_WALLET=false
+  configure_frontend_wallet
+  printf "%s|%s" "$QA_WALLET_ENABLED" "$QA_WALLET_SCRIPT_URL"
+' _ "$SCRIPT")"
+[[ "$shim_frontend_env" == '1|http://127.0.0.1:3003/provider.js' ]] ||
+  fail 'shim mode did not configure the QA provider'
+
+bash -c '
+  source "$1"
+  EXTERNAL_WALLET=true
+  curl() { printf "%s" "<html>Predex without a provider script</html>"; }
+  port_is_listening() { return 1; }
+  frontend_is_healthy
+' _ "$SCRIPT" || fail 'external-wallet frontend health rejected a shim-free page'
+
+if bash -c '
+  source "$1"
+  EXTERNAL_WALLET=true
+  curl() { printf "%s" "<script src=http://127.0.0.1:3003/provider.js></script>"; }
+  port_is_listening() { return 1; }
+  frontend_is_healthy
+' _ "$SCRIPT"; then
+  fail 'external-wallet frontend health accepted a QA provider script'
+fi
+
+dependency_state="$(make_state_dir)"
+dependency_calls="$dependency_state/pnpm.calls"
+mkdir -p \
+  "$dependency_state/backend/node_modules/.bin" \
+  "$dependency_state/frontend/node_modules/.bin" \
+  "$dependency_state/shared"
+: > "$dependency_state/backend/node_modules/.bin/prisma"
+: > "$dependency_state/backend/node_modules/.bin/tsx"
+: > "$dependency_state/frontend/node_modules/.bin/next"
+chmod +x \
+  "$dependency_state/backend/node_modules/.bin/prisma" \
+  "$dependency_state/backend/node_modules/.bin/tsx" \
+  "$dependency_state/frontend/node_modules/.bin/next"
+bash -c '
+  source "$1"
+  ROOT_DIR="$2"
+  calls_file="$3"
+  pnpm() {
+    printf "%s|%s\n" "$PWD" "$*" >> "$calls_file"
+  }
+  install_runtime_dependencies
+' _ "$SCRIPT" "$dependency_state" "$dependency_calls"
+dependency_output="$(cat "$dependency_calls" 2>/dev/null || true)"
+assert_contains "$dependency_output" "$dependency_state/shared|install"
+assert_contains "$dependency_output" '--frozen-lockfile'
 
 # Docker's Linux port publishing can be reachable through NAT without a
 # userspace listener visible to lsof. Fall back to an actual loopback probe.
@@ -211,6 +293,6 @@ fi
 [[ ! -s "$unowned_calls" ]] ||
   fail 'teardown mutated a container owned by another project'
 
-rm -rf "$attached_state" "$owned_state" "$unowned_state"
+rm -rf "$dependency_state" "$attached_state" "$owned_state" "$unowned_state"
 
 printf '%s\n' 'PASS: qa-stack compose attachment, port ownership, and teardown safety'

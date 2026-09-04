@@ -41,3 +41,31 @@ Eng-reviewed 3-tier plan: `~/.gstack/projects/predex-pump/ggattacker-predex-quan
 The automated gate creates a debug APK only. Release signing and the physical-phone
 MetaMask roundtrip are separate release gates; no keystore is stored in this repository
 or in verification evidence.
+
+### Headless Android acceptance
+
+CloudLab can run the Android shell and the official MetaMask app with KVM acceleration:
+
+```sh
+./scripts/cloudlab/bootstrap-mobile-emulator.sh --accept-android-licenses
+./scripts/cloudlab/sync.sh
+./scripts/cloudlab/verify-mobile.sh
+./scripts/cloudlab/mobile-emulator.sh start
+```
+
+Start the application stack without the injected QA wallet:
+
+```sh
+./scripts/qa-stack.sh up --external-wallet
+```
+
+The emulator maps its loopback ports to CloudLab ports 3001 and 3002 with `adb reverse`,
+so use the standard debug APK built for `http://127.0.0.1:3002`. The acceptance flow is:
+connect MetaMask, add/switch to Arc Testnet, return through Android recents, explicitly
+sign in, and confirm the account screen loads. Create a disposable wallet in MetaMask;
+never send an existing recovery phrase or private key through ADB.
+
+```sh
+./scripts/cloudlab/mobile-emulator.sh status
+./scripts/cloudlab/mobile-emulator.sh stop
+```
