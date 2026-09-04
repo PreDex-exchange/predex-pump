@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { ADDRESSES, ARC, DEPLOY_BLOCK } from '@predex-pump/shared';
 import type { Prisma } from '@prisma/client';
@@ -118,7 +119,7 @@ function makePositionSeeds(scale: Scale): PositionSeed[] {
   return rows;
 }
 
-async function seedSingletons(
+export async function seedBenchmarkSingletons(
   prisma: ReturnType<typeof makePrisma>,
 ): Promise<void> {
   await prisma.registryConfig.create({
@@ -148,6 +149,16 @@ async function seedSingletons(
       depthFeeBps: 50,
       committeeThreshold: 2,
       updatedBlock: BASE_BLOCK,
+    },
+  });
+  await prisma.registeredMarketType.create({
+    data: {
+      version: 2,
+      lmsrAddress: ADDRESSES.lmsr.toLowerCase(),
+      configHash: hash(2),
+      registeredAt: BASE_TS,
+      blockNumber: BASE_BLOCK,
+      logIndex: 0,
     },
   });
   await prisma.indexerState.create({
@@ -203,7 +214,7 @@ async function seed(scale: Scale, databaseUrl: string): Promise<void> {
   const prisma = makePrisma(databaseUrl);
   const startedAt = performance.now();
   try {
-    await seedSingletons(prisma);
+    await seedBenchmarkSingletons(prisma);
 
     const marketTradeCounts = new Int32Array(scale.markets);
     const marketVolumes = Array.from({ length: scale.markets }, () => 0n);
@@ -600,7 +611,12 @@ async function main(): Promise<void> {
   await seed(scale, databaseUrl);
 }
 
-main().catch((error: unknown) => {
-  console.error('[seed] failed', error);
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main().catch((error: unknown) => {
+    console.error('[seed] failed', error);
+    process.exitCode = 1;
+  });
+}

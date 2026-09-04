@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { cpus, platform, release } from 'node:os';
 import { resolve } from 'node:path';
@@ -9,9 +8,12 @@ import type { Address, Hex } from 'viem';
 import { WebSocket } from 'ws';
 
 import { buildServer } from '../src/api/server.js';
+import { createNodeRedisPublicJsonReadCache } from '../src/cache/node-redis.js';
+import { loadRuntimeConfig } from '../src/config.js';
 import { ServerEventBus } from '../src/events/bus.js';
 import { applyDecodedEvents } from '../src/indexer/runner.js';
 import type { DecodedEvent } from '../src/indexer/types.js';
+import { resolveBenchmarkProvenance } from './provenance.js';
 import {
   address,
   benchDatabaseUrl,
@@ -648,15 +650,9 @@ async function observedScale(prisma: PrismaClient): Promise<ObservedScale> {
   };
 }
 
-function gitCommit(): string {
-  return execFileSync('git', ['rev-parse', 'HEAD'], {
-    cwd: resolve('..'),
-    encoding: 'utf8',
-  }).trim();
-}
-
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  const provenance = resolveBenchmarkProvenance();
   const databaseUrl = benchDatabaseUrl(argv);
   const label = readFlag(argv, 'label') ?? 'benchmark';
   const requestCount = positiveFlag(argv, 'requests', 400);
@@ -671,9 +667,20 @@ async function main(): Promise<void> {
     throw new Error('--ws-subscribers cannot exceed --ws-clients');
   }
 
+  const runtimeConfig = loadRuntimeConfig();
   const prisma = makePrisma(databaseUrl);
   const eventBus = new ServerEventBus();
-  const app = await buildServer({ prisma, eventBus, logger: false });
+  const publicReadCache = createNodeRedisPublicJsonReadCache({
+    url: runtimeConfig.redisUrl,
+    keyPrefix: runtimeConfig.redisKeyPrefix,
+  });
+  const app = await buildServer({
+    prisma,
+    eventBus,
+    logger: false,
+    publicReadCache,
+    marketListCacheTtlSeconds: runtimeConfig.marketsCacheTtlSeconds,
+  });
   try {
     const observed = await observedScale(prisma);
     if (observed.markets === 0 || observed.activityEvents === 0) {
@@ -749,11 +756,10 @@ async function main(): Promise<void> {
     const result = {
       label,
       generatedAt: new Date().toISOString(),
-      branch: execFileSync('git', ['branch', '--show-current'], {
-        cwd: resolve('..'),
-        encoding: 'utf8',
-      }).trim(),
-      commit: gitCommit(),
+      branch: provenance.branch,
+      commit: provenance.commit,
+      sourceId: provenance.sourceId,
+      sourceProvenance: provenance.kind,
       schema: benchSchema(databaseUrl),
       syntheticOnly: true,
       environment: {
@@ -790,6 +796,7 @@ async function main(): Promise<void> {
     console.info(`[bench] wrote ${output}`);
   } finally {
     await app.close();
+    await publicReadCache.close();
     await prisma.$disconnect();
   }
 }
