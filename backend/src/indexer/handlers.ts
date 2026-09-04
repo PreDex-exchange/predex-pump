@@ -937,6 +937,17 @@ async function handleRegistryBookSeeded(tx: Tx, event: DecodedEvent): Promise<vo
     },
   });
   await markSeedOrders(tx, marketId, yesOrderId, noOrderId);
+  await tx.bookMigration.upsert({
+    where: { marketId },
+    create: {
+      marketId,
+      yesSeedOrderId: yesOrderId,
+      noSeedOrderId: noOrderId,
+      createdAt: event.ts,
+      updatedAt: event.ts,
+    },
+    update: {},
+  });
 }
 
 async function handleGraduationSeeded(tx: Tx, event: DecodedEvent): Promise<void> {
