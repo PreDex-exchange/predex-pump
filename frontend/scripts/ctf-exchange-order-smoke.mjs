@@ -14,10 +14,10 @@ import ctfExchangeAbi from '../../shared/abis/CTFExchange.json' with {
 };
 
 const chainId = 5_042_002;
-const exchange = '0x1d9637E0398f31d18c6792b7639ca47FC9B9c403';
+const exchange = '0xd0f12fa586911163fB29bE06Ab15DD076Cc5650D';
 const rpcUrl = process.env.ARC_RPC_URL ?? 'https://rpc.testnet.arc.io';
 const expectedDeployedDomain =
-  '0x794d47c61c37d2a6374205eeba03c2b2568704fb2dbc796ac017dbf611f7dbd0';
+  '0xf1d347201ddacfb15dc5b7adf283f0899213d8d432f626e458afee56680f29dd';
 
 const domain = {
   name: 'Predex CTFExchange',

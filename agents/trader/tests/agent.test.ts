@@ -31,7 +31,7 @@ import type {
 
 const TRADER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as Address;
 const MAKER = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Address;
-const BOOK = '0xa4f4e20bb706b38c7bbfeb923b63c2d427c9f7a3' as Address;
+const BOOK = '0xdf3ddd60f0dc36e9459473c7c9391251bb301d2f' as Address;
 const SECRET_SIGNATURE = `0x${'9a'.repeat(65)}` as const;
 
 type AvailableMarketBookResponse = Extract<

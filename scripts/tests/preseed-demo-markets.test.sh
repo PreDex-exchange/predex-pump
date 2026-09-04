@@ -111,7 +111,7 @@ default_questions=$(extract_questions "$default_output")
 expected_default_questions=$(printf '%s\n' \
   'Will Manchester United score above 70 Premier League goals in the 2026-27 season?' \
   'Will Ethereum trade above $5,000 before January 1, 2027?' \
-  'Did Arc testnet reach block 53,405,070 before July 25, 2026 00:00 UTC?' \
+  'Did Arc testnet reach block 60,387,670 before September 5, 2026 00:00 UTC?' \
   'Will Man Utd score over 70 goals in the 2026/27 Premier League season?')
 assert_equals \
   "$default_questions" \
@@ -122,7 +122,7 @@ default_hashes=$(extract_hashes "$default_output")
 expected_default_hashes=$(printf '%s\n' \
   '0x4d014c3548af93bc3efe36031005fa3a110a4be0c6125f2fdd0be4fe2ce354b9' \
   '0xc192bb7ee56c736c4df2eaafbad5510140adf30d18e5a35443bb9287c46b34ab' \
-  '0xfd3960a2e79265d6b88f957d23170218fe805069660d11291b8029a369a9e883' \
+  '0x44b37b2e95e198d62da14b6e0fa09d6d56a9853ae4980d7c1871f3f309bd9dc7' \
   '0xd35a2987a9f4a146dd230ca57168327e34cf4bb286e232e486c0f389be3fb727')
 assert_equals \
   "$default_hashes" \

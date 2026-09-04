@@ -37,9 +37,9 @@ const CONTRACT_ORDER_TYPE =
 const CONTRACT_ORDER_TYPE_HASH =
   '0xa852566c4e14d00869b6db0220888a9090a13eccdaea03713ff0a3d27bf9767c';
 const DEPLOYED_DOMAIN_SEPARATOR =
-  '0x794d47c61c37d2a6374205eeba03c2b2568704fb2dbc796ac017dbf611f7dbd0';
+  '0xf1d347201ddacfb15dc5b7adf283f0899213d8d432f626e458afee56680f29dd';
 const ONCHAIN_SMOKE_ORDER_HASH =
-  '0xdb5274adec5c1c9ace13c66825e61a3f266b6a7ea9d693d2025df3315c9972cf';
+  '0x23c89682da86bd7587ece54a7639aaa07787038f2356fbacc53a839b619a3f2a';
 
 function buildSigningOrder(maker: `0x${string}`) {
   return buildCtfExchangeOrder({
@@ -144,7 +144,7 @@ describe('CTFExchange EIP-712 order schema', () => {
       name: 'Predex CTFExchange',
       version: '1',
       chainId: 5_042_002,
-      verifyingContract: '0x1d9637E0398f31d18c6792b7639ca47FC9B9c403',
+      verifyingContract: '0xd0f12fa586911163fB29bE06Ab15DD076Cc5650D',
     });
     expect(typedData.domain).toBe(CTF_EXCHANGE_DOMAIN);
     expect(typedData.message).not.toHaveProperty('signature');

@@ -186,7 +186,7 @@ describe('QA injected provider', () => {
         name: 'Predex CTFExchange',
         version: '1',
         chainId: ARC_CHAIN_ID,
-        verifyingContract: '0x1d9637E0398f31d18c6792b7639ca47FC9B9c403',
+        verifyingContract: '0xd0f12fa586911163fB29bE06Ab15DD076Cc5650D',
       },
       types: ORDER_TYPES,
       primaryType: 'Order',
