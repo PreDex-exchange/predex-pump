@@ -224,6 +224,7 @@ const MARKET_UPDATED_EVENTS = new Set([
   'LMSR.ResolutionObserved',
   'LMSR.MarketCloseout',
   'MINI_CLOB.OrderFilled',
+  'CTF_EXCHANGE.OrderFilled',
   'ORACLE.QuestionResolved',
   'CTF.ConditionResolution',
 ]);
@@ -304,7 +305,9 @@ async function publishSpecificEvent(
   }
 
   if (
-    (key === 'LMSR.TradeExecuted' || key === 'MINI_CLOB.OrderFilled') &&
+    (key === 'LMSR.TradeExecuted' ||
+      key === 'MINI_CLOB.OrderFilled' ||
+      key === 'CTF_EXCHANGE.OrderFilled') &&
     marketId !== null
   ) {
     const candidateAccount =

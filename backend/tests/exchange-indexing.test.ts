@@ -14,6 +14,7 @@ import {
   BOOK_NOW,
   FakeOrderChainReader,
   signedOrderRequest,
+  throwawayAccount,
   validChainState,
 } from './orderbook-fixtures.js';
 import { Side } from '@predex-pump/shared/tx';
@@ -202,6 +203,21 @@ describe('exchange approval and lifecycle indexing', () => {
   it('indexes exchange fills, cancellation, and token registration', async () => {
     const created = await ingestSell(203n);
     const orderHash = created.request.orderHash.toLowerCase();
+    const taker = '0x2222222222222222222222222222222222222222';
+    await apply(
+      event(
+        'CTF',
+        ADDRESSES.ctf,
+        'TransferSingle',
+        {
+          from: created.account.address,
+          to: taker,
+          id: 101n,
+          value: 400_000n,
+        },
+        219,
+      ),
+    );
     await apply(
       event(
         'CTF_EXCHANGE',
@@ -215,26 +231,89 @@ describe('exchange approval and lifecycle indexing', () => {
         220,
       ),
     );
-    await apply(
-      event(
-        'CTF_EXCHANGE',
-        ADDRESSES.ctfExchange,
-        'OrderFilled',
-        {
-          orderHash,
-          maker: created.account.address,
-          taker: '0x2222222222222222222222222222222222222222',
-          tokenId: 101n,
-          makerAmountFilled: 400_000n,
-          takerAmountFilled: 260_000n,
-        },
-        221,
-      ),
+    const fillEvent = event(
+      'CTF_EXCHANGE',
+      ADDRESSES.ctfExchange,
+      'OrderFilled',
+      {
+        orderHash,
+        maker: created.account.address,
+        taker,
+        tokenId: 101n,
+        makerAmountFilled: 400_000n,
+        takerAmountFilled: 260_000n,
+      },
+      221,
     );
+    const published: string[] = [];
+    const capture = ({ event: publishedEvent }: Parameters<
+      Parameters<ServerEventBus['subscribe']>[1]
+    >[0]): void => {
+      published.push(`${publishedEvent.channel}:${publishedEvent.event}`);
+    };
+    const unsubscribeMarkets = eventBus.subscribe('markets', capture);
+    const unsubscribeMarket = eventBus.subscribe('market:1', capture);
+    const unsubscribeAccount = eventBus.subscribe(`account:${taker}`, capture);
+    try {
+      await apply(fillEvent);
+    } finally {
+      unsubscribeMarkets();
+      unsubscribeMarket();
+      unsubscribeAccount();
+    }
+    expect(published).toEqual([
+      'markets:market.updated',
+      'market:1:trade',
+      `account:${taker}:trade`,
+    ]);
     expect(await testPrisma.signedOrder.findUniqueOrThrow({ where: { orderHash } })).toMatchObject({
       filledRaw: '400000',
       remainingRaw: '600000',
       status: 'PARTIALLY_FILLED',
+    });
+    expect(
+      await testPrisma.trade.findUnique({
+        where: { id: `${fillEvent.txHash}:${fillEvent.logIndex}` },
+      }),
+    ).toMatchObject({
+      venue: 'BOOK',
+      account: taker,
+      recipient: taker,
+      outcome: 'YES',
+      side: 'BID',
+      sizeRaw: '400000',
+      priceRaw: '650000',
+      costRaw: '260000',
+    });
+    expect(
+      await testPrisma.activityEvent.findUniqueOrThrow({
+        where: { id: `${fillEvent.txHash}:${fillEvent.logIndex}` },
+      }),
+    ).toMatchObject({
+      account: taker,
+      outcome: 'YES',
+      side: 'BID',
+      amountRaw: '400000',
+      priceRaw: '650000',
+    });
+    expect(
+      await testPrisma.position.findUniqueOrThrow({
+        where: {
+          account_marketId_outcome: { account: taker, marketId: '1', outcome: 'YES' },
+        },
+      }),
+    ).toMatchObject({
+      qtyRaw: '400000',
+      costBasisRaw: '260000',
+      unrealizedPnlRaw: '-20000',
+    });
+    expect(await testPrisma.market.findUniqueOrThrow({ where: { id: '1' } })).toMatchObject({
+      tradeCount: 2,
+      volumeRaw: '1260000',
+    });
+    expect(await testPrisma.account.findUniqueOrThrow({ where: { address: taker } })).toMatchObject({
+      tradeCount: 1,
+      unrealizedPnlRaw: '-20000',
     });
     expect(await testPrisma.exchangeTokenRegistration.findUnique({
       where: { tokenId: '101' },
@@ -257,6 +336,120 @@ describe('exchange approval and lifecycle indexing', () => {
       remainingRaw: '600000',
     });
     expect((await getMarketBook(testPrisma, '1'))?.yes.offchainOrders).toHaveLength(0);
+  });
+
+  it('accounts for the signed-order maker buying from a direct seller', async () => {
+    const buyer = await signedOrderRequest({
+      side: Side.BUY,
+      priceRaw: 400_000n,
+      sizeRaw: 1_000_000n,
+      salt: 208n,
+    });
+    reader.state = validChainState({
+      approvalKind: 'COLLATERAL_ALLOWANCE',
+      collateralAllowance: 10_000_000n,
+      ctfApprovedForAll: null,
+    });
+    await service.ingest(buyer.request);
+    const buyerAddress = buyer.account.address.toLowerCase();
+    const sellerAddress = throwawayAccount().address.toLowerCase();
+    await testPrisma.account.create({
+      data: {
+        address: sellerAddress,
+        firstSeenAt: BOOK_NOW,
+        unrealizedPnlRaw: '200000',
+      },
+    });
+    await testPrisma.position.create({
+      data: {
+        account: sellerAddress,
+        marketId: '1',
+        outcome: 'YES',
+        qtyRaw: '500000',
+        costBasisRaw: '100000',
+        unrealizedPnlRaw: '200000',
+        updatedAt: BOOK_NOW,
+      },
+    });
+    await apply(
+      event(
+        'CTF',
+        ADDRESSES.ctf,
+        'TransferSingle',
+        { from: sellerAddress, to: buyerAddress, id: 101n, value: 100_000n },
+        230,
+      ),
+    );
+    const fillEvent = event(
+      'CTF_EXCHANGE',
+      ADDRESSES.ctfExchange,
+      'OrderFilled',
+      {
+        orderHash: buyer.request.orderHash,
+        maker: buyerAddress,
+        taker: sellerAddress,
+        tokenId: 101n,
+        makerAmountFilled: 40_000n,
+        takerAmountFilled: 100_000n,
+      },
+      231,
+    );
+    await apply(fillEvent);
+
+    expect(
+      await testPrisma.trade.findUniqueOrThrow({
+        where: { id: `${fillEvent.txHash}:${fillEvent.logIndex}` },
+      }),
+    ).toMatchObject({
+      venue: 'BOOK',
+      account: sellerAddress,
+      recipient: buyerAddress,
+      side: 'ASK',
+      sizeRaw: '100000',
+      priceRaw: '400000',
+      costRaw: '40000',
+    });
+    expect(
+      await testPrisma.activityEvent.findUniqueOrThrow({
+        where: { id: `${fillEvent.txHash}:${fillEvent.logIndex}` },
+      }),
+    ).toMatchObject({
+      account: sellerAddress,
+      outcome: 'YES',
+      side: 'ASK',
+      amountRaw: '100000',
+      priceRaw: '400000',
+    });
+    expect(
+      await testPrisma.position.findUniqueOrThrow({
+        where: {
+          account_marketId_outcome: {
+            account: buyerAddress,
+            marketId: '1',
+            outcome: 'YES',
+          },
+        },
+      }),
+    ).toMatchObject({ qtyRaw: '100000', costBasisRaw: '40000', unrealizedPnlRaw: '20000' });
+    expect(
+      await testPrisma.position.findUniqueOrThrow({
+        where: {
+          account_marketId_outcome: {
+            account: sellerAddress,
+            marketId: '1',
+            outcome: 'YES',
+          },
+        },
+      }),
+    ).toMatchObject({
+      qtyRaw: '400000',
+      costBasisRaw: '80000',
+      realizedPnlRaw: '20000',
+      unrealizedPnlRaw: '160000',
+    });
+    expect(
+      await testPrisma.account.findUniqueOrThrow({ where: { address: sellerAddress } }),
+    ).toMatchObject({ tradeCount: 1, realizedPnlRaw: '20000', unrealizedPnlRaw: '160000' });
   });
 
   it('projects an operator match fill onto both signed orders', async () => {
@@ -391,6 +584,20 @@ describe('exchange approval and lifecycle indexing', () => {
         'Exchange fill does not match submitted settlement operator-match-fill',
       );
     }
+    await apply(
+      event(
+        'CTF',
+        ADDRESSES.ctf,
+        'TransferSingle',
+        {
+          from: maker.account.address,
+          to: taker.account.address,
+          id: 101n,
+          value: 1_000_000n,
+        },
+        blockNumber - 1,
+      ),
+    );
     await apply(fillEvent);
 
     expect(
@@ -431,6 +638,34 @@ describe('exchange approval and lifecycle indexing', () => {
         where: { orderHash: takerOrderHash },
       }),
     ).toMatchObject({ filledRaw: '1250000', remainingRaw: '750000' });
+    expect(
+      await testPrisma.trade.findUniqueOrThrow({
+        where: { id: `${fillEvent.txHash}:${fillEvent.logIndex}` },
+      }),
+    ).toMatchObject({
+      venue: 'BOOK',
+      account: taker.account.address.toLowerCase(),
+      recipient: taker.account.address.toLowerCase(),
+      side: 'BID',
+      sizeRaw: '1000000',
+      priceRaw: '650000',
+      costRaw: '650000',
+    });
+    expect(
+      await testPrisma.position.findUniqueOrThrow({
+        where: {
+          account_marketId_outcome: {
+            account: taker.account.address.toLowerCase(),
+            marketId: '1',
+            outcome: 'YES',
+          },
+        },
+      }),
+    ).toMatchObject({
+      qtyRaw: '1000000',
+      costBasisRaw: '650000',
+      unrealizedPnlRaw: '-50000',
+    });
     expect((await getMarketBook(testPrisma, '1'))?.yes.offchainOrders).toMatchObject([
       { orderHash: takerOrderHash, remainingRaw: '750000' },
       { orderHash: unrelatedMaker.request.orderHash.toLowerCase() },

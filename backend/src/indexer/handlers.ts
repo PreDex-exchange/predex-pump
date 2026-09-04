@@ -221,6 +221,17 @@ interface ActivityContext {
   priceRaw: string | null;
 }
 
+function exchangeFillAmounts(
+  order: Pick<SignedOrder, 'exchangeSide'>,
+  args: EventArgs,
+): { fillSize: bigint; payment: bigint } {
+  const makerAmount = bigintArg(args, 'makerAmountFilled');
+  const takerAmount = bigintArg(args, 'takerAmountFilled');
+  return order.exchangeSide === 0
+    ? { fillSize: takerAmount, payment: makerAmount }
+    : { fillSize: makerAmount, payment: takerAmount };
+}
+
 async function activityContext(tx: Tx, event: DecodedEvent): Promise<ActivityContext> {
   const { args } = event;
   let market: Market | null = null;
@@ -304,27 +315,37 @@ async function activityContext(tx: Tx, event: DecodedEvent): Promise<ActivityCon
     side = oppositeSide(signedOrder.side as Side);
   }
 
-  let amountRaw: string | null = null;
-  for (const candidate of [
-    'amountRaw',
-    'fillSizeRaw',
-    'sizeRaw',
-    'value',
-    'payout',
-    'remainingSizeRaw',
-    'activityMoneyInRaw',
-    'makerAmountFilled',
-    'takerAmountFilled',
-  ]) {
-    const value = args[candidate];
-    if (typeof value === 'bigint') {
-      amountRaw = value.toString();
-      break;
+  const exchangeFill =
+    event.source === 'CTF_EXCHANGE' &&
+    event.eventName === 'OrderFilled' &&
+    signedOrder !== null
+      ? exchangeFillAmounts(signedOrder, args)
+      : null;
+  let amountRaw: string | null = exchangeFill?.fillSize.toString() ?? null;
+  if (amountRaw === null) {
+    for (const candidate of [
+      'amountRaw',
+      'fillSizeRaw',
+      'sizeRaw',
+      'value',
+      'payout',
+      'remainingSizeRaw',
+      'activityMoneyInRaw',
+      'makerAmountFilled',
+      'takerAmountFilled',
+    ]) {
+      const value = args[candidate];
+      if (typeof value === 'bigint') {
+        amountRaw = value.toString();
+        break;
+      }
     }
   }
 
   let priceRaw: string | null = null;
-  if (typeof args.priceRawPerToken === 'bigint') {
+  if (exchangeFill !== null) {
+    priceRaw = averagePriceRaw(exchangeFill.fillSize, exchangeFill.payment);
+  } else if (typeof args.priceRawPerToken === 'bigint') {
     priceRaw = args.priceRawPerToken.toString();
   } else if (typeof args.frozenYesPriceRaw === 'bigint') {
     priceRaw = args.frozenYesPriceRaw.toString();
@@ -1288,6 +1309,69 @@ async function applySignedOrderFill(
   });
 }
 
+async function recordExchangeTrade(
+  tx: Tx,
+  event: DecodedEvent,
+  makerOrder: SignedOrder,
+  fillSize: bigint,
+  payment: bigint,
+): Promise<void> {
+  const maker = lowerAddress(stringArg(event.args, 'maker'));
+  const taker = lowerAddress(stringArg(event.args, 'taker'));
+  const makerSide = makerOrder.side as Side;
+  const takerSide = oppositeSide(makerSide);
+  await tx.trade.create({
+    data: {
+      id: eventId(event),
+      marketId: makerOrder.marketId,
+      venue: 'BOOK',
+      account: taker,
+      recipient: takerSide === 'BID' ? taker : maker,
+      outcome: makerOrder.outcome,
+      side: takerSide,
+      sizeRaw: fillSize.toString(),
+      priceRaw: averagePriceRaw(fillSize, payment),
+      costRaw: payment.toString(),
+      feeRaw: '0',
+      baseAmountRaw: payment.toString(),
+      protocolFeeRaw: '0',
+      depthContributionRaw: '0',
+      totalCostRaw: takerSide === 'BID' ? payment.toString() : '0',
+      netProceedsRaw: takerSide === 'ASK' ? payment.toString() : '0',
+      txHash: event.txHash,
+      logIndex: event.logIndex,
+      blockNumber: event.blockNumber,
+      ts: event.ts,
+    },
+  });
+  await recordMarketTrade(tx, makerOrder.marketId, taker, payment, event.ts);
+
+  const outcome = makerOrder.outcome as Outcome;
+  if (makerSide === 'ASK') {
+    await addEstimatedBuyBasis(tx, taker, makerOrder.marketId, outcome, payment, event.ts);
+    await applyEstimatedSell(
+      tx,
+      maker,
+      makerOrder.marketId,
+      outcome,
+      fillSize,
+      payment,
+      event.ts,
+    );
+  } else {
+    await addEstimatedBuyBasis(tx, maker, makerOrder.marketId, outcome, payment, event.ts);
+    await applyEstimatedSell(
+      tx,
+      taker,
+      makerOrder.marketId,
+      outcome,
+      fillSize,
+      payment,
+      event.ts,
+    );
+  }
+}
+
 async function handleExchangeOrderFilled(
   tx: Tx,
   event: DecodedEvent,
@@ -1295,10 +1379,10 @@ async function handleExchangeOrderFilled(
   const orderHash = stringArg(event.args, 'orderHash').toLowerCase();
   const makerOrder = await tx.signedOrder.findUnique({ where: { orderHash } });
   if (makerOrder === null) return;
-  const makerFillSize =
-    makerOrder.exchangeSide === 0
-      ? bigintArg(event.args, 'takerAmountFilled')
-      : bigintArg(event.args, 'makerAmountFilled');
+  const { fillSize: makerFillSize, payment } = exchangeFillAmounts(
+    makerOrder,
+    event.args,
+  );
   const eventTxHash = event.txHash.toLowerCase();
   const settlements = await tx.settlementMatch.findMany({
     where: {
@@ -1329,32 +1413,32 @@ async function handleExchangeOrderFilled(
       );
     }
     await applySignedOrderFill(tx, event, makerOrder, makerFillSize);
-    return;
+  } else {
+    const matchedFillSize = BigInt(settlement.fillSizeRaw);
+    const eventMaker = lowerAddress(stringArg(event.args, 'maker'));
+    const eventTaker = lowerAddress(stringArg(event.args, 'taker'));
+    const eventTokenId = bigintArg(event.args, 'tokenId').toString();
+    if (
+      makerFillSize !== matchedFillSize ||
+      makerOrder.maker !== eventMaker ||
+      settlement.takerOrder.maker !== eventTaker ||
+      makerOrder.tokenId !== eventTokenId ||
+      settlement.takerOrder.tokenId !== eventTokenId ||
+      settlement.tokenId !== eventTokenId
+    ) {
+      throw new Error(`Exchange fill does not match submitted settlement ${settlement.id}`);
+    }
+    await applySignedOrderFill(tx, event, makerOrder, matchedFillSize);
+    await applySignedOrderFill(tx, event, settlement.takerOrder, matchedFillSize);
+    const confirmed = await tx.settlementMatch.updateMany({
+      where: { id: settlement.id, txHash: eventTxHash, status: 'SUBMITTED' },
+      data: { status: 'CONFIRMED', updatedAt: event.ts },
+    });
+    if (confirmed.count !== 1) {
+      throw new Error(`Submitted settlement changed while indexing ${settlement.id}`);
+    }
   }
-
-  const matchedFillSize = BigInt(settlement.fillSizeRaw);
-  const eventMaker = lowerAddress(stringArg(event.args, 'maker'));
-  const eventTaker = lowerAddress(stringArg(event.args, 'taker'));
-  const eventTokenId = bigintArg(event.args, 'tokenId').toString();
-  if (
-    makerFillSize !== matchedFillSize ||
-    makerOrder.maker !== eventMaker ||
-    settlement.takerOrder.maker !== eventTaker ||
-    makerOrder.tokenId !== eventTokenId ||
-    settlement.takerOrder.tokenId !== eventTokenId ||
-    settlement.tokenId !== eventTokenId
-  ) {
-    throw new Error(`Exchange fill does not match submitted settlement ${settlement.id}`);
-  }
-  await applySignedOrderFill(tx, event, makerOrder, matchedFillSize);
-  await applySignedOrderFill(tx, event, settlement.takerOrder, matchedFillSize);
-  const confirmed = await tx.settlementMatch.updateMany({
-    where: { id: settlement.id, txHash: eventTxHash, status: 'SUBMITTED' },
-    data: { status: 'CONFIRMED', updatedAt: event.ts },
-  });
-  if (confirmed.count !== 1) {
-    throw new Error(`Submitted settlement changed while indexing ${settlement.id}`);
-  }
+  await recordExchangeTrade(tx, event, makerOrder, makerFillSize, payment);
 }
 
 async function handleExchangeOrderCancelled(
