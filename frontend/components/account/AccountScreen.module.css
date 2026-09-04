@@ -151,7 +151,6 @@
 }
 
 .checkField small,
-.estimateNote,
 .sectionHeading p,
 .privacyCard p {
   color: var(--muted);
@@ -178,7 +177,7 @@
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: var(--space-3);
   margin: var(--space-6) 0 var(--space-4);
 }
@@ -203,15 +202,6 @@
   font-size: 1.15rem;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
-}
-
-.metrics .pnlMetric {
-  grid-column: span 2;
-}
-
-.estimateNote {
-  margin-bottom: 0;
-  font-size: var(--text-small);
 }
 
 .marketSection {
@@ -289,13 +279,5 @@
   .summaryGrid,
   .marketGrid {
     grid-template-columns: 1fr;
-  }
-
-  .metrics {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .metrics .pnlMetric {
-    grid-column: auto;
   }
 }

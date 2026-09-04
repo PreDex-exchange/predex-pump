@@ -182,20 +182,22 @@ export function PortfolioScreen() {
   );
 
   const positionRows = useMemo<PositionRow[]>(() => {
-    return (account?.positions ?? []).map((position) => {
-      const market = marketById.get(position.marketId);
+    return (account?.positions ?? [])
+      .filter((position) => BigInt(position.qtyRaw) > 0n)
+      .map((position) => {
+        const market = marketById.get(position.marketId);
 
-      return {
-        position,
-        market,
-        averageCostRaw: averageCostRaw(position),
-        currentValueRaw: positionCurrentValueRaw(position, market),
-        estimatedPnlRaw: (
-          BigInt(position.realizedPnlRaw) +
-          BigInt(position.unrealizedPnlRaw)
-        ).toString(),
-      };
-    });
+        return {
+          position,
+          market,
+          averageCostRaw: averageCostRaw(position),
+          currentValueRaw: positionCurrentValueRaw(position, market),
+          estimatedPnlRaw: (
+            BigInt(position.realizedPnlRaw) +
+            BigInt(position.unrealizedPnlRaw)
+          ).toString(),
+        };
+      });
   }, [account?.positions, marketById]);
 
   const openOrders = useMemo<OpenOrderRow[]>(() => {
@@ -321,10 +323,9 @@ export function PortfolioScreen() {
   const totalPositionValueRaw = positionRows
     .reduce((total, row) => total + BigInt(row.currentValueRaw), 0n)
     .toString();
-  const estimatedPnlRaw = (
-    BigInt(account?.pnl.realizedRaw ?? '0') +
-    BigInt(account?.pnl.unrealizedRaw ?? '0')
-  ).toString();
+  const openHoldingsPnlRaw = positionRows
+    .reduce((total, row) => total + BigInt(row.estimatedPnlRaw), 0n)
+    .toString();
   const marketsHeld = new Set(
     positionRows
       .filter((row) => BigInt(row.position.qtyRaw) > 0n)
@@ -461,17 +462,14 @@ export function PortfolioScreen() {
           <small>At indexed prices or final payouts</small>
         </Card>
         <Card className={styles.summaryCard} quiet>
-          <span>Estimated PnL</span>
+          <span>Open holdings PnL (est.)</span>
           <NumberDisplay
-            className={pnlClassName(estimatedPnlRaw)}
+            className={pnlClassName(openHoldingsPnlRaw)}
             size="hero"
           >
-            {formatSignedUsdc(estimatedPnlRaw)} <small>USDC</small>
+            {formatSignedUsdc(openHoldingsPnlRaw)} <small>USDC</small>
           </NumberDisplay>
-          <small>
-            {formatSignedUsdc(account.pnl.realizedRaw)} realized ·{' '}
-            {formatSignedUsdc(account.pnl.unrealizedRaw)} unrealized
-          </small>
+          <small>Across positions shown below.</small>
         </Card>
         <Card className={styles.summaryCard} quiet>
           <span>Markets held</span>
@@ -780,7 +778,7 @@ export function PortfolioScreen() {
             message="This account holds no indexed outcome-token positions. Open orders, if any, remain listed above."
             showMascot={false}
             state="empty"
-            title="No positions yet"
+            title="No open positions"
           />
         ) : (
           <Card className={styles.tableCard} padded={false} quiet>

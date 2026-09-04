@@ -14,11 +14,7 @@ import { NumberDisplay } from '@/components/ui/NumberDisplay';
 import { StatePanel } from '@/components/ui/StatePanel';
 import { useAccountProfile } from '@/lib/api/hooks';
 import { backendRestClient } from '@/lib/api/rest-client';
-import {
-  formatSignedUsdc,
-  formatUsdc,
-  shortAddress,
-} from '@/lib/format';
+import { formatUsdc, shortAddress } from '@/lib/format';
 
 import { GatewayDepositPanel } from './GatewayDepositPanel';
 import styles from './AccountScreen.module.css';
@@ -208,10 +204,6 @@ export function AccountScreen() {
     );
   }
 
-  const totalPnlRaw = (
-    BigInt(data.trackRecord.realizedPnlRaw) +
-    BigInt(data.trackRecord.unrealizedPnlRaw)
-  ).toString();
   const displayName = displayNameDraft ?? data.profile.displayName ?? '';
   const rememberRecentlyViewed =
     rememberRecentlyViewedDraft ??
@@ -303,19 +295,7 @@ export function AccountScreen() {
                 </NumberDisplay>
               </dd>
             </div>
-            <div className={styles.pnlMetric}>
-              <dt>Estimated total PnL</dt>
-              <dd>
-                <NumberDisplay size="body">
-                  {formatSignedUsdc(totalPnlRaw)} USDC
-                </NumberDisplay>
-              </dd>
-            </div>
           </dl>
-          <p className={styles.estimateNote}>
-            Positions, trades, and PnL come from the indexer. PnL remains an estimate,
-            not settlement authority.
-          </p>
         </Card>
       </section>
 

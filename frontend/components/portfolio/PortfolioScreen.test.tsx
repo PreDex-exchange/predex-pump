@@ -325,7 +325,7 @@ describe('Portfolio open orders', () => {
         name: /Manage on market/u,
       }),
     ).toBeNull();
-    expect(screen.getByText('No positions yet')).toBeTruthy();
+    expect(screen.getByText('No open positions')).toBeTruthy();
   });
 
   it('does not claim there are no open orders when only MiniCLOB has one', () => {
@@ -559,6 +559,89 @@ describe('Portfolio money states', () => {
     expect(mocks.activityRefetch).toHaveBeenCalledOnce();
   });
 
+  it('shows only open holdings and derives summary PnL from the rows shown', () => {
+    if (!mocks.account) throw new Error('account fixture missing');
+    mocks.account = {
+      ...mocks.account,
+      pnl: { realizedRaw: '99000000', unrealizedRaw: '-240000' },
+      positions: [
+        {
+          account: ADDRESS,
+          marketId: '999',
+          outcome: 'NO',
+          qtyRaw: '0',
+          costBasisRaw: '12340000',
+          costBasisEstimated: true,
+          realizedPnlRaw: '-10000000',
+          unrealizedPnlRaw: '-2340000',
+          updatedAt: 1_900_004_200,
+        },
+        {
+          account: ADDRESS,
+          marketId: market.id,
+          outcome: 'YES',
+          qtyRaw: '1000000',
+          costBasisRaw: '500000',
+          costBasisEstimated: true,
+          realizedPnlRaw: '1250000',
+          unrealizedPnlRaw: '500000',
+          updatedAt: 1_900_004_300,
+        },
+      ],
+    };
+
+    const rendered = render(<PortfolioScreen />);
+
+    const summaryPnl = screen.getByText('Open holdings PnL (est.)').parentElement;
+    expect(summaryPnl).not.toBeNull();
+    expect(summaryPnl?.textContent).toContain('+1.75 USDC');
+    expect(summaryPnl?.textContent).toContain('Across positions shown below.');
+
+    const table = screen.getByRole('table', {
+      name: /Indexed outcome-token positions/u,
+    });
+    const rows = within(table).getAllByRole('row');
+    expect(rows).toHaveLength(2);
+    const activeRow = within(table).getByText(market.question).closest('tr');
+    expect(activeRow).not.toBeNull();
+    expect(
+      (activeRow as HTMLElement).querySelector('[data-label="PnL (est.)"]')
+        ?.textContent,
+    ).toBe('+1.75 USDC');
+    expect(within(table).queryByText('Market #999')).toBeNull();
+    expect(rendered.container.textContent).not.toContain('−12.34 USDC');
+    expect(rendered.container.textContent).not.toContain('+98.76 USDC');
+  });
+
+  it('shows no positions table when every indexed position has zero quantity', () => {
+    if (!mocks.account) throw new Error('account fixture missing');
+    mocks.account = {
+      ...mocks.account,
+      positions: [
+        {
+          account: ADDRESS,
+          marketId: market.id,
+          outcome: 'YES',
+          qtyRaw: '0',
+          costBasisRaw: '500000',
+          costBasisEstimated: true,
+          realizedPnlRaw: '-1000000',
+          unrealizedPnlRaw: '-250000',
+          updatedAt: 1_900_004_300,
+        },
+      ],
+    };
+
+    render(<PortfolioScreen />);
+
+    expect(
+      screen.queryByRole('table', {
+        name: /Indexed outcome-token positions/u,
+      }),
+    ).toBeNull();
+    expect(screen.getByText('No open positions')).toBeTruthy();
+  });
+
   it('renders the same non-zero sub-raw-unit value on the portfolio and trade panel', () => {
     if (!mocks.account) throw new Error('account fixture missing');
     const tinyPosition: Position = {
@@ -663,7 +746,7 @@ describe('Portfolio money states', () => {
       state: 'error',
     },
     {
-      expectedTitle: 'No positions yet',
+      expectedTitle: 'No open positions',
       prepare: () => {},
       state: 'empty',
     },

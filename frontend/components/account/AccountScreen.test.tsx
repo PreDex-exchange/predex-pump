@@ -1,6 +1,12 @@
 import type { AccountProfileResponse } from '@predex-pump/shared/rest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WALLET_REQUEST_DECLINED_MESSAGE } from '@/lib/wallet-errors';
@@ -120,6 +126,57 @@ describe('AccountScreen money states', () => {
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('The account API could not load this profile.');
     expect(alert.textContent).not.toContain('marketId');
+  });
+
+  it('keeps the non-PnL track-record metrics without displaying indexer PnL', () => {
+    mocks.authenticated = true;
+    mocks.isConnected = true;
+    mocks.profileData = {
+      behavior: [],
+      createdMarkets: [],
+      profile: {
+        address: ADDRESS,
+        createdAt: '2032-01-01T00:00:00.000Z',
+        displayName: 'Truthful trader',
+        preferences: { rememberRecentlyViewed: true },
+        updatedAt: '2032-01-01T00:00:00.000Z',
+      },
+      recentlyViewed: [],
+      trackRecord: {
+        dedupSuggestionsAccepted: 0,
+        dedupSuggestionsRejected: 0,
+        marketsCreated: 11,
+        marketsTraded: 12,
+        realizedPnlRaw: '12500000',
+        tradeCount: 13,
+        unrealizedPnlRaw: '-1750000',
+        volumeTradedRaw: '45670000',
+      },
+      tradedMarkets: [],
+      watchlist: [],
+    };
+
+    renderScreen();
+
+    const trackRecord = screen.getByRole('region', {
+      name: 'Indexed track record',
+    });
+    expect(
+      within(trackRecord).getByText('Markets created').parentElement
+        ?.textContent,
+    ).toBe('Markets created11');
+    expect(
+      within(trackRecord).getByText('Markets traded').parentElement
+        ?.textContent,
+    ).toBe('Markets traded12');
+    expect(
+      within(trackRecord).getByText('Trades').parentElement?.textContent,
+    ).toBe('Trades13');
+    expect(
+      within(trackRecord).getByText('Volume traded').parentElement?.textContent,
+    ).toBe('Volume traded45.67 USDC');
+    expect(within(trackRecord).queryByText('Estimated total PnL')).toBeNull();
+    expect(within(trackRecord).queryByText('+10.75 USDC')).toBeNull();
   });
 
   it.each([
