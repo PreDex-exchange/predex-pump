@@ -19,7 +19,6 @@ import { useTxFlow } from '@/lib/chain/useTxFlow';
 import {
   formatPrice,
   formatShareQuantity,
-  formatSignedUsdc,
   formatUsdc,
 } from '@/lib/format';
 import {
@@ -444,26 +443,14 @@ export function TradePanel({ market, positions = [] }: TradePanelProps) {
                 </strong>
               </div>
               <div>
-                <span>Marked value</span>
+                <span>Reference value</span>
                 <strong className="numeric">
                   {formatUsdc(positionValueRaw ?? '0')} USDC
                 </strong>
               </div>
-              <div>
-                <span>Cost basis (est.)</span>
-                <strong className="numeric">
-                  {formatUsdc(selectedPosition.costBasisRaw)} USDC
-                </strong>
-              </div>
-              <div>
-                <span>Unrealized PnL (est.)</span>
-                <strong className="numeric">
-                  {formatSignedUsdc(selectedPosition.unrealizedPnlRaw)} USDC
-                </strong>
-              </div>
               <p className={styles.noPosition}>
-                CTF holdings are indexed from transfers. Cost basis and PnL are
-                read-model estimates, not settlement authority.
+                Quantity is indexed from CTF transfers. Reference value uses the
+                indexed market price and is not guaranteed sale proceeds.
               </p>
             </>
           ) : (

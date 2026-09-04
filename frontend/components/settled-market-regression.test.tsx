@@ -280,7 +280,7 @@ describe('Graduated snapshots with final payout data', () => {
       surface: 'portfolio',
       renderSurface: () => renderWithQuery(<PortfolioScreen />),
       assertSettled: () => {
-        const summary = screen.getByText('Total position value').parentElement;
+        const summary = screen.getByText('Reference position value').parentElement;
         expect(summary).not.toBeNull();
         expect(within(summary as HTMLElement).getByText('1.00')).toBeTruthy();
         expect(screen.getByRole('link', { name: 'Redeem on market' })).toBeTruthy();
@@ -288,7 +288,7 @@ describe('Graduated snapshots with final payout data', () => {
         const row = screen.getByText(resolvedMarket.question).closest('tr');
         expect(row).not.toBeNull();
         const currentValue = (row as HTMLElement).querySelector(
-          '[data-label="Current value"]',
+          '[data-label="Reference value"]',
         );
         expect(currentValue).not.toBeNull();
         expect(

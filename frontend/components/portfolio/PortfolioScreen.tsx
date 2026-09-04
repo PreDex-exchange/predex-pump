@@ -33,7 +33,6 @@ import {
   formatPrice,
   formatRaw,
   formatShareQuantity,
-  formatSignedUsdc,
   formatUsdc,
   phaseLabel,
   shortAddress,
@@ -45,14 +44,10 @@ import {
 
 import styles from './PortfolioScreen.module.css';
 
-const RAW_SCALE = 1_000_000n;
-
 interface PositionRow {
   position: Position;
   market: Market | undefined;
-  averageCostRaw: string;
   currentValueRaw: string;
-  estimatedPnlRaw: string;
 }
 
 interface OpenOrderRowBase {
@@ -78,19 +73,6 @@ interface MiniClobOpenOrderRow extends OpenOrderRowBase {
 }
 
 type OpenOrderRow = HybridOpenOrderRow | MiniClobOpenOrderRow;
-
-function averageCostRaw(position: Position) {
-  const quantity = BigInt(position.qtyRaw);
-  if (quantity === 0n) return '0';
-  return ((BigInt(position.costBasisRaw) * RAW_SCALE) / quantity).toString();
-}
-
-function pnlClassName(raw: string) {
-  const value = BigInt(raw);
-  if (value > 0n) return styles.positive;
-  if (value < 0n) return styles.negative;
-  return styles.flat;
-}
 
 function tradeToActivity(trade: Trade): ActivityEvent {
   return {
@@ -190,12 +172,7 @@ export function PortfolioScreen() {
         return {
           position,
           market,
-          averageCostRaw: averageCostRaw(position),
           currentValueRaw: positionCurrentValueRaw(position, market),
-          estimatedPnlRaw: (
-            BigInt(position.realizedPnlRaw) +
-            BigInt(position.unrealizedPnlRaw)
-          ).toString(),
         };
       });
   }, [account?.positions, marketById]);
@@ -323,9 +300,6 @@ export function PortfolioScreen() {
   const totalPositionValueRaw = positionRows
     .reduce((total, row) => total + BigInt(row.currentValueRaw), 0n)
     .toString();
-  const openHoldingsPnlRaw = positionRows
-    .reduce((total, row) => total + BigInt(row.estimatedPnlRaw), 0n)
-    .toString();
   const marketsHeld = new Set(
     positionRows
       .filter((row) => BigInt(row.position.qtyRaw) > 0n)
@@ -363,9 +337,8 @@ export function PortfolioScreen() {
         <span className={styles.kicker}>Portfolio</span>
         <h1>Your positions, held calmly.</h1>
         <p>
-          Quantities are indexed from CTF transfers and marked against indexed
-          marginal prices or final payouts. Cost basis and PnL are estimates from
-          trade history.
+          Quantities come from indexed CTF transfers. Open positions use reference
+          prices; resolved positions use their final payout.
         </p>
       </div>
       {address && (
@@ -455,21 +428,16 @@ export function PortfolioScreen() {
 
       <section aria-label="Portfolio summary" className={styles.summary}>
         <Card className={styles.summaryCard} quiet>
-          <span>Total position value</span>
+          <span>Reference position value</span>
           <NumberDisplay size="hero">
             {formatUsdc(totalPositionValueRaw)} <small>USDC</small>
           </NumberDisplay>
-          <small>At indexed prices or final payouts</small>
+          <small>Indexed marks or final payouts</small>
         </Card>
         <Card className={styles.summaryCard} quiet>
-          <span>Open holdings PnL (est.)</span>
-          <NumberDisplay
-            className={pnlClassName(openHoldingsPnlRaw)}
-            size="hero"
-          >
-            {formatSignedUsdc(openHoldingsPnlRaw)} <small>USDC</small>
-          </NumberDisplay>
-          <small>Across positions shown below.</small>
+          <span>Outcomes held</span>
+          <NumberDisplay size="hero">{positionRows.length}</NumberDisplay>
+          <small>Non-zero indexed balances</small>
         </Card>
         <Card className={styles.summaryCard} quiet>
           <span>Markets held</span>
@@ -764,7 +732,8 @@ export function PortfolioScreen() {
             <h2>Positions</h2>
           </div>
           <p id="positions-note">
-            Cost basis and PnL are indexer estimates; quantities derive from CTF transfers.
+            Quantities derive from CTF transfers. Values are reference marks or final
+            payouts, not guaranteed sale proceeds.
           </p>
         </div>
 
@@ -794,13 +763,7 @@ export function PortfolioScreen() {
                     Quantity
                   </th>
                   <th className={styles.numericHeading} scope="col">
-                    Avg. cost
-                  </th>
-                  <th className={styles.numericHeading} scope="col">
-                    Current value
-                  </th>
-                  <th className={styles.numericHeading} scope="col">
-                    PnL (est.)
+                    Reference value
                   </th>
                 </tr>
               </thead>
@@ -834,23 +797,9 @@ export function PortfolioScreen() {
                         maximumFractionDigits: 2,
                       })}
                     </td>
-                    <td className={styles.numericCell} data-label="Avg. cost">
-                      <span title="Estimated from indexed trade history">
-                        {formatUsdc(row.averageCostRaw, 3)} <small>USDC</small>
-                      </span>
-                    </td>
-                    <td className={styles.numericCell} data-label="Current value">
+                    <td className={styles.numericCell} data-label="Reference value">
                       <span>
                         {formatUsdc(row.currentValueRaw)} <small>USDC</small>
-                      </span>
-                    </td>
-                    <td className={styles.numericCell} data-label="PnL (est.)">
-                      <span
-                        className={pnlClassName(row.estimatedPnlRaw)}
-                        title="Estimated from indexed trade history"
-                      >
-                        {formatSignedUsdc(row.estimatedPnlRaw)}{' '}
-                        <small>USDC</small>
                       </span>
                     </td>
                   </tr>

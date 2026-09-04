@@ -559,7 +559,7 @@ describe('Portfolio money states', () => {
     expect(mocks.activityRefetch).toHaveBeenCalledOnce();
   });
 
-  it('shows only open holdings and derives summary PnL from the rows shown', () => {
+  it('shows only open holdings without exposing unsupported basis or PnL', () => {
     if (!mocks.account) throw new Error('account fixture missing');
     mocks.account = {
       ...mocks.account,
@@ -592,10 +592,10 @@ describe('Portfolio money states', () => {
 
     const rendered = render(<PortfolioScreen />);
 
-    const summaryPnl = screen.getByText('Open holdings PnL (est.)').parentElement;
-    expect(summaryPnl).not.toBeNull();
-    expect(summaryPnl?.textContent).toContain('+1.75 USDC');
-    expect(summaryPnl?.textContent).toContain('Across positions shown below.');
+    const outcomesHeld = screen.getByText('Outcomes held').parentElement;
+    expect(outcomesHeld).not.toBeNull();
+    expect(outcomesHeld?.textContent).toContain('1');
+    expect(screen.queryByText('Open holdings PnL (est.)')).toBeNull();
 
     const table = screen.getByRole('table', {
       name: /Indexed outcome-token positions/u,
@@ -605,12 +605,15 @@ describe('Portfolio money states', () => {
     const activeRow = within(table).getByText(market.question).closest('tr');
     expect(activeRow).not.toBeNull();
     expect(
-      (activeRow as HTMLElement).querySelector('[data-label="PnL (est.)"]')
+      (activeRow as HTMLElement).querySelector('[data-label="Reference value"]')
         ?.textContent,
-    ).toBe('+1.75 USDC');
+    ).toContain('USDC');
+    expect((activeRow as HTMLElement).querySelector('[data-label="Avg. cost"]')).toBeNull();
+    expect((activeRow as HTMLElement).querySelector('[data-label="PnL (est.)"]')).toBeNull();
     expect(within(table).queryByText('Market #999')).toBeNull();
     expect(rendered.container.textContent).not.toContain('−12.34 USDC');
     expect(rendered.container.textContent).not.toContain('+98.76 USDC');
+    expect(rendered.container.textContent).not.toContain('+1.75 USDC');
   });
 
   it('shows no positions table when every indexed position has zero quantity', () => {
@@ -671,21 +674,23 @@ describe('Portfolio money states', () => {
       (row as HTMLElement).querySelector('[data-label="Quantity"]')?.textContent,
     ).toBe('<0.01');
     const portfolioValue = (row as HTMLElement).querySelector(
-      '[data-label="Current value"]',
+      '[data-label="Reference value"]',
     )?.textContent;
     expect(portfolioValue).toBe('<0.01 USDC');
 
     portfolio.unmount();
     render(<TradePanel market={market} positions={[tinyPosition]} />);
 
-    const markedValue = screen.getByText('Marked value').parentElement;
-    expect(markedValue).not.toBeNull();
-    expect(markedValue?.querySelector('strong')?.textContent).toBe(
+    const referenceValue = screen.getByText('Reference value').parentElement;
+    expect(referenceValue).not.toBeNull();
+    expect(referenceValue?.querySelector('strong')?.textContent).toBe(
       portfolioValue,
     );
+    expect(screen.queryByText('Cost basis (est.)')).toBeNull();
+    expect(screen.queryByText('Unrealized PnL (est.)')).toBeNull();
   });
 
-  it('groups every positions-table money value and unit in one element', () => {
+  it('groups the reference value and unit in one element', () => {
     if (!mocks.account) throw new Error('account fixture missing');
     mocks.account = {
       ...mocks.account,
@@ -712,22 +717,22 @@ describe('Portfolio money states', () => {
     const row = within(table).getByText(market.question).closest('tr');
     expect(row).not.toBeNull();
 
-    for (const label of ['Avg. cost', 'Current value', 'PnL (est.)']) {
-      const cell = (row as HTMLElement).querySelector(
-        `[data-label="${label}"]`,
-      );
-      expect(cell).not.toBeNull();
-      expect(cell?.children).toHaveLength(1);
-      expect(cell?.firstElementChild?.tagName).toBe('SPAN');
-      expect(
-        cell?.firstElementChild?.querySelector(':scope > small')?.textContent,
-      ).toBe('USDC');
-      expect(
-        [...(cell?.childNodes ?? [])].filter(
-          (node) => node.nodeType === 3 && node.textContent?.trim(),
-        ),
-      ).toEqual([]);
-    }
+    const cell = (row as HTMLElement).querySelector(
+      '[data-label="Reference value"]',
+    );
+    expect(cell).not.toBeNull();
+    expect(cell?.children).toHaveLength(1);
+    expect(cell?.firstElementChild?.tagName).toBe('SPAN');
+    expect(
+      cell?.firstElementChild?.querySelector(':scope > small')?.textContent,
+    ).toBe('USDC');
+    expect(
+      [...(cell?.childNodes ?? [])].filter(
+        (node) => node.nodeType === 3 && node.textContent?.trim(),
+      ),
+    ).toEqual([]);
+    expect((row as HTMLElement).querySelector('[data-label="Avg. cost"]')).toBeNull();
+    expect((row as HTMLElement).querySelector('[data-label="PnL (est.)"]')).toBeNull();
   });
 
   it.each([
