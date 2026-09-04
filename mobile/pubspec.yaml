@@ -1,0 +1,23 @@
+name: predex_mobile
+description: Secure Flutter shell for the Predex testnet application.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  url_launcher: 6.3.2
+  webview_flutter: 4.14.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/predex-mark.png

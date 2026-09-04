@@ -36,7 +36,7 @@ source_id="$(git -C "$repo_root" rev-parse --short=12 HEAD)-${source_hash:0:12}"
 ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" mkdir -p "$source_dir"
 ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" rm -f "$source_dir/.git"
 
-rsync -az --delete \
+rsync -az --delete --delete-excluded \
   --include='.env.example' \
   --include='.env.*.example' \
   --include='**/.env.example' \
@@ -46,6 +46,21 @@ rsync -az --delete \
   --exclude='**/.env*' \
   --exclude='**/node_modules/' \
   --exclude='**/.next/' \
+  --exclude='**/.dart_tool/' \
+  --exclude='**/.flutter-plugins-dependencies' \
+  --exclude='**/.gradle/' \
+  --exclude='**/.idea/' \
+  --exclude='**/*.iml' \
+  --exclude='**/build/' \
+  --exclude='**/android/local.properties' \
+  --exclude='**/android/key.properties' \
+  --exclude='**/android/gradlew' \
+  --exclude='**/android/gradlew.bat' \
+  --exclude='**/android/gradle/wrapper/gradle-wrapper.jar' \
+  --exclude='**/ios/Pods/' \
+  --exclude='**/ios/.symlinks/' \
+  --exclude='**/*.jks' \
+  --exclude='**/*.keystore' \
   --exclude='**/dist/' \
   --exclude='**/coverage/' \
   --exclude='.qa/' \
