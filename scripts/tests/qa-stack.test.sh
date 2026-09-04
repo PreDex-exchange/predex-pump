@@ -68,7 +68,7 @@ assert_contains "$help_output" 'QA_COMPOSE_PROJECT=backend'
 assert_contains "$help_output" 'QA_COMPOSE_PROJECT=my-qa-stack'
 assert_contains "$help_output" '--fixtures'
 assert_contains "$help_output" 'opened, graduated, and resolved markets'
-assert_contains "$help_output" 'Attached Postgres/Qdrant containers are never stopped or removed'
+assert_contains "$help_output" 'Attached Postgres/Qdrant/Redis containers are never stopped or removed'
 
 # Docker's Linux port publishing can be reachable through NAT without a
 # userspace listener visible to lsof. Fall back to an actual loopback probe.
@@ -177,7 +177,7 @@ bash -c '
 ' _ "$SCRIPT" "$owned_state" "$owned_calls" "$started_id" "$created_id"
 owned_output="$(<"$owned_calls")"
 assert_contains "$owned_output" "<container><stop><$started_id>"
-assert_contains "$owned_output" "<container><rm><--force><$created_id>"
+assert_contains "$owned_output" "<container><rm><--force><--volumes><$created_id>"
 assert_not_contains "$owned_output" '<compose><down>'
 assert_not_contains "$owned_output" '<network>'
 assert_not_contains "$owned_output" '<volume>'

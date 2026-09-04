@@ -37,9 +37,12 @@ ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" mkdir -p "$source_dir"
 ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" rm -f "$source_dir/.git"
 
 rsync -az --delete \
+  --include='.env.example' \
+  --include='.env.*.example' \
   --include='**/.env.example' \
   --include='**/.env.*.example' \
   --exclude='.git' \
+  --exclude='.env*' \
   --exclude='**/.env*' \
   --exclude='**/node_modules/' \
   --exclude='**/.next/' \
