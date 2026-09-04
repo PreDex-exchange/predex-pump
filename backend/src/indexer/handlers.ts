@@ -87,14 +87,6 @@ async function marketByCondition(tx: Tx, conditionId: string): Promise<Market> {
   return market;
 }
 
-async function marketByQuestion(tx: Tx, questionId: string): Promise<Market> {
-  const market = await tx.market.findFirst({ where: { questionId } });
-  if (market === null) {
-    throw new Error(`Event refers to unknown questionId ${questionId}`);
-  }
-  return market;
-}
-
 async function marketForToken(
   tx: Tx,
   tokenId: string,
@@ -1435,18 +1427,20 @@ async function persistResolution(
 }
 
 async function handleQuestionResolved(tx: Tx, event: DecodedEvent): Promise<void> {
-  const market = await marketByQuestion(
-    tx,
-    stringArg(event.args, 'questionId').toLowerCase(),
-  );
+  // The configured adapter also accepts publicly initialized, non-Registry questions.
+  const market = await tx.market.findFirst({
+    where: { questionId: stringArg(event.args, 'questionId').toLowerCase() },
+  });
+  if (market === null) return;
   await persistResolution(tx, event, market, bigintArrayArg(event.args, 'payouts'));
 }
 
 async function handleConditionResolution(tx: Tx, event: DecodedEvent): Promise<void> {
-  const market = await marketByCondition(
-    tx,
-    stringArg(event.args, 'conditionId').toLowerCase(),
-  );
+  // ConditionalTokens is shared and can resolve conditions outside Predex markets.
+  const market = await tx.market.findUnique({
+    where: { conditionId: stringArg(event.args, 'conditionId').toLowerCase() },
+  });
+  if (market === null) return;
   await persistResolution(
     tx,
     event,
