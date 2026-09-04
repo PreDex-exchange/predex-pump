@@ -20,7 +20,7 @@ export function Hero({
   hasMore?: boolean;
 }) {
   const graduated =
-    markets?.filter((market) => market.phase !== 'Opened').length ?? null;
+    markets?.filter((market) => market.graduatedAt !== null).length ?? null;
   const volumeRaw =
     markets === null
       ? null

@@ -75,6 +75,35 @@ describe('feed volume display', () => {
     expect(within(statistics).getByText('$0.01+')).toBeTruthy();
   });
 
+  it('counts only actual graduations while preserving lower-bound totals', () => {
+    const graduatedMarket: Market = {
+      ...market('1000000'),
+      phase: 'Graduated',
+      graduatedAt: 1_785_503_600,
+    };
+    const closedWithoutGraduation: Market = {
+      ...market('2000000'),
+      id: '2',
+      phase: 'ClosedOut',
+      resolvedAt: 1_785_504_000,
+    };
+
+    render(
+      <Hero
+        hasMore
+        markets={[graduatedMarket, closedWithoutGraduation]}
+      />,
+    );
+
+    const statistics = within(
+      screen.getByRole('list', { name: 'Platform statistics' }),
+    ).getAllByRole('listitem');
+    expect(statistics).toHaveLength(3);
+    expect(statistics[0]?.textContent).toMatch(/2\+\s*markets/u);
+    expect(statistics[1]?.textContent).toMatch(/1\+\s*graduated/u);
+    expect(statistics[2]?.textContent).toMatch(/\$3\.00\+\s*volume/u);
+  });
+
   it.each([
     ['0', '$0.00'],
     ['1', '<$0.01'],
