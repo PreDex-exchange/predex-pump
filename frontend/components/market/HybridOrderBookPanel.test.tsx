@@ -851,7 +851,26 @@ describe('Hybrid human trading surface', () => {
     expect(mocks.ensureSession).not.toHaveBeenCalled();
     expect(mocks.approveCollateral).not.toHaveBeenCalled();
     expect(mocks.approveTokens).not.toHaveBeenCalled();
-    expect(mocks.approvalReset).toHaveBeenCalledOnce();
+    await waitFor(() => expect(mocks.approvalReset).toHaveBeenCalledOnce());
+    expect(mocks.myOrders.refetch).not.toHaveBeenCalled();
+  });
+
+  it('refreshes private orders after an authenticated maker posts', async () => {
+    const makerOrder = offchainOrder(mocks.address, 'ba');
+    mocks.signOrder.mockResolvedValue({
+      orderHash: makerOrder.orderHash,
+      order: makerOrder.signedOrder,
+    });
+    mocks.postOrder.mockResolvedValue({ order: makerOrder });
+    renderPanel(books(makerOrder));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review binding order' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Sign & post binding order' }),
+    );
+
+    await waitFor(() => expect(mocks.myOrders.refetch).toHaveBeenCalledOnce());
+    expect(mocks.postOrder).toHaveBeenCalledOnce();
   });
 
   it('snaps bids down and asks up to the effective market tick', () => {

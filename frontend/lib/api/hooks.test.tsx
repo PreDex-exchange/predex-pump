@@ -1,4 +1,7 @@
-import type { MarketBookResponse } from '@predex-pump/shared/rest';
+import type {
+  MakerOrdersResponse,
+  MarketBookResponse,
+} from '@predex-pump/shared/rest';
 import {
   focusManager,
   QueryClient,
@@ -25,6 +28,7 @@ import {
   useDedupCheck,
   useMarket,
   useMarkets,
+  useMyOrders,
   useOrderBook,
 } from './hooks';
 
@@ -38,6 +42,7 @@ const mocks = vi.hoisted(() => ({
     candidates: [],
   })),
   getMarket: vi.fn(async () => null),
+  getMyOrders: vi.fn(),
   getOrderBook: vi.fn(async () => ({})),
   listMarkets: vi.fn(),
   connectionStatus: 'idle' as ConnectionStatus,
@@ -51,6 +56,7 @@ vi.mock('./rest-client', () => ({
   backendRestClient: {
     dedupCheck: mocks.dedupCheck,
     getMarket: mocks.getMarket,
+    getMyOrders: mocks.getMyOrders,
     getOrderBook: mocks.getOrderBook,
     listMarkets: mocks.listMarkets,
   },
@@ -77,6 +83,12 @@ beforeEach(() => {
     },
   );
   mocks.getOrderBook.mockReset().mockResolvedValue({});
+  mocks.getMyOrders.mockReset().mockResolvedValue({
+    orders: [],
+    onchainOrders: [],
+    offchainWithdrawalIsOnchainCancellation: false,
+    warning: 'Withdrawal is not cancellation.',
+  } satisfies MakerOrdersResponse);
 });
 
 afterEach(() => {
@@ -85,6 +97,7 @@ afterEach(() => {
   vi.useRealTimers();
   mocks.dedupCheck.mockClear();
   mocks.getMarket.mockClear();
+  mocks.getMyOrders.mockClear();
   mocks.getOrderBook.mockClear();
   mocks.listMarkets.mockReset();
 });
@@ -248,6 +261,59 @@ describe('order-book REST fallback', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(mocks.getOrderBook).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('private maker orders', () => {
+  const address = `0x${'12'.repeat(20)}`;
+
+  it('makes one failed private request and never retries it', async () => {
+    vi.useFakeTimers();
+    mocks.getMyOrders.mockRejectedValue(new Error('authentication required'));
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: 3,
+          retryDelay: 1,
+        },
+      },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useMyOrders(address, true), { wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(result.current.error?.message).toBe('authentication required');
+    expect(mocks.getMyOrders).toHaveBeenCalledOnce();
+    expect(
+      queryClient.getQueryCache().find({
+        exact: true,
+        queryKey: ['my-orders', address],
+      })?.options.retry,
+    ).toBe(false);
+  });
+
+  it('never requests private orders while the query is disabled', async () => {
+    vi.useFakeTimers();
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+
+    renderHook(() => useMyOrders(address, false), { wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(mocks.getMyOrders).not.toHaveBeenCalled();
   });
 });
 

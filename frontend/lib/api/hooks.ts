@@ -319,6 +319,7 @@ export function useMyOrders(address?: string, enabled = true) {
   return useApiResource<MakerOrdersResponse>(['my-orders', normalizedAddress], load, {
     enabled: enabled && Boolean(normalizedAddress),
     refetchInterval: 15_000,
+    retry: false,
   });
 }
 

@@ -562,7 +562,7 @@ export function HybridOrderBookPanel({
     if (!result) return;
     approvalTx.reset();
     setCompletion(`Signed order ${shortAddress(result.order.orderHash, 8, 6)} is live.`);
-    myOrders.refetch();
+    if (authenticated) myOrders.refetch();
     await queryClient.invalidateQueries({
       queryKey: ['order-book', market.id],
     });
