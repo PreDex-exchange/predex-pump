@@ -416,6 +416,22 @@ async function publishSpecificEvent(
     );
   }
 
+  if (
+    key === 'MINI_CLOB.ConditionCutover' &&
+    marketId !== null &&
+    eventBus.hasSubscribers(`book:${marketId}`)
+  ) {
+    publish(
+      eventBus,
+      {
+        channel: `book:${marketId}`,
+        event: 'book.updated',
+        data: { marketId, reason: 'EXCHANGE_EVENT' },
+      },
+      indexedEvent.ts,
+    );
+  }
+
   if (key === 'CTF.TransferSingle' || key === 'CTF.TransferBatch') {
     await publishTransferPositions(prisma, eventBus, indexedEvent);
     await publishSignedBookUpdatesForMakers(

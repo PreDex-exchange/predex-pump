@@ -971,6 +971,36 @@ async function handleGraduationSeeded(tx: Tx, event: DecodedEvent): Promise<void
   await markSeedOrders(tx, market.id, yesOrderId, noOrderId);
 }
 
+async function handleConditionCutover(tx: Tx, event: DecodedEvent): Promise<void> {
+  const market = await marketByCondition(
+    tx,
+    stringArg(event.args, 'conditionId').toLowerCase(),
+  );
+  const yesOrderId = bigintArg(event.args, 'yesSeedOrderId').toString();
+  const noOrderId = bigintArg(event.args, 'noSeedOrderId').toString();
+  if (
+    (market.yesSeedOrderId !== null && market.yesSeedOrderId !== yesOrderId) ||
+    (market.noSeedOrderId !== null && market.noSeedOrderId !== noOrderId)
+  ) {
+    throw new Error(`Cutover seed ids conflict with market ${market.id}`);
+  }
+  await markSeedOrders(tx, market.id, yesOrderId, noOrderId);
+  await tx.bookMigration.upsert({
+    where: { marketId: market.id },
+    create: {
+      marketId: market.id,
+      yesSeedOrderId: yesOrderId,
+      noSeedOrderId: noOrderId,
+      cutoverTxHash: event.txHash.toLowerCase(),
+      createdAt: event.ts,
+      updatedAt: event.ts,
+    },
+    // A cutover event proves only that MiniCLOB is stale. The operator must
+    // still snapshot, approve, register, and publish before Hybrid is live.
+    update: {},
+  });
+}
+
 async function handleOrderPlaced(tx: Tx, event: DecodedEvent): Promise<void> {
   const conditionId = stringArg(event.args, 'conditionId').toLowerCase();
   const market = await marketByCondition(tx, conditionId);
@@ -1753,6 +1783,9 @@ export async function handleDecodedEvent(tx: Tx, event: DecodedEvent): Promise<b
       break;
     case 'MINI_CLOB.GraduationSeeded':
       await handleGraduationSeeded(tx, event);
+      break;
+    case 'MINI_CLOB.ConditionCutover':
+      await handleConditionCutover(tx, event);
       break;
     case 'MINI_CLOB.OrderPlaced':
       await handleOrderPlaced(tx, event);

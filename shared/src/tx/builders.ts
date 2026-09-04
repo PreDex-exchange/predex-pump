@@ -18,6 +18,7 @@ import type {
   Erc20ApprovalTxInput,
   MarketIdTxInput,
   MiniClobCancelTxInput,
+  MiniClobCutoverTxInput,
   MiniClobFillTxInput,
   MiniClobPlaceTxInput,
   RedeemTxInput,
@@ -149,6 +150,13 @@ export function buildMiniClobFillTx({
 
 export function buildMiniClobCancelTx({ orderId }: MiniClobCancelTxInput) {
   return buildTx(ADDRESSES.miniClob, miniClobAbi, 'cancel', [orderId]);
+}
+
+/** Irreversibly retire one graduated condition from the on-chain book. */
+export function buildMiniClobCutoverTx({
+  conditionId,
+}: MiniClobCutoverTxInput) {
+  return buildTx(ADDRESSES.miniClob, miniClobAbi, 'cutover', [conditionId]);
 }
 
 export function buildCommitteeResolveTx({

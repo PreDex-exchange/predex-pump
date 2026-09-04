@@ -571,6 +571,10 @@ describe('REST shared contract', () => {
       if (expectedBookAvailable) {
         expect('venueTransition' in body).toBe(false);
       }
+      if (lifecycle === 'migrated book') {
+        expect(body.yes.orders).toEqual([]);
+        expect(body.no.orders).toEqual([]);
+      }
       if (!expectedBookAvailable) {
         expect(body.yes.orders).toEqual([]);
         expect(body.no.orders).toEqual([]);

@@ -67,6 +67,11 @@ export interface MiniClobSeedOrderState {
 export interface BookMigrationChainState {
   blockNumber: number;
   blockTimestamp: bigint;
+  conditionStale: boolean;
+  graduationSeedOrderIds: {
+    yesOrderId: bigint;
+    noOrderId: bigint;
+  };
   makerNonce: bigint;
   ctfApprovedForAll: boolean;
   registrationAuthorized: boolean;
@@ -99,8 +104,9 @@ export interface BookMigrationChainState {
     yesTokenId: bigint;
     noTokenId: bigint;
   };
-  yesOrder: MiniClobSeedOrderState;
-  noOrder: MiniClobSeedOrderState;
+  /** Null only for the Registry's explicit zero-handoff 0/0 graduation. */
+  yesOrder: MiniClobSeedOrderState | null;
+  noOrder: MiniClobSeedOrderState | null;
 }
 
 export interface BookMigrationChainReader {
@@ -265,6 +271,21 @@ function miniClobOrderTuple(
   };
 }
 
+function graduationSeedOrderIdsTuple(value: unknown): {
+  yesOrderId: bigint;
+  noOrderId: bigint;
+} {
+  const fields = outputFields(
+    value,
+    ['yesOrderId', 'noOrderId'],
+    'MiniCLOB graduationSeedOrderIds',
+  );
+  return {
+    yesOrderId: integerValue(fields[0], 'YES graduation seed order id'),
+    noOrderId: integerValue(fields[1], 'NO graduation seed order id'),
+  };
+}
+
 export class ViemOrderChainReader
   implements OrderChainReader, BookMigrationChainReader
 {
@@ -387,22 +408,35 @@ export class ViemOrderChainReader
     }
     const block = await this.client.getBlock({ blockTag: 'latest' });
     if (block.number === null) throw new Error('Latest Arc block omitted its number');
+    const zeroHandoff =
+      input.yesSeedOrderId === 0n && input.noSeedOrderId === 0n;
+    if (
+      !zeroHandoff &&
+      (input.yesSeedOrderId === 0n || input.noSeedOrderId === 0n)
+    ) {
+      throw new Error('MiniCLOB graduation seed ids must be both zero or both non-zero');
+    }
+    const seedContracts: ContractFunctionParameters[] = zeroHandoff
+      ? []
+      : [
+          {
+            address: ADDRESSES.miniClob,
+            abi: miniClobAbi as Abi,
+            functionName: 'getOrder',
+            args: [input.yesSeedOrderId],
+          },
+          {
+            address: ADDRESSES.miniClob,
+            abi: miniClobAbi as Abi,
+            functionName: 'getOrder',
+            args: [input.noSeedOrderId],
+          },
+        ];
     const results = await this.client.multicall({
       allowFailure: false,
       blockNumber: block.number,
       contracts: [
-        {
-          address: ADDRESSES.miniClob,
-          abi: miniClobAbi as Abi,
-          functionName: 'getOrder',
-          args: [input.yesSeedOrderId],
-        },
-        {
-          address: ADDRESSES.miniClob,
-          abi: miniClobAbi as Abi,
-          functionName: 'getOrder',
-          args: [input.noSeedOrderId],
-        },
+        ...seedContracts,
         {
           address: ADDRESSES.ctfExchange,
           abi: ctfExchangeAbi as Abi,
@@ -479,19 +513,36 @@ export class ViemOrderChainReader
           functionName: 'hasRole',
           args: [CTF_EXCHANGE_ADMIN_ROLE, input.maker],
         },
+        {
+          address: ADDRESSES.miniClob,
+          abi: miniClobAbi as Abi,
+          functionName: 'conditionStale',
+          args: [input.conditionId],
+        },
+        {
+          address: ADDRESSES.miniClob,
+          abi: miniClobAbi as Abi,
+          functionName: 'graduationSeedOrderIds',
+          args: [input.conditionId],
+        },
       ],
     });
-    const makerNonce = results[2];
-    const approved = results[3];
-    const yesBalanceRaw = results[4];
-    const noBalanceRaw = results[5];
-    const payoutDenominator = results[8];
-    const registryLifecycle = registryLifecycleTuple(results[9]);
-    const registryBinding = registryBindingTuple(results[10]);
-    const conditionPrepared = results[11];
-    const exchangeCtfAddress = results[12];
-    const exchangeCollateralAddress = results[13];
-    const registrationAuthorized = results[14];
+    const offset = zeroHandoff ? 0 : 2;
+    const makerNonce = results[offset];
+    const approved = results[offset + 1];
+    const yesBalanceRaw = results[offset + 2];
+    const noBalanceRaw = results[offset + 3];
+    const payoutDenominator = results[offset + 6];
+    const registryLifecycle = registryLifecycleTuple(results[offset + 7]);
+    const registryBinding = registryBindingTuple(results[offset + 8]);
+    const conditionPrepared = results[offset + 9];
+    const exchangeCtfAddress = results[offset + 10];
+    const exchangeCollateralAddress = results[offset + 11];
+    const registrationAuthorized = results[offset + 12];
+    const conditionStale = results[offset + 13];
+    const graduationSeedOrderIds = graduationSeedOrderIdsTuple(
+      results[offset + 14],
+    );
     if (
       typeof makerNonce !== 'bigint' ||
       typeof approved !== 'boolean' ||
@@ -501,15 +552,22 @@ export class ViemOrderChainReader
       typeof conditionPrepared !== 'boolean' ||
       typeof exchangeCtfAddress !== 'string' ||
       typeof exchangeCollateralAddress !== 'string' ||
-      typeof registrationAuthorized !== 'boolean'
+      typeof registrationAuthorized !== 'boolean' ||
+      typeof conditionStale !== 'boolean'
     ) {
       throw new Error('Arc returned unexpected migration validation state');
     }
-    const [yesComplementTokenId, yesConditionId] = registryTuple(results[6]);
-    const [noComplementTokenId, noConditionId] = registryTuple(results[7]);
+    const [yesComplementTokenId, yesConditionId] = registryTuple(
+      results[offset + 4],
+    );
+    const [noComplementTokenId, noConditionId] = registryTuple(
+      results[offset + 5],
+    );
     return {
       blockNumber: safeBlockNumber(block.number),
       blockTimestamp: block.timestamp,
+      conditionStale,
+      graduationSeedOrderIds,
       makerNonce,
       ctfApprovedForAll: approved,
       registrationAuthorized,
@@ -529,8 +587,12 @@ export class ViemOrderChainReader
       },
       registryLifecycle,
       registryBinding,
-      yesOrder: miniClobOrderTuple(input.yesSeedOrderId, results[0]),
-      noOrder: miniClobOrderTuple(input.noSeedOrderId, results[1]),
+      yesOrder: zeroHandoff
+        ? null
+        : miniClobOrderTuple(input.yesSeedOrderId, results[0]),
+      noOrder: zeroHandoff
+        ? null
+        : miniClobOrderTuple(input.noSeedOrderId, results[1]),
     };
   }
 }

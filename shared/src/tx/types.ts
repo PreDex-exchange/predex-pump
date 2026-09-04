@@ -66,6 +66,10 @@ export interface MiniClobCancelTxInput {
   orderId: bigint;
 }
 
+export interface MiniClobCutoverTxInput {
+  conditionId: Hex;
+}
+
 export interface CommitteeResolveTxInput {
   questionId: Hex;
   payouts: readonly [bigint, bigint];

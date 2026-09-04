@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { ADDRESSES } from '../src';
 import {
   addSlippage,
   buildBuyTx,
@@ -8,6 +9,7 @@ import {
   buildCircleGatewayDepositTx,
   CIRCLE_GATEWAY_WALLET_ADDRESS,
   buildMiniClobPlaceTx,
+  buildMiniClobCutoverTx,
   deadlineFromTimestamp,
   subtractSlippage,
 } from '../src/tx';
@@ -55,6 +57,19 @@ describe('transaction builder golden calldata', () => {
 
     expect(transaction.data).toBe(
       '0x71ff2a202222222222222222222222222222222222222222222222222222222222222222000000000000000000000000000000000000000000000000ab54a98ceb1f0ad200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000094ed00000000000000000000000000000000000000000000000000000000000401640',
+    );
+  });
+
+  it('builds the condition-scoped MiniCLOB cutover calldata', () => {
+    const transaction = buildMiniClobCutoverTx({
+      conditionId:
+        '0x2222222222222222222222222222222222222222222222222222222222222222',
+    });
+
+    expect(transaction.to).toBe(ADDRESSES.miniClob);
+    expect(transaction.data).toBe(
+      '0x1aa2bec4' +
+        '2222222222222222222222222222222222222222222222222222222222222222',
     );
   });
 

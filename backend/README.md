@@ -41,11 +41,17 @@ pnpm test
 Apply database migrations before starting the operator, then inject `OPERATOR_PRIVATE_KEY` from a
 runtime secret store. The key must belong to the configured CTFExchange operator address.
 
-`OPERATOR_REGISTER_TOKENS=false` is the safe default. On the current Arc Testnet deployment, set it
-to `true` only after confirming that address still has CTFExchange `ADMIN_ROLE`. The operator then
-registers the deterministic YES/NO pair before it cancels either MiniCLOB seed order. Partial or
-mismatched registrations fail closed. An unknown broadcast is quarantined and observed again; it
-is never automatically resubmitted.
+`OPERATOR_REGISTER_TOKENS=false` is the safe default. On Arc Testnet, set it to `true` only after
+confirming that address still has CTFExchange `ADMIN_ROLE`. Registration activates direct
+CTFExchange fills, so the operator first confirms the irreversible MiniCLOB cutover, snapshots and
+signs the recovered inventory, obtains any required CTF approval, and only then registers the exact
+YES/NO pair. Partial or mismatched registrations fail closed. Unknown cutover or registration
+broadcasts are quarantined and observed again; neither is blindly resubmitted.
+
+This state machine is not an in-place upgrade for existing `BookMigration` rows. Deploy it with
+the new immutable Registry/MiniCLOB/LMSR addresses, set the matching deploy block, and rebuild the
+disposable testnet projection from a clean database. Do not reuse rows from the earlier
+seed-by-seed cancellation flow.
 
 ```sh
 pnpm db:migrate

@@ -231,7 +231,8 @@ model SignedOrder {
   @@index([origin, marketId])
 }
 
-// Durable, one-way handoff of a graduated market's two MiniCLOB seed orders.
+// Durable, one-way handoff of a graduated market's MiniCLOB seed orders.
+// The Registry records 0/0 when graduation has no complete-set inventory.
 // A row is never deleted after MIGRATED, so marketId is the once-only guard.
 model BookMigration {
   marketId String @id
@@ -267,6 +268,7 @@ model BookMigration {
   registrationBlockNumber Int?
   yesCancelStatus         String  @default("UNCHECKED")
   noCancelStatus          String  @default("UNCHECKED")
+  cutoverTxHash           String?
   yesCancelTxHash         String?
   noCancelTxHash          String?
   activeCancelOutcome     String?

@@ -56,8 +56,8 @@ async function main(): Promise<void> {
     undefined,
     registrationEnabled,
   );
-  // P4 runs inside the existing P2 operator loop. Migration gets first chance
-  // so a post-cancel restart restores the book before new settlements proceed.
+  // Migration gets first chance so a post-cutover restart restores the Hybrid
+  // book before any newly activated settlement proceeds.
   const operator = {
     processOnce: async () => {
       const migration = await migrationOperator.processOnce();

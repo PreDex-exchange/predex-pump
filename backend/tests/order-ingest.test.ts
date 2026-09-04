@@ -233,6 +233,17 @@ describe('POST /orders validation', () => {
         updatedAt: BOOK_NOW,
       },
     });
+    await testPrisma.bookMigration.create({
+      data: {
+        marketId: '1',
+        status: 'MIGRATED',
+        yesSeedOrderId: '20',
+        noSeedOrderId: '21',
+        createdAt: BOOK_NOW,
+        updatedAt: BOOK_NOW,
+        migratedAt: BOOK_NOW,
+      },
+    });
     const token = 'throwaway-test-session';
     await testPrisma.userAccount.create({
       data: { address: account.address.toLowerCase() },

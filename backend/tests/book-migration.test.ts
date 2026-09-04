@@ -21,6 +21,7 @@ import type {
   BookMigrationChainReader,
   BookMigrationChainState,
   FreshOrderChainState,
+  MiniClobSeedOrderState,
   OrderChainReader,
 } from '../src/orderbook/chain-reader.js';
 import { BookMigrationOperator } from '../src/orderbook/migration.js';
@@ -55,7 +56,7 @@ function seedOrder(input: {
   tokenId: bigint;
   priceRaw: bigint;
   overrides?: SeedOverrides;
-}): BookMigrationChainState['yesOrder'] {
+}): MiniClobSeedOrderState {
   const sizeRaw = input.overrides?.sizeRaw ?? 5_000_000n;
   const filledRaw = input.overrides?.filledRaw ?? 0n;
   return {
@@ -119,24 +120,29 @@ type SubmittedAction =
       complement: bigint;
       conditionId: Hex;
     }
-  | { type: 'CANCEL'; orderId: bigint };
+  | { type: 'CUTOVER'; conditionId: Hex };
 
 class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
   approvalSubmissions = 0;
   registrationSubmissions = 0;
-  cancelSubmissions = 0;
+  cutoverSubmissions = 0;
   unknownRegistrationOnce = false;
   unknownRegistrationBroadcast = true;
   registrationConfirmationFailureOnce = false;
   registrationRevertOnce = false;
   resolveOnRegistration = false;
-  unknownCancelOnce = false;
-  unknownCancelBroadcast = true;
+  unknownCutoverOnce = false;
+  unknownCutoverBroadcast = true;
+  cutoverConfirmationFailureOnce = false;
   errorSecret = '';
   private nextHash = 1;
   private readonly actions = new Map<string, SubmittedAction>();
 
   constructor(private readonly state: BookMigrationChainState) {}
+
+  get cancelSubmissions(): number {
+    return this.cutoverSubmissions;
+  }
 
   async submit(transaction: TxRequest): Promise<Hex> {
     const action = this.action(transaction);
@@ -147,17 +153,18 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
       if (this.unknownRegistrationOnce) {
         this.unknownRegistrationOnce = false;
         if (this.unknownRegistrationBroadcast) this.apply(action);
-        throw Object.assign(new Error('socket hang up during registration'), {
-          code: 'ECONNRESET',
-        });
+        throw Object.assign(
+          new Error(`socket hang up during registration ${this.errorSecret}`),
+          { code: 'ECONNRESET' },
+        );
       }
     } else {
-      this.cancelSubmissions += 1;
-      if (this.unknownCancelOnce) {
-        this.unknownCancelOnce = false;
-        if (this.unknownCancelBroadcast) this.apply(action);
+      this.cutoverSubmissions += 1;
+      if (this.unknownCutoverOnce) {
+        this.unknownCutoverOnce = false;
+        if (this.unknownCutoverBroadcast) this.apply(action);
         throw Object.assign(
-          new Error(`socket hang up ${this.errorSecret}`),
+          new Error(`socket hang up during cutover ${this.errorSecret}`),
           { code: 'ECONNRESET' },
         );
       }
@@ -177,6 +184,12 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
     ) {
       this.registrationConfirmationFailureOnce = false;
       throw Object.assign(new Error('registration receipt unavailable'), {
+        code: 'ECONNRESET',
+      });
+    }
+    if (action.type === 'CUTOVER' && this.cutoverConfirmationFailureOnce) {
+      this.cutoverConfirmationFailureOnce = false;
+      throw Object.assign(new Error('cutover receipt unavailable'), {
         code: 'ECONNRESET',
       });
     }
@@ -219,11 +232,11 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
       abi: miniClobAbi,
       data: transaction.data,
     });
-    const orderId = decoded.args?.[0];
-    if (decoded.functionName !== 'cancel' || typeof orderId !== 'bigint') {
+    const conditionId = decoded.args?.[0];
+    if (decoded.functionName !== 'cutover' || typeof conditionId !== 'string') {
       throw new Error('unexpected migration transaction');
     }
-    return { type: 'CANCEL', orderId };
+    return { type: 'CUTOVER', conditionId: conditionId as Hex };
   }
 
   private apply(action: SubmittedAction): void {
@@ -245,18 +258,20 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
       if (this.resolveOnRegistration) this.state.payoutDenominator = 1n;
       return;
     }
-    const order =
-      action.orderId === this.state.yesOrder.orderId
-        ? this.state.yesOrder
-        : this.state.noOrder;
-    if (!order.open) return;
-    order.open = false;
-    const recovered = order.sizeRaw - order.filledRaw;
-    if (order.tokenId === YES_TOKEN_ID) {
-      this.state.yesBalanceRaw += recovered;
-    } else {
-      this.state.noBalanceRaw += recovered;
+    if (action.conditionId.toLowerCase() !== MARKET_ONE_CONDITION.toLowerCase()) {
+      throw new Error('unexpected cutover condition');
     }
+    for (const order of [this.state.yesOrder, this.state.noOrder]) {
+      if (order === null || !order.open) continue;
+      order.open = false;
+      const recovered = order.sizeRaw - order.filledRaw;
+      if (order.tokenId === YES_TOKEN_ID) {
+        this.state.yesBalanceRaw += recovered;
+      } else {
+        this.state.noBalanceRaw += recovered;
+      }
+    }
+    this.state.conditionStale = true;
   }
 }
 
@@ -280,28 +295,30 @@ async function createHarness(input: {
   registration?: 'registered' | 'absent' | 'half' | 'mismatched';
   registrationAuthorized?: boolean;
   registrationEnabled?: boolean;
+  zeroHandoff?: boolean;
+  stale?: boolean;
 } = {}): Promise<Harness> {
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
   const frozenYesPriceRaw = input.frozenYesPriceRaw ?? 600_000n;
-  const yesOrder = seedOrder({
+  const yesOrder = input.zeroHandoff ? null : seedOrder({
     orderId: YES_SEED_ID,
     maker: account.address,
     tokenId: YES_TOKEN_ID,
     priceRaw: frozenYesPriceRaw,
     ...(input.yes === undefined ? {} : { overrides: input.yes }),
   });
-  const noOrder = seedOrder({
+  const noOrder = input.zeroHandoff ? null : seedOrder({
     orderId: NO_SEED_ID,
     maker: account.address,
     tokenId: NO_TOKEN_ID,
     priceRaw: 1_000_000n - frozenYesPriceRaw,
     ...(input.no === undefined ? {} : { overrides: input.no }),
   });
-  const yesInitiallyRecovered = yesOrder.open
+  const yesInitiallyRecovered = yesOrder === null || yesOrder.open
     ? 0n
     : yesOrder.sizeRaw - yesOrder.filledRaw;
-  const noInitiallyRecovered = noOrder.open
+  const noInitiallyRecovered = noOrder === null || noOrder.open
     ? 0n
     : noOrder.sizeRaw - noOrder.filledRaw;
   const absentRegistration = {
@@ -316,10 +333,15 @@ async function createHarness(input: {
     complementTokenId: YES_TOKEN_ID,
     conditionId: MARKET_ONE_CONDITION as Hex,
   } as const;
-  const registration = input.registration ?? 'registered';
+  const registration = input.registration ?? 'absent';
   const state: BookMigrationChainState = {
     blockNumber: 500,
     blockTimestamp: BigInt(BOOK_NOW),
+    conditionStale: input.zeroHandoff ? true : (input.stale ?? false),
+    graduationSeedOrderIds: {
+      yesOrderId: input.zeroHandoff ? 0n : YES_SEED_ID,
+      noOrderId: input.zeroHandoff ? 0n : NO_SEED_ID,
+    },
     makerNonce: 7n,
     ctfApprovedForAll: input.approved ?? true,
     registrationAuthorized: input.registrationAuthorized ?? true,
@@ -361,16 +383,17 @@ async function createHarness(input: {
   await testPrisma.market.update({
     where: { id: '1' },
     data: {
-      yesSeedOrderId: YES_SEED_ID.toString(),
-      noSeedOrderId: NO_SEED_ID.toString(),
+      yesSeedOrderId: (input.zeroHandoff ? 0n : YES_SEED_ID).toString(),
+      noSeedOrderId: (input.zeroHandoff ? 0n : NO_SEED_ID).toString(),
       frozenYesPriceRaw: frozenYesPriceRaw.toString(),
       yesPriceRaw: frozenYesPriceRaw.toString(),
       noPriceRaw: (1_000_000n - frozenYesPriceRaw).toString(),
       minimumTickSizeRaw: (input.minimumTickSizeRaw ?? 1_000n).toString(),
     },
   });
-  await testPrisma.order.createMany({
-    data: [yesOrder, noOrder].map((order, index) => ({
+  if (yesOrder !== null && noOrder !== null) {
+    await testPrisma.order.createMany({
+      data: [yesOrder, noOrder].map((order, index) => ({
       orderId: order.orderId.toString(),
       marketId: '1',
       conditionId: MARKET_ONE_CONDITION,
@@ -390,8 +413,9 @@ async function createHarness(input: {
       blockNumber: 490,
       createdAt: BOOK_NOW - 100,
       updatedAt: BOOK_NOW - 100,
-    })),
-  });
+      })),
+    });
+  }
   const reader = new FakeMigrationReader(state);
   const submitter = new FakeMigrationSubmitter(state);
   const messages: string[] = [];
@@ -451,7 +475,7 @@ describe('graduated book migration', () => {
     await seedContractData();
   });
 
-  it('pins every registration prerequisite to one fresh block', async () => {
+  it('pins every cutover and registration prerequisite to one fresh block', async () => {
     const getChainId = vi.fn(async () => 5_042_002);
     const getBlock = vi.fn(async () => ({
       number: 500n,
@@ -499,6 +523,8 @@ describe('graduated book migration', () => {
       ADDRESSES.ctf,
       ADDRESSES.usdc,
       true,
+      false,
+      [YES_SEED_ID, NO_SEED_ID],
     ]);
     const reader = new ViemOrderChainReader({
       getChainId,
@@ -519,6 +545,11 @@ describe('graduated book migration', () => {
     ).resolves.toMatchObject({
       blockNumber: 500,
       conditionPrepared: true,
+      conditionStale: false,
+      graduationSeedOrderIds: {
+        yesOrderId: YES_SEED_ID,
+        noOrderId: NO_SEED_ID,
+      },
       registrationAuthorized: true,
       exchangeCtfAddress: ADDRESSES.ctf,
       exchangeCollateralAddress: ADDRESSES.usdc,
@@ -557,10 +588,71 @@ describe('graduated book migration', () => {
       'ctf',
       'collateral',
       'hasRole',
+      'conditionStale',
+      'graduationSeedOrderIds',
     ]);
   });
 
-  it('stages first, migrates both unfilled seeds at complementary prices, and flips venue', async () => {
+  it('pins zero-handoff cutover state without calling getOrder(0)', async () => {
+    const multicall = vi.fn(async (_parameters: unknown) => [
+      7n,
+      false,
+      0n,
+      0n,
+      [0n, zeroHash],
+      [0n, zeroHash],
+      0n,
+      [DEPLOYER, 2n, 3n, false],
+      [
+        ADDRESSES.usdc,
+        ADDRESSES.ctf,
+        ADDRESSES.oracle,
+        MARKET_ONE_QUESTION,
+        MARKET_ONE_CONDITION,
+        YES_TOKEN_ID,
+        NO_TOKEN_ID,
+      ],
+      true,
+      ADDRESSES.ctf,
+      ADDRESSES.usdc,
+      true,
+      true,
+      [0n, 0n],
+    ]);
+    const reader = new ViemOrderChainReader({
+      getChainId: vi.fn(async () => 5_042_002),
+      getBlock: vi.fn(async () => ({
+        number: 500n,
+        timestamp: BigInt(BOOK_NOW),
+      })),
+      multicall,
+    } as unknown as PublicClient);
+
+    await expect(
+      reader.readBookMigrationState({
+        marketId: 1n,
+        maker: DEPLOYER,
+        conditionId: MARKET_ONE_CONDITION as Hex,
+        yesTokenId: YES_TOKEN_ID,
+        noTokenId: NO_TOKEN_ID,
+        yesSeedOrderId: 0n,
+        noSeedOrderId: 0n,
+      }),
+    ).resolves.toMatchObject({
+      conditionStale: true,
+      yesOrder: null,
+      noOrder: null,
+      graduationSeedOrderIds: { yesOrderId: 0n, noOrderId: 0n },
+    });
+    const request = multicall.mock.calls[0]?.[0] as {
+      contracts: Array<{ functionName: string }>;
+    };
+    expect(
+      request.contracts.some(({ functionName }) => functionName === 'getOrder'),
+    ).toBe(false);
+  });
+
+  it('cuts over first, then stages and activates both complementary replacements', async () => {
     const harness = await createHarness();
     const before = await getMarketBook(testPrisma, '1');
     expect(before?.liveVenue).toBe('MINICLOB');
@@ -570,11 +662,16 @@ describe('graduated book migration', () => {
 
     await step(harness);
     expect(await testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }))
+      .toMatchObject({ status: 'CANCELLED' });
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+
+    await step(harness);
+    expect(await testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }))
       .toMatchObject({ status: 'STAGED' });
     expect(
       await testPrisma.signedOrder.findMany({ select: { status: true } }),
     ).toEqual([{ status: 'STAGED' }, { status: 'STAGED' }]);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
     expect(harness.submitter.registrationSubmissions).toBe(0);
 
     await runToStatus(harness, 'MIGRATED');
@@ -596,6 +693,8 @@ describe('graduated book migration', () => {
     expect(after?.yes.orders).toEqual([]);
     expect(after?.yes.offchainOrders).toHaveLength(1);
     expect(after?.no.offchainOrders).toHaveLength(1);
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    expect(harness.submitter.registrationSubmissions).toBe(1);
   });
 
   it('floors awkward partial-fill remainders to the representable size quantum', async () => {
@@ -680,6 +779,40 @@ describe('graduated book migration', () => {
     expect(harness.submitter.cancelSubmissions).toBe(1);
   });
 
+  it('requires the authorized cutover even when both seed asks were fully filled', async () => {
+    const harness = await createHarness({
+      yes: { sizeRaw: 5_000_000n, filledRaw: 5_000_000n, open: false },
+      no: { sizeRaw: 5_000_000n, filledRaw: 5_000_000n, open: false },
+    });
+
+    await runToStatus(harness, 'MIGRATED');
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(
+      await testPrisma.signedOrder.count({
+        where: { origin: 'BOOK_MIGRATION', status: 'OPEN' },
+      }),
+    ).toBe(0);
+  });
+
+  it('handles a zero-handoff condition without reading or approving seed orders', async () => {
+    const harness = await createHarness({ zeroHandoff: true, approved: false });
+
+    await runToStatus(harness, 'MIGRATED');
+    expect(harness.submitter.cutoverSubmissions).toBe(0);
+    expect(harness.submitter.approvalSubmissions).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'MIGRATED',
+      yesSeedOrderId: '0',
+      noSeedOrderId: '0',
+      yesReplacementSizeRaw: '0',
+      noReplacementSizeRaw: '0',
+    });
+  });
+
   it('never detects a resolved graduated market with an open seed', async () => {
     const harness = await createHarness();
     await testPrisma.resolution.create({
@@ -715,40 +848,54 @@ describe('graduated book migration', () => {
     });
     await expect(
       testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }),
-    ).resolves.toMatchObject({ status: 'STAGED' });
-    expect(harness.reader.migrationReads).toBe(1);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
+    ).resolves.toMatchObject({ status: 'CANCELLED' });
+    expect(harness.reader.migrationReads).toBe(2);
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
   });
 
-  it('treats an exact existing token registration as the idempotent success case', async () => {
-    const harness = await createHarness();
-
-    await expect(harness.operator.processOnce()).resolves.toEqual({
-      outcome: 'PROGRESSED',
-      marketId: '1',
+  it('self-heals an exact pre-registration by cutting over without registering again', async () => {
+    const harness = await createHarness({
+      registration: 'registered',
+      registrationAuthorized: false,
+      registrationEnabled: false,
     });
+
+    await runToStatus(harness, 'MIGRATED');
     expect(harness.submitter.registrationSubmissions).toBe(0);
-    await expect(
-      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
-    ).resolves.toMatchObject({ status: 'STAGED' });
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
   });
 
-  it('registers an absent token pair exactly once before staging or cancellation', async () => {
+  it('accepts an exact existing registration only after authoritative cutover', async () => {
+    const harness = await createHarness({
+      registration: 'registered',
+      stale: true,
+      yes: { open: false },
+      no: { open: false },
+    });
+
+    await runToStatus(harness, 'MIGRATED');
+    expect(harness.submitter.cutoverSubmissions).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+  });
+
+  it('registers an absent token pair exactly once after cutover and staging', async () => {
     const harness = await createHarness({ registration: 'absent' });
 
     await expect(harness.operator.processOnce()).resolves.toEqual({
       outcome: 'PROGRESSED',
       marketId: '1',
     });
-    expect(harness.submitter.registrationSubmissions).toBe(1);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
     await expect(
       testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
     ).resolves.toMatchObject({
-      status: 'DISCOVERED',
-      registrationStatus: 'CONFIRMED',
-      registrationBlockNumber: 501,
+      status: 'CANCELLED',
     });
+
+    await runToStatus(harness, 'PUBLISHING');
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
     expect(harness.state.yesRegistration).toEqual({
       complementTokenId: NO_TOKEN_ID,
       conditionId: MARKET_ONE_CONDITION,
@@ -762,9 +909,9 @@ describe('graduated book migration', () => {
     expect(harness.submitter.registrationSubmissions).toBe(1);
   });
 
-  it('recovers only the legacy unregistered publish failure without cancelling seeds again', async () => {
+  it('recovers only the legacy unregistered publish failure without another cutover', async () => {
     const harness = await createHarness();
-    await runToStatus(harness, 'CANCELLED');
+    await runToStatus(harness, 'STAGED');
     const cancellationsBeforeRecovery = harness.submitter.cancelSubmissions;
     harness.state.yesRegistration = {
       complementTokenId: 0n,
@@ -841,7 +988,7 @@ describe('graduated book migration', () => {
   });
 
   it.each(['half', 'mismatched'] as const)(
-    'fails closed for a %s token registration without submitting or cancelling',
+    'fails closed for a %s token registration without submitting or cutting over',
     async (registration) => {
       const harness = await createHarness({ registration });
 
@@ -875,7 +1022,7 @@ describe('graduated book migration', () => {
       failureCode: 'REGISTRATION_UNAUTHORIZED',
     });
     expect(harness.submitter.registrationSubmissions).toBe(0);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
+    expect(harness.submitter.cutoverSubmissions).toBe(0);
   });
 
   it('defers an absent registration while testnet auto-registration is disabled', async () => {
@@ -889,7 +1036,7 @@ describe('graduated book migration', () => {
       failureCode: 'REGISTRATION_DISABLED',
     });
     expect(harness.submitter.registrationSubmissions).toBe(0);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
+    expect(harness.submitter.cutoverSubmissions).toBe(0);
     await expect(
       testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
     ).resolves.toMatchObject({
@@ -934,8 +1081,21 @@ describe('graduated book migration', () => {
     expect(harness.submitter.cancelSubmissions).toBe(0);
   });
 
+  it('fails closed when indexed seed ids differ from MiniCLOB graduation state', async () => {
+    const harness = await createHarness();
+    harness.state.graduationSeedOrderIds.noOrderId += 1n;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'INVALID_SEED',
+    });
+    expect(harness.submitter.cutoverSubmissions).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+  });
+
   it('stops safely when resolution races a successful registration', async () => {
     const harness = await createHarness({ registration: 'absent' });
+    await runToStatus(harness, 'STAGED');
     harness.submitter.resolveOnRegistration = true;
 
     await expect(harness.operator.processOnce()).resolves.toMatchObject({
@@ -943,7 +1103,7 @@ describe('graduated book migration', () => {
       failureCode: 'MARKET_RESOLVED',
     });
     expect(harness.submitter.registrationSubmissions).toBe(1);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
     await expect(
       testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
     ).resolves.toMatchObject({ status: 'FAILED' });
@@ -951,6 +1111,7 @@ describe('graduated book migration', () => {
 
   it('immediately reconciles a landed registration after its submit transport fails', async () => {
     const harness = await createHarness({ registration: 'absent' });
+    await runToStatus(harness, 'STAGED');
     harness.submitter.unknownRegistrationOnce = true;
 
     await expect(harness.operator.processOnce()).resolves.toEqual({
@@ -961,24 +1122,24 @@ describe('graduated book migration', () => {
     await expect(
       testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
     ).resolves.toMatchObject({
-      status: 'DISCOVERED',
+      status: 'PUBLISHING',
       registrationStatus: 'CONFIRMED',
       registrationTxHash: null,
-      registrationBlockNumber: 501,
+      registrationBlockNumber: 502,
     });
   });
 
   it('reconciles a persisted ambiguous registration from chain state after restart', async () => {
     const harness = await createHarness({ registration: 'absent' });
-    await testPrisma.bookMigration.create({
+    await runToStatus(harness, 'STAGED');
+    await testPrisma.bookMigration.update({
+      where: { marketId: '1' },
       data: {
-        marketId: '1',
         status: 'REGISTRATION_SUBMISSION_UNKNOWN',
         registrationStatus: 'SUBMISSION_UNKNOWN',
-        yesSeedOrderId: YES_SEED_ID.toString(),
-        noSeedOrderId: NO_SEED_ID.toString(),
-        createdAt: BOOK_NOW - 10,
-        updatedAt: BOOK_NOW - 1,
+        claimToken: null,
+        claimExpiresAt: null,
+        nextAttemptAt: 0,
       },
     });
     harness.state.yesRegistration = {
@@ -1009,13 +1170,14 @@ describe('graduated book migration', () => {
     await expect(
       testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
     ).resolves.toMatchObject({
-      status: 'DISCOVERED',
+      status: 'PUBLISHING',
       registrationStatus: 'CONFIRMED',
     });
   });
 
   it('quarantines an unlanded ambiguous submission until the exact pair appears', async () => {
     const harness = await createHarness({ registration: 'absent' });
+    await runToStatus(harness, 'STAGED');
     harness.submitter.unknownRegistrationOnce = true;
     harness.submitter.unknownRegistrationBroadcast = false;
 
@@ -1070,13 +1232,14 @@ describe('graduated book migration', () => {
     await expect(
       testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
     ).resolves.toMatchObject({
-      status: 'DISCOVERED',
+      status: 'PUBLISHING',
       registrationStatus: 'CONFIRMED',
     });
   });
 
   it('retains a submitted registration hash across receipt failure and restart', async () => {
     const harness = await createHarness({ registration: 'absent' });
+    await runToStatus(harness, 'STAGED');
     harness.submitter.registrationConfirmationFailureOnce = true;
 
     await expect(harness.operator.processOnce()).resolves.toMatchObject({
@@ -1112,14 +1275,15 @@ describe('graduated book migration', () => {
     await expect(
       testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
     ).resolves.toMatchObject({
-      status: 'DISCOVERED',
+      status: 'PUBLISHING',
       registrationStatus: 'CONFIRMED',
-      registrationBlockNumber: 501,
+      registrationBlockNumber: 502,
     });
   });
 
   it('fails terminally when a confirmed registration transaction reverted', async () => {
     const harness = await createHarness({ registration: 'absent' });
+    await runToStatus(harness, 'STAGED');
     harness.submitter.registrationRevertOnce = true;
 
     await expect(harness.operator.processOnce()).resolves.toEqual({
@@ -1129,7 +1293,7 @@ describe('graduated book migration', () => {
       failureCode: 'REGISTRATION_REVERTED',
     });
     expect(harness.submitter.registrationSubmissions).toBe(1);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
   });
 
   it('never attempts registration when the condition is already resolved', async () => {
@@ -1176,6 +1340,8 @@ describe('graduated book migration', () => {
         warn: (message) => harness.messages.push(message),
       },
       () => harness.clock.value,
+      undefined,
+      true,
     );
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await Promise.all([
@@ -1190,7 +1356,7 @@ describe('graduated book migration', () => {
     }
     expect(await testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }))
       .toMatchObject({ status: 'MIGRATED' });
-    expect(harness.submitter.cancelSubmissions).toBe(2);
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
     expect(
       await testPrisma.signedOrder.count({
         where: { origin: 'BOOK_MIGRATION', status: 'OPEN' },
@@ -1212,11 +1378,8 @@ describe('graduated book migration', () => {
     await runToStatus(harness, 'MIGRATED');
   });
 
-  it('fails terminally without cancelling when the market resolves before cancellation', async () => {
+  it('fails terminally without cutover when the market resolves first', async () => {
     const harness = await createHarness();
-    await runToStatus(harness, 'CANCELLING');
-    expect(harness.submitter.cancelSubmissions).toBe(0);
-
     harness.state.payoutDenominator = 1n;
     await expect(harness.operator.processOnce()).resolves.toEqual({
       outcome: 'FAILED',
@@ -1242,7 +1405,7 @@ describe('graduated book migration', () => {
     expect(harness.submitter.cancelSubmissions).toBe(0);
   });
 
-  it('resumes from the confirmed-cancel checkpoint and publishes after restart', async () => {
+  it('resumes from the confirmed-cutover checkpoint and publishes after restart', async () => {
     const harness = await createHarness();
     await runToStatus(harness, 'CANCELLED');
     const gapBook = await getMarketBook(testPrisma, '1');
@@ -1264,37 +1427,106 @@ describe('graduated book migration', () => {
         warn: (message) => harness.messages.push(message),
       },
       () => harness.clock.value,
+      undefined,
+      true,
     );
-    await expect(restarted.processOnce()).resolves.toMatchObject({
-      outcome: 'PROGRESSED',
-    });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await restarted.processOnce();
+      harness.clock.value += 2;
+      const current = await testPrisma.bookMigration.findUnique({
+        where: { marketId: '1' },
+      });
+      if (current?.status === 'MIGRATED') break;
+    }
     expect(await testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }))
       .toMatchObject({ status: 'MIGRATED' });
     expect((await getMarketBook(testPrisma, '1'))?.liveVenue).toBe('HYBRID');
   });
 
-  it('re-reads chain state after an ambiguous cancel and never blindly retries it', async () => {
+  it('re-reads chain state after an ambiguous cutover and never blindly retries it', async () => {
     const harness = await createHarness();
-    harness.submitter.unknownCancelOnce = true;
+    harness.submitter.unknownCutoverOnce = true;
     await runToStatus(harness, 'CANCEL_SUBMISSION_UNKNOWN');
     expect(harness.submitter.cancelSubmissions).toBe(1);
 
+    harness.clock.value += 61;
     await step(harness);
     expect(harness.submitter.cancelSubmissions).toBe(1);
     expect(await testPrisma.bookMigration.findUnique({ where: { marketId: '1' } }))
-      .toMatchObject({ status: 'CANCELLING', yesCancelStatus: 'CONFIRMED' });
+      .toMatchObject({ status: 'CANCELLED', yesCancelStatus: 'CONFIRMED' });
     await runToStatus(harness, 'MIGRATED');
   });
 
-  it('detects missing CTF approval and confirms it before cancelling or publishing', async () => {
+  it('retains a submitted cutover hash across receipt failure and restart', async () => {
+    const harness = await createHarness();
+    harness.submitter.cutoverConfirmationFailureOnce = true;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'CUTOVER_CONFIRMATION_PENDING',
+    });
+    const submitted = await testPrisma.bookMigration.findUniqueOrThrow({
+      where: { marketId: '1' },
+    });
+    expect(submitted.status).toBe('CANCEL_SUBMITTED');
+    expect(submitted.cutoverTxHash).not.toBeNull();
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+
+    harness.clock.value += 5;
+    const restarted = new BookMigrationOperator(
+      testPrisma,
+      harness.reader,
+      harness.submitter,
+      harness.account,
+      {
+        info: (message) => harness.messages.push(message),
+        warn: (message) => harness.messages.push(message),
+      },
+      () => harness.clock.value,
+    );
+    await expect(restarted.processOnce()).resolves.toMatchObject({
+      outcome: 'PROGRESSED',
+    });
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({ status: 'CANCELLED' });
+  });
+
+  it('quarantines an unknown unlanded cutover without resubmitting', async () => {
+    const harness = await createHarness();
+    harness.submitter.unknownCutoverOnce = true;
+    harness.submitter.unknownCutoverBroadcast = false;
+
+    await runToStatus(harness, 'CANCEL_SUBMISSION_UNKNOWN');
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    harness.clock.value += 61;
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'CUTOVER_OUTCOME_UNKNOWN',
+    });
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'CANCEL_SUBMISSION_UNKNOWN',
+      cutoverTxHash: null,
+    });
+  });
+
+  it('confirms cutover before approval, then approves before registration', async () => {
     const harness = await createHarness({ approved: false });
     await step(harness);
     expect(harness.submitter.approvalSubmissions).toBe(0);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+
+    await step(harness);
+    expect(harness.submitter.approvalSubmissions).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
 
     await step(harness);
     expect(harness.submitter.approvalSubmissions).toBe(1);
-    expect(harness.submitter.cancelSubmissions).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
     expect(harness.state.ctfApprovedForAll).toBe(true);
     await runToStatus(harness, 'MIGRATED');
   });
@@ -1306,18 +1538,36 @@ describe('graduated book migration', () => {
     expect((await getMarketBook(testPrisma, '1'))?.liveVenue).toBe('HYBRID');
   });
 
+  it('never publishes staged Hybrid orders without a fresh stale read', async () => {
+    const harness = await createHarness();
+    await runToStatus(harness, 'PUBLISHING');
+    harness.state.conditionStale = false;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'MINICLOB_NOT_STALE',
+    });
+    expect(
+      await testPrisma.signedOrder.count({
+        where: { origin: 'BOOK_MIGRATION', status: 'OPEN' },
+      }),
+    ).toBe(0);
+    expect((await getMarketBook(testPrisma, '1'))?.liveVenue).toBe('NONE');
+  });
+
   it('never writes key material, signatures, or full signed orders to logs', async () => {
     const harness = await createHarness();
-    await step(harness);
+    await runToStatus(harness, 'STAGED');
     const signature = (
       await testPrisma.signedOrder.findFirstOrThrow({
         where: { origin: 'BOOK_MIGRATION' },
         select: { signature: true },
       })
     ).signature;
-    harness.submitter.unknownCancelOnce = true;
+    harness.submitter.unknownRegistrationOnce = true;
+    harness.submitter.unknownRegistrationBroadcast = false;
     harness.submitter.errorSecret = `${harness.privateKey} ${signature}`;
-    await runToStatus(harness, 'CANCEL_SUBMISSION_UNKNOWN');
+    await runToStatus(harness, 'REGISTRATION_SUBMISSION_UNKNOWN');
     const output = harness.messages.join('\n');
     expect(output).not.toContain(harness.privateKey);
     expect(output).not.toContain(signature);

@@ -134,7 +134,7 @@ export async function fillabilityForOrders(
           order.origin === 'BOOK_MIGRATION'
             ? migrationByMarket.get(order.marketId)
             : undefined;
-        // The cancel receipt proves these tokens are already back at the maker.
+        // The cutover receipt proves these tokens are already back at the maker.
         // Until the indexer reaches that block, use the pinned migration snapshot
         // so publishing does not create an artificial extra no-book interval.
         const recoverySnapshot =

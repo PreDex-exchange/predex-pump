@@ -881,6 +881,20 @@ async function readConditionState(conditionId: Hex) {
   }
 }
 
+async function requireActiveMiniClobCondition(conditionId: Hex) {
+  const stale = (await arcPublicClient.readContract({
+    address: ADDRESSES.miniClob,
+    abi: miniClobAbi,
+    functionName: 'conditionStale',
+    args: [conditionId],
+  })) as boolean;
+  if (stale) {
+    throw new Error(
+      'This on-chain book has closed. Use the Hybrid book; MiniCLOB cancellation remains available.',
+    );
+  }
+}
+
 function validateMiniClobOrderInput(
   priceRaw: bigint,
   sizeRaw: bigint,
@@ -943,6 +957,7 @@ async function readGraduatedMarketBinding(marketId: bigint) {
       'MiniCLOB orders can be placed only while the market is in the Graduated phase.',
     );
   }
+  await requireActiveMiniClobCondition(binding[4]);
   await readConditionState(binding[4]);
   return binding;
 }
@@ -1083,6 +1098,7 @@ async function readFreshFillState(orderId: bigint, fillSizeRaw: bigint) {
       `Fill is below the live MiniCLOB minimum (${minimumFillRaw} raw).`,
     );
   }
+  await requireActiveMiniClobCondition(order.conditionId);
   await readConditionState(order.conditionId);
   return {
     order,

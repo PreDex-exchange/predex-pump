@@ -21,7 +21,7 @@ import {
   buildCtfExchangeApprovalForAllTx,
   buildCtfExchangeOrder,
   buildCtfExchangeRegisterTokenTx,
-  buildMiniClobCancelTx,
+  buildMiniClobCutoverTx,
   ctfExchangeOrderTerms,
   generateOrderSalt,
   hashCtfExchangeOrder,
@@ -38,6 +38,7 @@ import type {
   BookMigrationChainReader,
   BookMigrationChainState,
   FreshOrderChainState,
+  MiniClobSeedOrderState,
   OrderChainReader,
 } from './chain-reader.js';
 import {
@@ -51,6 +52,7 @@ import { persistOrderValidationSnapshot } from './service.js';
 
 const CLAIM_LEASE_SECONDS = 120;
 const REGISTRATION_UNKNOWN_RECHECK_MS = 60_000;
+const CUTOVER_UNKNOWN_RECHECK_MS = 60_000;
 const MAX_MIGRATION_PRICE_DEVIATION_RAW =
   ALLOWED_MINIMUM_TICK_SIZES_RAW.at(-1)! - 1n;
 
@@ -58,41 +60,24 @@ const MAX_MIGRATION_PRICE_DEVIATION_RAW =
  * Durable state machine (all replacement rows remain status=STAGED until the
  * final database transaction):
  *
- *   DISCOVERED ──registration missing──> REGISTRATION_SUBMITTING
- *       │                                      │ send returned hash
- *       │                                      v
- *       │                               REGISTRATION_SUBMITTED
- *       │                                      │ confirmed + re-read
- *       └─registration exact───────────────────┴──> snapshot/sign ──> STAGED
+ *   DISCOVERED ──> CANCEL_SUBMITTING ──> CANCEL_SUBMITTED
+ *                         │                    │ confirmed stale
+ *                         │ unknown            v
+ *                         └──> quarantine   CANCELLED
+ *                                      │ stable post-cutover snapshot/sign
+ *                                      v
+ *                                   STAGED
  *       STAGED ──approval needed──> APPROVAL_SUBMITTING
  *          │                            │ send returned hash
  *          │                            v
  *          │                     APPROVAL_SUBMITTED
  *          │                            │ confirmed
- *          └─approval present───────────┴──> CANCELLING
- *                                                │ one seed at a time
- *                                                v
- *                                     CANCEL_SUBMITTING
- *                                          │       │
- *                         transport error  │       │ hash returned
- *                                          v       v
- *                              CANCEL_SUBMISSION_UNKNOWN
- *                                                  CANCEL_SUBMITTED
- *                                          │       │ chain reconciliation
- *                                          └───────┴──> CANCELLING
- *                                                            │ both closed
- *                                                            v
- *                                                       CANCELLED
- *                                                            │ fresh P2 preflight
- *                                                            v
- *                                                       PUBLISHING
- *                                                            │ atomic OPEN + flip
- *                                                            v
- *                                                        MIGRATED
+ *          └─approval present───────────┴──> registration
+ *       registration confirmed ──> PUBLISHING ──> MIGRATED
  *
- * REGISTRATION_SUBMISSION_UNKNOWN and APPROVAL_SUBMISSION_UNKNOWN follow the
- * same re-read-before-retry rule. Registration status, hash, and confirmation
- * block stay on this same per-market migration row.
+ * A no-hash cutover outcome is quarantined until conditionStale is observable;
+ * it is never blindly resubmitted. Registration is the Hybrid activation gate,
+ * so it is never submitted before the old venue is confirmed stale.
  * Any in-flight state is restartable; MIGRATED and FAILED are terminal.
  */
 
@@ -122,11 +107,19 @@ class RegistrationCheckpointError extends Error {
   }
 }
 
+class CutoverCheckpointError extends Error {
+  constructor(cause: unknown) {
+    super('Cutover was submitted but its transaction hash was not checkpointed', {
+      cause,
+    });
+  }
+}
+
 function unixNow(): number {
   return Math.floor(Date.now() / 1_000);
 }
 
-function remaining(order: BookMigrationChainState['yesOrder']): bigint {
+function remaining(order: MiniClobSeedOrderState): bigint {
   const value = order.sizeRaw - order.filledRaw;
   if (value < 0n) {
     throw new MigrationInvariantError(
@@ -137,7 +130,7 @@ function remaining(order: BookMigrationChainState['yesOrder']): bigint {
   return value;
 }
 
-function cancelStatus(order: BookMigrationChainState['yesOrder']): string {
+function cancelStatus(order: MiniClobSeedOrderState): string {
   if (remaining(order) === 0n) return 'FILLED';
   return order.open ? 'PENDING' : 'CONFIRMED';
 }
@@ -145,8 +138,19 @@ function cancelStatus(order: BookMigrationChainState['yesOrder']): string {
 function stateOrder(
   state: BookMigrationChainState,
   outcome: Outcome,
-): BookMigrationChainState['yesOrder'] {
-  return outcome === 'YES' ? state.yesOrder : state.noOrder;
+): MiniClobSeedOrderState {
+  const order = outcome === 'YES' ? state.yesOrder : state.noOrder;
+  if (order === null) {
+    throw new MigrationInvariantError(
+      'INVALID_SEED',
+      'Zero-handoff migration has no seed order',
+    );
+  }
+  return order;
+}
+
+function zeroHandoff(state: BookMigrationChainState): boolean {
+  return state.yesOrder === null && state.noOrder === null;
 }
 
 function hasReplacements(migration: BookMigration): boolean {
@@ -160,6 +164,7 @@ type RegistrationDisposition = 'REGISTERED' | 'ABSENT' | 'MISMATCHED';
 
 function isRegistrationFailure(code: string): boolean {
   return (
+    code === 'TOKEN_NOT_REGISTERED' ||
     code === 'TOKEN_REGISTRATION_MISMATCH' ||
     code === 'REGISTRATION_UNAUTHORIZED' ||
     code === 'REGISTRATION_REVERTED' ||
@@ -171,8 +176,8 @@ function isRegistrationFailure(code: string): boolean {
 function safeMessage(code: string): string {
   const messages: Record<string, string> = {
     APPROVAL_REVERTED: 'CTFExchange token approval transaction reverted',
-    CANCEL_REVERTED: 'MiniCLOB seed cancellation transaction reverted',
-    CANCEL_NOT_APPLIED: 'Confirmed MiniCLOB cancellation left the seed order open',
+    CUTOVER_REVERTED: 'MiniCLOB cutover transaction reverted',
+    CUTOVER_NOT_APPLIED: 'Confirmed MiniCLOB cutover left the condition active',
     INVALID_SEED: 'MiniCLOB seed state does not match the graduated market',
     CONDITION_NOT_PREPARED: 'Conditional Tokens condition is not prepared',
     EXCHANGE_IMMUTABLE_MISMATCH: 'CTFExchange immutable bindings do not match the configured deployment',
@@ -188,6 +193,8 @@ function safeMessage(code: string): string {
     REGISTRY_BINDING_MISMATCH: 'Fresh registry token binding conflicts with the indexed market',
     REGISTRY_LIFECYCLE_MISMATCH: 'Fresh registry lifecycle is not the expected graduated market',
     TOKEN_REGISTRATION_MISMATCH: 'CTFExchange token registration is partial or conflicts with the market',
+    TOKEN_NOT_REGISTERED: 'CTFExchange token pair is not activated',
+    MINICLOB_NOT_STALE: 'MiniCLOB cutover is not authoritative on-chain',
     WRONG_NONCE: 'Operator nonce changed before migration publication',
   };
   return messages[code] ?? 'Book migration failed an invariant check';
@@ -215,6 +222,14 @@ export class BookMigrationOperator {
       switch (migration.status) {
         case 'DISCOVERED':
         case 'STAGING':
+        case 'CANCELLING':
+          return await this.prepareOrSubmitCutover(migration);
+        case 'CANCEL_SUBMITTING':
+        case 'CANCEL_SUBMISSION_UNKNOWN':
+          return await this.reconcileUnknownCutover(migration);
+        case 'CANCEL_SUBMITTED':
+          return await this.confirmCutover(migration);
+        case 'CANCELLED':
           return await this.stageFromFreshSnapshot(migration);
         case 'REGISTRATION_SUBMITTING':
         case 'REGISTRATION_SUBMISSION_UNKNOWN':
@@ -222,20 +237,12 @@ export class BookMigrationOperator {
         case 'REGISTRATION_SUBMITTED':
           return await this.confirmRegistration(migration);
         case 'STAGED':
-          return await this.prepareApprovalOrCancellation(migration);
+          return await this.prepareApprovalOrRegistration(migration);
         case 'APPROVAL_SUBMITTING':
         case 'APPROVAL_SUBMISSION_UNKNOWN':
           return await this.reconcileUnknownApproval(migration);
         case 'APPROVAL_SUBMITTED':
           return await this.confirmApproval(migration);
-        case 'CANCELLING':
-          return await this.cancelNextSeed(migration);
-        case 'CANCEL_SUBMITTING':
-        case 'CANCEL_SUBMISSION_UNKNOWN':
-          return await this.reconcileUnknownCancel(migration);
-        case 'CANCEL_SUBMITTED':
-          return await this.confirmCancel(migration);
-        case 'CANCELLED':
         case 'PUBLISHING':
           return await this.publish(migration);
         default:
@@ -263,6 +270,15 @@ export class BookMigrationOperator {
         // terminal contract failure.
         return this.retry(migration, 'REGISTRATION_CHECKPOINT_PENDING', 1_000);
       }
+      if (error instanceof CutoverCheckpointError) {
+        // CANCEL_SUBMITTING was persisted before broadcast. Without a durable
+        // hash, only the monotonic conditionStale flag may clear ambiguity.
+        return this.cutoverSubmissionUnknown(
+          migration,
+          'CUTOVER_CHECKPOINT_PENDING',
+          1_000,
+        );
+      }
       const failure = operatorFailure(error, migration.attemptCount + 1);
       if (failure.code.startsWith('RPC_')) {
         return this.retry(migration, `READ_${failure.code}`, failure.retryAfterMs);
@@ -285,7 +301,6 @@ export class BookMigrationOperator {
         yesTokenId: { not: null },
         noTokenId: { not: null },
         resolution: { is: null },
-        orders: { some: { isSeed: true, open: true } },
       },
       orderBy: [{ graduatedAt: 'asc' }, { id: 'asc' }],
     });
@@ -373,14 +388,15 @@ export class BookMigrationOperator {
     const state = await this.chainReader.readBookMigrationState(
       this.stateInput(migration),
     );
-    this.validateSeedState(migration.market, state);
+    this.validateSeedState(migration, state);
     return state;
   }
 
   private validateSeedState(
-    market: Market,
+    migration: ClaimedMigration,
     state: BookMigrationChainState,
   ): void {
+    const market = migration.market;
     if (state.payoutDenominator !== 0n) {
       throw new MigrationInvariantError('MARKET_RESOLVED', 'Market is resolved');
     }
@@ -438,6 +454,39 @@ export class BookMigrationOperator {
         'CTFExchange immutable bindings do not match the deployment',
       );
     }
+    const yesSeedOrderId = BigInt(migration.yesSeedOrderId);
+    const noSeedOrderId = BigInt(migration.noSeedOrderId);
+    if (
+      state.graduationSeedOrderIds.yesOrderId !== yesSeedOrderId ||
+      state.graduationSeedOrderIds.noOrderId !== noSeedOrderId
+    ) {
+      throw new MigrationInvariantError(
+        'INVALID_SEED',
+        'Indexed seed ids do not match MiniCLOB graduation state',
+      );
+    }
+    const indexedZeroHandoff = yesSeedOrderId === 0n && noSeedOrderId === 0n;
+    if (
+      !indexedZeroHandoff &&
+      (yesSeedOrderId === 0n || noSeedOrderId === 0n)
+    ) {
+      throw new MigrationInvariantError(
+        'INVALID_SEED',
+        'Only a 0/0 pair may represent a zero-liquidity handoff',
+      );
+    }
+    if (indexedZeroHandoff) {
+      if (!zeroHandoff(state) || !state.conditionStale) {
+        throw new MigrationInvariantError(
+          'MINICLOB_NOT_STALE',
+          'Zero-handoff condition is not stale on MiniCLOB',
+        );
+      }
+      return;
+    }
+    if (state.yesOrder === null || state.noOrder === null) {
+      throw new MigrationInvariantError('INVALID_SEED', 'Seed orders are missing');
+    }
     const expected = [
       [state.yesOrder, BigInt(market.yesTokenId)],
       [state.noOrder, BigInt(market.noTokenId)],
@@ -468,14 +517,29 @@ export class BookMigrationOperator {
     ) {
       throw new MigrationInvariantError('INVALID_SEED', 'Frozen price mismatch');
     }
+    if (
+      state.conditionStale &&
+      ((state.yesOrder.open && remaining(state.yesOrder) > 0n) ||
+        (state.noOrder.open && remaining(state.noOrder) > 0n))
+    ) {
+      throw new MigrationInvariantError(
+        'INVALID_SEED',
+        'Stale MiniCLOB condition still has an actionable protocol seed',
+      );
+    }
   }
 
   private async stageFromFreshSnapshot(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
     const state = await this.readState(migration);
-    const registration = await this.registerIfNeeded(migration, state);
-    return registration ?? this.stageFromState(migration, state);
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError(
+        'MINICLOB_NOT_STALE',
+        'MiniCLOB cutover was not confirmed before snapshotting',
+      );
+    }
+    return this.stageFromState(migration, state);
   }
 
   private registrationDisposition(
@@ -513,16 +577,12 @@ export class BookMigrationOperator {
     }
   }
 
-  private registrationResumeStatus(migration: ClaimedMigration): string {
-    return hasReplacements(migration) ? 'STAGED' : 'DISCOVERED';
-  }
-
   private async resumeAfterRegistration(
     migration: ClaimedMigration,
     blockNumber: number,
   ): Promise<MigrationIterationResult> {
     await this.checkpoint(migration, {
-      status: this.registrationResumeStatus(migration),
+      status: 'PUBLISHING',
       registrationStatus: 'CONFIRMED',
       registrationBlockNumber: blockNumber,
       lastFailureCode: null,
@@ -537,6 +597,12 @@ export class BookMigrationOperator {
     migration: ClaimedMigration,
     state: BookMigrationChainState,
   ): Promise<MigrationIterationResult | null> {
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError(
+        'MINICLOB_NOT_STALE',
+        'CTFExchange cannot activate while MiniCLOB remains active',
+      );
+    }
     const disposition = this.registrationDisposition(migration, state);
     this.assertRegistrationNotMismatched(disposition);
     if (disposition === 'REGISTERED') {
@@ -622,6 +688,12 @@ export class BookMigrationOperator {
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
     const state = await this.readState(migration);
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError(
+        'MINICLOB_NOT_STALE',
+        'Registration cannot be reconciled before MiniCLOB cutover',
+      );
+    }
     const disposition = this.registrationDisposition(migration, state);
     this.assertRegistrationNotMismatched(disposition);
     if (disposition === 'REGISTERED') {
@@ -673,6 +745,12 @@ export class BookMigrationOperator {
       receipt = await this.submitter.confirm(migration.registrationTxHash as Hex);
     } catch (error) {
       const state = await this.readState(migration);
+      if (!state.conditionStale) {
+        throw new MigrationInvariantError(
+          'MINICLOB_NOT_STALE',
+          'Registration cannot be confirmed before MiniCLOB cutover',
+        );
+      }
       const disposition = this.registrationDisposition(migration, state);
       this.assertRegistrationNotMismatched(disposition);
       if (disposition === 'REGISTERED') {
@@ -690,6 +768,12 @@ export class BookMigrationOperator {
     // exact pair now stored by CTFExchange. This also handles another actor
     // registering the same pair while our transaction was pending.
     const state = await this.readState(migration);
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError(
+        'MINICLOB_NOT_STALE',
+        'Registration cannot be confirmed before MiniCLOB cutover',
+      );
+    }
     const disposition = this.registrationDisposition(migration, state);
     this.assertRegistrationNotMismatched(disposition);
     if (disposition === 'REGISTERED') {
@@ -758,8 +842,13 @@ export class BookMigrationOperator {
         'Market minimum tick size is outside the supported policy',
       );
     }
+    if (zeroHandoff(state)) {
+      return this.stageZeroHandoff(migration, state, minimumTickSizeRaw);
+    }
+    const yesOrder = stateOrder(state, 'YES');
+    const noOrder = stateOrder(state, 'NO');
     const yesRealizedPriceRaw = quantizePriceRaw(
-      state.yesOrder.priceRaw,
+      yesOrder.priceRaw,
       minimumTickSizeRaw,
       'UP',
     );
@@ -776,9 +865,9 @@ export class BookMigrationOperator {
       );
     }
     const yesPriceDeviationRaw =
-      yesRealizedPriceRaw - state.yesOrder.priceRaw;
+      yesRealizedPriceRaw - yesOrder.priceRaw;
     const noPriceDeviationRaw =
-      noRealizedPriceRaw - state.noOrder.priceRaw;
+      noRealizedPriceRaw - noOrder.priceRaw;
     if (
       yesPriceDeviationRaw < 0n ||
       yesPriceDeviationRaw >= minimumTickSizeRaw ||
@@ -858,28 +947,28 @@ export class BookMigrationOperator {
           status: 'STAGED',
           snapshotBlockNumber: state.blockNumber,
           snapshotNonceRaw: state.makerNonce.toString(),
-          yesPriceRaw: state.yesOrder.priceRaw.toString(),
-          noPriceRaw: state.noOrder.priceRaw.toString(),
-          yesSnapshotRemainingRaw: remaining(state.yesOrder).toString(),
-          noSnapshotRemainingRaw: remaining(state.noOrder).toString(),
+          yesPriceRaw: yesOrder.priceRaw.toString(),
+          noPriceRaw: noOrder.priceRaw.toString(),
+          yesSnapshotRemainingRaw: remaining(yesOrder).toString(),
+          noSnapshotRemainingRaw: remaining(noOrder).toString(),
           minimumTickSizeRaw: minimumTickSizeRaw.toString(),
           yesRealizedPriceRaw: yesRealizedPriceRaw.toString(),
           noRealizedPriceRaw: noRealizedPriceRaw.toString(),
           yesPriceDeviationRaw: yesPriceDeviationRaw.toString(),
           noPriceDeviationRaw: noPriceDeviationRaw.toString(),
           yesReplacementSizeRaw: floorOrderSizeToGranularity(
-            remaining(state.yesOrder),
+            remaining(yesOrder),
           ).toString(),
           noReplacementSizeRaw: floorOrderSizeToGranularity(
-            remaining(state.noOrder),
+            remaining(noOrder),
           ).toString(),
           yesUnquotedRemainderRaw: (
-            remaining(state.yesOrder) -
-            floorOrderSizeToGranularity(remaining(state.yesOrder))
+            remaining(yesOrder) -
+            floorOrderSizeToGranularity(remaining(yesOrder))
           ).toString(),
           noUnquotedRemainderRaw: (
-            remaining(state.noOrder) -
-            floorOrderSizeToGranularity(remaining(state.noOrder))
+            remaining(noOrder) -
+            floorOrderSizeToGranularity(remaining(noOrder))
           ).toString(),
           yesReplacementOrderHash: yesReplacement?.orderHash ?? null,
           noReplacementOrderHash: noReplacement?.orderHash ?? null,
@@ -891,8 +980,8 @@ export class BookMigrationOperator {
           approvalBlockNumber: state.ctfApprovedForAll
             ? state.blockNumber
             : migration.approvalBlockNumber,
-          yesCancelStatus: cancelStatus(state.yesOrder),
-          noCancelStatus: cancelStatus(state.noOrder),
+          yesCancelStatus: cancelStatus(yesOrder),
+          noCancelStatus: cancelStatus(noOrder),
           activeCancelOutcome: null,
           nextAttemptAt: 0,
           lastFailureCode: null,
@@ -909,6 +998,65 @@ export class BookMigrationOperator {
     return { outcome: 'PROGRESSED', marketId: migration.marketId };
   }
 
+  private async stageZeroHandoff(
+    migration: ClaimedMigration,
+    state: BookMigrationChainState,
+    minimumTickSizeRaw: bigint,
+  ): Promise<MigrationIterationResult> {
+    const oldHashes = [
+      migration.yesReplacementOrderHash,
+      migration.noReplacementOrderHash,
+    ].filter((hash): hash is string => hash !== null);
+    const now = this.now();
+    await this.prisma.$transaction(async (tx) => {
+      if (oldHashes.length > 0) {
+        await tx.signedOrder.updateMany({
+          where: { orderHash: { in: oldHashes }, status: 'STAGED' },
+          data: { status: 'SUPERSEDED', updatedAt: now },
+        });
+      }
+      const updated = await tx.bookMigration.updateMany({
+        where: { marketId: migration.marketId, claimToken: migration.claimToken },
+        data: {
+          status: 'STAGED',
+          snapshotBlockNumber: state.blockNumber,
+          snapshotNonceRaw: state.makerNonce.toString(),
+          yesPriceRaw: null,
+          noPriceRaw: null,
+          yesSnapshotRemainingRaw: '0',
+          noSnapshotRemainingRaw: '0',
+          minimumTickSizeRaw: minimumTickSizeRaw.toString(),
+          yesRealizedPriceRaw: null,
+          noRealizedPriceRaw: null,
+          yesPriceDeviationRaw: null,
+          noPriceDeviationRaw: null,
+          yesReplacementSizeRaw: '0',
+          noReplacementSizeRaw: '0',
+          yesUnquotedRemainderRaw: '0',
+          noUnquotedRemainderRaw: '0',
+          yesReplacementOrderHash: null,
+          noReplacementOrderHash: null,
+          approvalStatus: 'NOT_REQUIRED',
+          yesCancelStatus: 'NOT_REQUIRED',
+          noCancelStatus: 'NOT_REQUIRED',
+          yesRecoveredRaw: '0',
+          noRecoveredRaw: '0',
+          activeCancelOutcome: null,
+          nextAttemptAt: 0,
+          lastFailureCode: null,
+          lastFailureMessage: null,
+          lastFailureAt: null,
+          claimToken: null,
+          claimExpiresAt: null,
+          updatedAt: now,
+        },
+      });
+      if (updated.count !== 1) throw new Error('Book migration claim was lost');
+    });
+    this.logger.info(`[migration] market=${migration.marketId} zero handoff staged`);
+    return { outcome: 'PROGRESSED', marketId: migration.marketId };
+  }
+
   private async stagedMatches(
     migration: ClaimedMigration,
     state: BookMigrationChainState,
@@ -917,6 +1065,17 @@ export class BookMigrationOperator {
       migration.yesReplacementOrderHash,
       migration.noReplacementOrderHash,
     ].filter((hash): hash is string => hash !== null);
+    if (zeroHandoff(state)) {
+      return (
+        hashes.length === 0 &&
+        migration.yesSnapshotRemainingRaw === '0' &&
+        migration.noSnapshotRemainingRaw === '0' &&
+        migration.yesReplacementSizeRaw === '0' &&
+        migration.noReplacementSizeRaw === '0'
+      );
+    }
+    const yesOrder = stateOrder(state, 'YES');
+    const noOrder = stateOrder(state, 'NO');
     const rows = await this.prisma.signedOrder.findMany({
       where: { orderHash: { in: hashes } },
     });
@@ -925,8 +1084,8 @@ export class BookMigrationOperator {
       migration.minimumTickSizeRaw === null ||
       migration.yesRealizedPriceRaw === null ||
       migration.noRealizedPriceRaw === null ||
-      migration.yesSnapshotRemainingRaw !== remaining(state.yesOrder).toString() ||
-      migration.noSnapshotRemainingRaw !== remaining(state.noOrder).toString()
+      migration.yesSnapshotRemainingRaw !== remaining(yesOrder).toString() ||
+      migration.noSnapshotRemainingRaw !== remaining(noOrder).toString()
     ) {
       return false;
     }
@@ -964,72 +1123,77 @@ export class BookMigrationOperator {
     return true;
   }
 
-  private async prepareApprovalOrCancellation(
+  private async prepareApprovalOrRegistration(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
     const state = await this.readState(migration);
-    const registration = await this.registerIfNeeded(migration, state);
-    if (registration !== null) return registration;
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError(
+        'MINICLOB_NOT_STALE',
+        'MiniCLOB became active again after cutover',
+      );
+    }
     if (!(await this.stagedMatches(migration, state))) {
       return this.stageFromState(migration, state);
     }
-    if (!hasReplacements(migration)) {
-      await this.checkpoint(migration, {
-        status: 'CANCELLING',
-        approvalStatus: 'NOT_REQUIRED',
+    if (hasReplacements(migration) && !state.ctfApprovedForAll) {
+      await this.holdCheckpoint(migration, {
+        status: 'APPROVAL_SUBMITTING',
+        approvalStatus: 'SUBMITTING',
+        attemptCount: { increment: 1 },
       });
-      return { outcome: 'PROGRESSED', marketId: migration.marketId };
+      let txHash: Hex;
+      try {
+        txHash = await this.submitter.submit(buildCtfExchangeApprovalForAllTx());
+      } catch (error) {
+        const failure = operatorFailure(error, migration.attemptCount + 1);
+        if (failure.code.startsWith('RPC_')) {
+          return this.submissionUnknown(
+            migration,
+            'APPROVAL_SUBMISSION_UNKNOWN',
+            failure,
+          );
+        }
+        return this.failTerminal(
+          migration,
+          failure.code,
+          'CTFExchange token approval submission failed',
+        );
+      }
+      await this.holdCheckpoint(migration, {
+        status: 'APPROVAL_SUBMITTED',
+        approvalStatus: 'SUBMITTED',
+        approvalTxHash: txHash.toLowerCase(),
+      });
+      return this.confirmApproval({
+        ...migration,
+        status: 'APPROVAL_SUBMITTED',
+        approvalStatus: 'SUBMITTED',
+        approvalTxHash: txHash.toLowerCase(),
+      });
     }
-    if (state.ctfApprovedForAll) {
-      await this.checkpoint(migration, {
-        status: 'CANCELLING',
+
+    if (hasReplacements(migration)) {
+      await this.holdCheckpoint(migration, {
         approvalStatus: 'CONFIRMED',
         approvalBlockNumber: state.blockNumber,
       });
-      return { outcome: 'PROGRESSED', marketId: migration.marketId };
     }
-    await this.holdCheckpoint(migration, {
-      status: 'APPROVAL_SUBMITTING',
-      approvalStatus: 'SUBMITTING',
-      attemptCount: { increment: 1 },
-    });
-    let txHash: Hex;
-    try {
-      txHash = await this.submitter.submit(buildCtfExchangeApprovalForAllTx());
-    } catch (error) {
-      const failure = operatorFailure(error, migration.attemptCount + 1);
-      if (failure.code.startsWith('RPC_')) {
-        return this.submissionUnknown(
-          migration,
-          'APPROVAL_SUBMISSION_UNKNOWN',
-          failure,
-        );
-      }
-      return this.failTerminal(
-        migration,
-        failure.code,
-        'CTFExchange token approval submission failed',
-      );
-    }
-    await this.holdCheckpoint(migration, {
-      status: 'APPROVAL_SUBMITTED',
-      approvalStatus: 'SUBMITTED',
-      approvalTxHash: txHash.toLowerCase(),
-    });
-    return this.confirmApproval({
-      ...migration,
-      status: 'APPROVAL_SUBMITTED',
-      approvalStatus: 'SUBMITTED',
-      approvalTxHash: txHash.toLowerCase(),
-    });
+    const registration = await this.registerIfNeeded(migration, state);
+    if (registration !== null) return registration;
+    await this.checkpoint(migration, { status: 'PUBLISHING' });
+    return { outcome: 'PROGRESSED', marketId: migration.marketId };
   }
 
   private async reconcileUnknownApproval(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
     const state = await this.readState(migration);
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError('MINICLOB_NOT_STALE', 'MiniCLOB is active');
+    }
     await this.checkpoint(migration, {
-      status: state.ctfApprovedForAll ? 'CANCELLING' : 'STAGED',
+      status: 'STAGED',
       approvalStatus: state.ctfApprovedForAll ? 'CONFIRMED' : 'PENDING',
       approvalBlockNumber: state.ctfApprovedForAll
         ? state.blockNumber
@@ -1066,6 +1230,9 @@ export class BookMigrationOperator {
       );
     }
     const state = await this.readState(migration);
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError('MINICLOB_NOT_STALE', 'MiniCLOB is active');
+    }
     if (hasReplacements(migration) && !state.ctfApprovedForAll) {
       return this.failTerminal(
         migration,
@@ -1074,188 +1241,183 @@ export class BookMigrationOperator {
       );
     }
     await this.checkpoint(migration, {
-      status: 'CANCELLING',
-      approvalStatus: 'CONFIRMED',
-      approvalBlockNumber: Math.max(receipt.blockNumber, state.blockNumber),
+      status: 'STAGED',
+      approvalStatus: hasReplacements(migration) ? 'CONFIRMED' : 'NOT_REQUIRED',
+      approvalBlockNumber: hasReplacements(migration)
+        ? Math.max(receipt.blockNumber, state.blockNumber)
+        : migration.approvalBlockNumber,
     });
     return { outcome: 'PROGRESSED', marketId: migration.marketId };
   }
 
-  private async cancelNextSeed(
+  private async prepareOrSubmitCutover(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
     const state = await this.readState(migration);
-    const registration = await this.registerIfNeeded(migration, state);
-    if (registration !== null) return registration;
-    if (hasReplacements(migration) && !state.ctfApprovedForAll) {
-      await this.checkpoint(migration, {
-        status: 'STAGED',
-        approvalStatus: 'PENDING',
-      });
-      return { outcome: 'PROGRESSED', marketId: migration.marketId };
+    const registration = this.registrationDisposition(migration, state);
+    this.assertRegistrationNotMismatched(registration);
+    if (
+      !state.conditionStale &&
+      registration === 'ABSENT' &&
+      !this.registrationEnabled
+    ) {
+      return this.retry(migration, 'REGISTRATION_DISABLED', 60_000);
     }
-    if (!(await this.stagedMatches(migration, state))) {
-      return this.stageFromState(migration, state);
+    if (
+      !state.conditionStale &&
+      registration === 'ABSENT' &&
+      !state.registrationAuthorized
+    ) {
+      throw new MigrationInvariantError(
+        'REGISTRATION_UNAUTHORIZED',
+        'Operator lacks the activation role required after cutover',
+      );
     }
-    const outcome = (['YES', 'NO'] as const).find((candidate) => {
-      const order = stateOrder(state, candidate);
-      return order.open && remaining(order) > 0n;
-    });
-    if (outcome === undefined) {
-      return this.recordCancellationComplete(migration, state);
+    if (state.conditionStale) {
+      return this.recordCutoverComplete(migration, state);
     }
 
     await this.holdCheckpoint(migration, {
       status: 'CANCEL_SUBMITTING',
-      activeCancelOutcome: outcome,
-      ...(outcome === 'YES'
-        ? { yesCancelStatus: 'SUBMITTING' }
-        : { noCancelStatus: 'SUBMITTING' }),
+      cutoverTxHash: null,
+      activeCancelOutcome: null,
+      yesCancelStatus: 'SUBMITTING',
+      noCancelStatus: 'SUBMITTING',
       attemptCount: { increment: 1 },
     });
     let txHash: Hex;
     try {
       txHash = await this.submitter.submit(
-        buildMiniClobCancelTx({ orderId: stateOrder(state, outcome).orderId }),
+        buildMiniClobCutoverTx({
+          conditionId: migration.market.conditionId as Hex,
+        }),
       );
     } catch (error) {
       const failure = operatorFailure(error, migration.attemptCount + 1);
       if (failure.code.startsWith('RPC_')) {
-        return this.submissionUnknown(
+        return this.cutoverSubmissionUnknown(
           migration,
-          'CANCEL_SUBMISSION_UNKNOWN',
-          failure,
-          outcome,
+          failure.code,
+          failure.retryAfterMs,
         );
       }
       return this.failTerminal(
         migration,
-        failure.code,
-        'MiniCLOB seed cancellation submission failed',
+        `CUTOVER_${failure.code}`,
+        'MiniCLOB cutover submission failed',
       );
     }
-    await this.holdCheckpoint(migration, {
-      status: 'CANCEL_SUBMITTED',
-      ...(outcome === 'YES'
-        ? { yesCancelStatus: 'SUBMITTED', yesCancelTxHash: txHash.toLowerCase() }
-        : { noCancelStatus: 'SUBMITTED', noCancelTxHash: txHash.toLowerCase() }),
-    });
-    return this.confirmCancel({
+    try {
+      await this.holdCheckpoint(migration, {
+        status: 'CANCEL_SUBMITTED',
+        cutoverTxHash: txHash.toLowerCase(),
+        yesCancelStatus: 'SUBMITTED',
+        noCancelStatus: 'SUBMITTED',
+      });
+    } catch (error) {
+      throw new CutoverCheckpointError(error);
+    }
+    return this.confirmCutover({
       ...migration,
       status: 'CANCEL_SUBMITTED',
-      activeCancelOutcome: outcome,
-      ...(outcome === 'YES'
-        ? { yesCancelStatus: 'SUBMITTED', yesCancelTxHash: txHash.toLowerCase() }
-        : { noCancelStatus: 'SUBMITTED', noCancelTxHash: txHash.toLowerCase() }),
+      cutoverTxHash: txHash.toLowerCase(),
+      yesCancelStatus: 'SUBMITTED',
+      noCancelStatus: 'SUBMITTED',
     });
   }
 
-  private activeOutcome(migration: ClaimedMigration): Outcome {
-    if (
-      migration.activeCancelOutcome !== 'YES' &&
-      migration.activeCancelOutcome !== 'NO'
-    ) {
-      throw new MigrationInvariantError(
-        'INVALID_CANCEL_STATE',
-        'Active cancellation side is missing',
-      );
-    }
-    return migration.activeCancelOutcome;
-  }
-
-  private async reconcileUnknownCancel(
+  private async reconcileUnknownCutover(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
-    const outcome = this.activeOutcome(migration);
     const state = await this.readState(migration);
-    const order = stateOrder(state, outcome);
-    const closed = !order.open || remaining(order) === 0n;
-    await this.checkpoint(migration, {
-      status: 'CANCELLING',
-      activeCancelOutcome: null,
-      ...(outcome === 'YES'
-        ? { yesCancelStatus: closed ? cancelStatus(order) : 'PENDING' }
-        : { noCancelStatus: closed ? cancelStatus(order) : 'PENDING' }),
-      cancelBlockNumber: closed
-        ? Math.max(migration.cancelBlockNumber ?? 0, state.blockNumber)
-        : migration.cancelBlockNumber,
-    });
-    this.logger.info(
-      `[migration] market=${migration.marketId} ambiguous cancel reconciled side=${outcome}`,
+    if (state.conditionStale) {
+      this.logger.info(
+        `[migration] market=${migration.marketId} ambiguous cutover reconciled=landed`,
+      );
+      return this.recordCutoverComplete(migration, state);
+    }
+    return this.cutoverSubmissionUnknown(
+      migration,
+      'CUTOVER_OUTCOME_UNKNOWN',
+      CUTOVER_UNKNOWN_RECHECK_MS,
     );
-    return { outcome: 'PROGRESSED', marketId: migration.marketId };
   }
 
-  private async confirmCancel(
+  private async confirmCutover(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
-    const outcome = this.activeOutcome(migration);
-    const txHash =
-      outcome === 'YES' ? migration.yesCancelTxHash : migration.noCancelTxHash;
-    if (txHash === null) return this.reconcileUnknownCancel(migration);
+    if (migration.cutoverTxHash === null) {
+      return this.reconcileUnknownCutover(migration);
+    }
     let receipt;
     try {
-      receipt = await this.submitter.confirm(txHash as Hex);
+      receipt = await this.submitter.confirm(migration.cutoverTxHash as Hex);
     } catch (error) {
       const failure = operatorFailure(error, migration.attemptCount + 1);
       return this.retry(
         migration,
-        'CANCEL_CONFIRMATION_PENDING',
+        'CUTOVER_CONFIRMATION_PENDING',
         failure.retryAfterMs,
       );
     }
     const state = await this.readState(migration);
-    const order = stateOrder(state, outcome);
-    if (receipt.status === 'reverted' && order.open && remaining(order) > 0n) {
+    if (state.conditionStale) {
+      return this.recordCutoverComplete(migration, state, receipt.blockNumber);
+    }
+    if (receipt.status === 'reverted') {
       return this.failTerminal(
         migration,
-        'CANCEL_REVERTED',
-        safeMessage('CANCEL_REVERTED'),
+        'CUTOVER_REVERTED',
+        safeMessage('CUTOVER_REVERTED'),
       );
     }
-    if (order.open && remaining(order) > 0n) {
-      return this.failTerminal(
-        migration,
-        'CANCEL_NOT_APPLIED',
-        safeMessage('CANCEL_NOT_APPLIED'),
-      );
-    }
-    await this.checkpoint(migration, {
-      status: 'CANCELLING',
-      activeCancelOutcome: null,
-      ...(outcome === 'YES'
-        ? { yesCancelStatus: cancelStatus(order) }
-        : { noCancelStatus: cancelStatus(order) }),
-      cancelBlockNumber: Math.max(
-        migration.cancelBlockNumber ?? 0,
-        receipt.blockNumber,
-        state.blockNumber,
-      ),
-    });
-    return { outcome: 'PROGRESSED', marketId: migration.marketId };
+    return this.failTerminal(
+      migration,
+      'CUTOVER_NOT_APPLIED',
+      safeMessage('CUTOVER_NOT_APPLIED'),
+    );
   }
 
-  private async recordCancellationComplete(
+  private async recordCutoverComplete(
     migration: ClaimedMigration,
     state: BookMigrationChainState,
+    receiptBlockNumber = 0,
   ): Promise<MigrationIterationResult> {
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError(
+        'MINICLOB_NOT_STALE',
+        'MiniCLOB cutover is not authoritative on-chain',
+      );
+    }
+    const noSeeds = zeroHandoff(state);
+    const yesRecovered = noSeeds ? 0n : remaining(stateOrder(state, 'YES'));
+    const noRecovered = noSeeds ? 0n : remaining(stateOrder(state, 'NO'));
     const now = this.now();
     await this.checkpoint(migration, {
       status: 'CANCELLED',
-      yesCancelStatus: cancelStatus(state.yesOrder),
-      noCancelStatus: cancelStatus(state.noOrder),
-      yesRecoveredRaw: remaining(state.yesOrder).toString(),
-      noRecoveredRaw: remaining(state.noOrder).toString(),
+      activeCancelOutcome: null,
+      yesCancelStatus: noSeeds
+        ? 'NOT_REQUIRED'
+        : cancelStatus(stateOrder(state, 'YES')),
+      noCancelStatus: noSeeds
+        ? 'NOT_REQUIRED'
+        : cancelStatus(stateOrder(state, 'NO')),
+      yesRecoveredRaw: yesRecovered.toString(),
+      noRecoveredRaw: noRecovered.toString(),
       yesBalanceRaw: state.yesBalanceRaw.toString(),
       noBalanceRaw: state.noBalanceRaw.toString(),
       recoveryBlockNumber: state.blockNumber,
       cancelBlockNumber: Math.max(
         migration.cancelBlockNumber ?? 0,
+        receiptBlockNumber,
         state.blockNumber,
       ),
       cancelledAt: migration.cancelledAt ?? now,
+      lastFailureCode: null,
+      lastFailureMessage: null,
+      lastFailureAt: null,
     });
-    this.logger.info(`[migration] market=${migration.marketId} seeds cancelled`);
+    this.logger.info(`[migration] market=${migration.marketId} MiniCLOB stale`);
     return { outcome: 'PROGRESSED', marketId: migration.marketId };
   }
 
@@ -1287,19 +1449,20 @@ export class BookMigrationOperator {
   private async publish(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
-    if (migration.status === 'CANCELLED') {
-      await this.holdCheckpoint(migration, { status: 'PUBLISHING' });
-      migration = { ...migration, status: 'PUBLISHING' };
-    }
     const state = await this.readState(migration);
-    const registration = await this.registerIfNeeded(migration, state);
-    if (registration !== null) return registration;
-    if (
-      (state.yesOrder.open && remaining(state.yesOrder) > 0n) ||
-      (state.noOrder.open && remaining(state.noOrder) > 0n)
-    ) {
-      await this.checkpoint(migration, { status: 'CANCELLING' });
-      return { outcome: 'PROGRESSED', marketId: migration.marketId };
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError(
+        'MINICLOB_NOT_STALE',
+        'Hybrid publication requires a fresh MiniCLOB stale read',
+      );
+    }
+    const registration = this.registrationDisposition(migration, state);
+    this.assertRegistrationNotMismatched(registration);
+    if (registration !== 'REGISTERED') {
+      throw new MigrationInvariantError(
+        'TOKEN_NOT_REGISTERED',
+        'Hybrid publication requires the exact registered token pair',
+      );
     }
     if (!(await this.stagedMatches(migration, state))) {
       return this.stageFromState(migration, state);
@@ -1315,8 +1478,9 @@ export class BookMigrationOperator {
       });
       return { outcome: 'PROGRESSED', marketId: migration.marketId };
     }
-    const yesRecovered = remaining(state.yesOrder);
-    const noRecovered = remaining(state.noOrder);
+    const noSeeds = zeroHandoff(state);
+    const yesRecovered = noSeeds ? 0n : remaining(stateOrder(state, 'YES'));
+    const noRecovered = noSeeds ? 0n : remaining(stateOrder(state, 'NO'));
     if (
       state.yesBalanceRaw < yesRecovered ||
       state.noBalanceRaw < noRecovered
@@ -1429,18 +1593,13 @@ export class BookMigrationOperator {
 
   private async submissionUnknown(
     migration: ClaimedMigration,
-    status: 'APPROVAL_SUBMISSION_UNKNOWN' | 'CANCEL_SUBMISSION_UNKNOWN',
+    status: 'APPROVAL_SUBMISSION_UNKNOWN',
     failure: ReturnType<typeof operatorFailure>,
-    outcome?: Outcome,
   ): Promise<MigrationIterationResult> {
     const now = this.now();
     await this.checkpoint(migration, {
       status,
-      ...(outcome === undefined
-        ? { approvalStatus: 'SUBMISSION_UNKNOWN' }
-        : outcome === 'YES'
-          ? { yesCancelStatus: 'SUBMISSION_UNKNOWN' }
-          : { noCancelStatus: 'SUBMISSION_UNKNOWN' }),
+      approvalStatus: 'SUBMISSION_UNKNOWN',
       nextAttemptAt: now + Math.max(1, Math.ceil(failure.retryAfterMs / 1_000)),
       lastFailureCode: failure.code,
       lastFailureMessage: 'Transport failed after submission may have been broadcast',
@@ -1454,6 +1613,35 @@ export class BookMigrationOperator {
       marketId: migration.marketId,
       retryAfterMs: failure.retryAfterMs,
       failureCode: failure.code,
+    };
+  }
+
+  private async cutoverSubmissionUnknown(
+    migration: ClaimedMigration,
+    failureCode: string,
+    retryAfterMs: number,
+  ): Promise<MigrationIterationResult> {
+    const now = this.now();
+    const delay = Math.max(CUTOVER_UNKNOWN_RECHECK_MS, retryAfterMs);
+    await this.checkpoint(migration, {
+      status: 'CANCEL_SUBMISSION_UNKNOWN',
+      cutoverTxHash: null,
+      yesCancelStatus: 'SUBMISSION_UNKNOWN',
+      noCancelStatus: 'SUBMISSION_UNKNOWN',
+      nextAttemptAt: now + Math.max(1, Math.ceil(delay / 1_000)),
+      lastFailureCode: failureCode,
+      lastFailureMessage:
+        'Cutover may have been broadcast; awaiting authoritative MiniCLOB stale state',
+      lastFailureAt: now,
+    });
+    this.logger.warn(
+      `[migration] market=${migration.marketId} code=${failureCode}`,
+    );
+    return {
+      outcome: 'FAILED',
+      marketId: migration.marketId,
+      retryAfterMs: delay,
+      failureCode,
     };
   }
 

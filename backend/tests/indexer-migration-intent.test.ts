@@ -3,6 +3,8 @@ import type { Address, Hex } from 'viem';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getMarketBook } from '../src/api/queries.js';
+import { ServerEventBus } from '../src/events/bus.js';
+import { publishIndexedEvents } from '../src/events/projector.js';
 import { applyDecodedEvents } from '../src/indexer/runner.js';
 import type { DecodedEvent } from '../src/indexer/types.js';
 import { resetDatabase, testPrisma } from './database.js';
@@ -68,6 +70,27 @@ function failingLaterEvent(): DecodedEvent {
     logIndex: 12,
     blockNumber: BLOCK_NUMBER,
     ts: SEEDED_AT,
+  };
+}
+
+function conditionCutoverEvent(
+  yesSeedOrderId = YES_SEED_ORDER_ID,
+  noSeedOrderId = NO_SEED_ORDER_ID,
+): DecodedEvent {
+  return {
+    source: 'MINI_CLOB',
+    address: ADDRESSES.miniClob as Address,
+    eventName: 'ConditionCutover',
+    args: {
+      conditionId: MARKET_ONE_CONDITION,
+      caller: PROTOCOL_QUOTE_RECIPIENT,
+      yesSeedOrderId,
+      noSeedOrderId,
+    },
+    txHash: `0x${'e'.repeat(64)}` as Hex,
+    logIndex: 1,
+    blockNumber: BLOCK_NUMBER + 1,
+    ts: SEEDED_AT + 1,
   };
 }
 
@@ -222,6 +245,38 @@ describe('indexer book-migration intent', () => {
     ).resolves.toBe(1);
   });
 
+  it('creates a preparing 0/0 migration for a zero-liquidity handoff', async () => {
+    const registryEvent = bookSeededEvent();
+    registryEvent.args.sizeRaw = 0n;
+    registryEvent.args.yesOrderId = 0n;
+    registryEvent.args.noOrderId = 0n;
+    const cutoverEvent = conditionCutoverEvent(0n, 0n);
+    cutoverEvent.txHash = TX_HASH;
+    cutoverEvent.blockNumber = BLOCK_NUMBER;
+    cutoverEvent.ts = SEEDED_AT;
+    cutoverEvent.logIndex = 9;
+
+    await applyDecodedEvents(
+      testPrisma,
+      [cutoverEvent, registryEvent, marketGraduatedEvent()],
+      BLOCK_NUMBER,
+      BLOCK_NUMBER,
+    );
+
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'DISCOVERED',
+      yesSeedOrderId: '0',
+      noSeedOrderId: '0',
+    });
+    await expect(getMarketBook(testPrisma, '1')).resolves.toMatchObject({
+      orderBookAvailable: false,
+      liveVenue: 'NONE',
+      venueTransition: { state: 'PREPARING' },
+    });
+  });
+
   it('does not reset a migration already advanced by the operator', async () => {
     await testPrisma.bookMigration.create({
       data: {
@@ -251,6 +306,82 @@ describe('indexer book-migration intent', () => {
       attemptCount: 3,
       createdAt: SEEDED_AT - 10,
       updatedAt: SEEDED_AT - 5,
+    });
+  });
+
+  it('indexes cutover as preparing without marking Hybrid live or resetting progress', async () => {
+    await applyDecodedEvents(
+      testPrisma,
+      graduationEvents,
+      BLOCK_NUMBER,
+      BLOCK_NUMBER,
+    );
+    await testPrisma.bookMigration.update({
+      where: { marketId: '1' },
+      data: {
+        status: 'CANCELLED',
+        cutoverTxHash: `0x${'d'.repeat(64)}`,
+        updatedAt: SEEDED_AT + 1,
+      },
+    });
+
+    const eventBus = new ServerEventBus();
+    const updates: string[] = [];
+    eventBus.subscribe('book:1', ({ event }) => updates.push(event.event));
+    await expect(
+      applyDecodedEvents(
+        testPrisma,
+        [conditionCutoverEvent()],
+        BLOCK_NUMBER + 1,
+        BLOCK_NUMBER + 1,
+        (events) => publishIndexedEvents(testPrisma, eventBus, events),
+      ),
+    ).resolves.toBe(1);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'CANCELLED',
+      cutoverTxHash: `0x${'d'.repeat(64)}`,
+    });
+    await expect(getMarketBook(testPrisma, '1')).resolves.toMatchObject({
+      orderBookAvailable: false,
+      liveVenue: 'NONE',
+      venueTransition: { state: 'PREPARING' },
+    });
+    await expect(
+      testPrisma.activityEvent.findUniqueOrThrow({
+        where: { id: `0x${'e'.repeat(64)}:1` },
+      }),
+    ).resolves.toMatchObject({
+      type: 'ConditionCutover',
+      marketId: '1',
+    });
+    expect(updates).toEqual(['book.updated']);
+  });
+
+  it('repairs a missing migration intent from the authoritative cutover event', async () => {
+    await applyDecodedEvents(
+      testPrisma,
+      graduationEvents,
+      BLOCK_NUMBER,
+      BLOCK_NUMBER,
+    );
+    await testPrisma.bookMigration.delete({ where: { marketId: '1' } });
+
+    await applyDecodedEvents(
+      testPrisma,
+      [conditionCutoverEvent()],
+      BLOCK_NUMBER + 1,
+      BLOCK_NUMBER + 1,
+    );
+
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'DISCOVERED',
+      yesSeedOrderId: YES_SEED_ORDER_ID.toString(),
+      noSeedOrderId: NO_SEED_ORDER_ID.toString(),
+      cutoverTxHash: `0x${'e'.repeat(64)}`,
     });
   });
 
