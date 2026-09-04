@@ -203,6 +203,22 @@ export function describeActivityEvent(
         text('.'),
       ]);
     case 'OrderCancelled': {
+      if (amount === null) {
+        return finishDescription(
+          event,
+          'Cancelled',
+          'cancelled',
+          event.outcome
+            ? [
+                text('cancelled a '),
+                value(event.outcome),
+                text(' order on '),
+                market,
+                text('.'),
+              ]
+            : [text('cancelled an order on '), market, text('.')],
+        );
+      }
       const orderKind =
         event.side === 'ASK'
           ? 'ask'
@@ -261,6 +277,12 @@ function graduationKey(event: ActivityEvent) {
   return `${event.txHash.toLowerCase()}:${event.marketId ?? 'protocol'}`;
 }
 
+function resolutionPresentationKey(event: ActivityEvent) {
+  return `${event.type.toLowerCase()}:${event.txHash.toLowerCase()}:${
+    event.marketId?.toLowerCase() ?? 'protocol'
+  }`;
+}
+
 /**
  * A graduation transaction emits one transition plus two per-outcome book seed
  * logs. Prefer the semantic transition; if only seed logs exist, retain one.
@@ -276,10 +298,17 @@ export function dedupeActivityEvents(
   const seenIds = new Set<string>();
   const seenGraduations = new Set<string>();
   const seenBookSeeds = new Set<string>();
+  const seenResolutionEvents = new Set<string>();
 
   return events.filter((event) => {
     if (seenIds.has(event.id)) return false;
     seenIds.add(event.id);
+
+    if (event.type === 'ResolutionObserved' || event.type === 'Closeout') {
+      const resolutionKey = resolutionPresentationKey(event);
+      if (seenResolutionEvents.has(resolutionKey)) return false;
+      seenResolutionEvents.add(resolutionKey);
+    }
 
     const key = graduationKey(event);
     if (event.type === 'MarketGraduated') {

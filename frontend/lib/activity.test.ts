@@ -60,6 +60,36 @@ describe('activity descriptions', () => {
     expect(description.text).toContain('cancelled a 0.25 NO bid');
   });
 
+  it.each([
+    ['YES', 'BID'],
+    ['NO', 'ASK'],
+  ] as const)(
+    'names a missing-amount %s cancellation without a placeholder',
+    (outcome, side) => {
+      const description = describeActivityEvent(
+        event('OrderCancelled', { outcome, side }),
+        [market],
+      );
+
+      expect(description.text).toBe(
+        `cancelled a ${outcome} order on “${market.question}”.`,
+      );
+      expect(description.text).not.toContain('—');
+    },
+  );
+
+  it('names a cancellation with no amount or outcome without a placeholder', () => {
+    const description = describeActivityEvent(
+      event('OrderCancelled', { side: 'ASK' }),
+      [market],
+    );
+
+    expect(description.text).toBe(
+      `cancelled an order on “${market.question}”.`,
+    );
+    expect(description.text).not.toContain('—');
+  });
+
   it('keeps sub-cent prices and notionals distinguishable from zero', () => {
     const description = describeActivityEvent(
       event('Trade', {
@@ -107,5 +137,36 @@ describe('activity event dedupe', () => {
     ];
 
     expect(dedupeActivityEvents(events)).toEqual([events[0]]);
+  });
+
+  it.each(['ResolutionObserved', 'Closeout'] as const)(
+    'keeps the first %s row when wrapper logs share a normalized transaction and market',
+    (type) => {
+      const lowerTx = `0x${'a'.repeat(64)}` as const;
+      const upperTx = `0x${'A'.repeat(64)}` as const;
+      const events = [
+        event(type, { id: `${lowerTx}:4`, txHash: lowerTx }),
+        event(type, { id: `${upperTx}:9`, txHash: upperTx }),
+      ];
+
+      expect(dedupeActivityEvents(events)).toEqual([events[0]]);
+    },
+  );
+
+  it('retains resolution rows separated by transaction, market, or semantic type', () => {
+    const firstTx = `0x${'b'.repeat(64)}` as const;
+    const secondTx = `0x${'c'.repeat(64)}` as const;
+    const events = [
+      event('ResolutionObserved', { id: `${firstTx}:1`, txHash: firstTx }),
+      event('ResolutionObserved', { id: `${secondTx}:1`, txHash: secondTx }),
+      event('ResolutionObserved', {
+        id: `${firstTx}:2`,
+        marketId: '8',
+        txHash: firstTx,
+      }),
+      event('Closeout', { id: `${firstTx}:3`, txHash: firstTx }),
+    ];
+
+    expect(dedupeActivityEvents(events)).toEqual(events);
   });
 });
