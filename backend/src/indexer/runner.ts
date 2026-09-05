@@ -1,4 +1,5 @@
 import { ADDRESSES, ARC } from '@predex-pump/shared';
+import { collateralErc20Abi } from '@predex-pump/shared/tx';
 import type { IndexerState, PrismaClient } from '@prisma/client';
 import {
   createPublicClient,
@@ -6,6 +7,7 @@ import {
   fallback,
   HttpRequestError,
   http,
+  type Abi,
   type Address,
   type Hex,
   type PublicClient,
@@ -30,11 +32,13 @@ import {
   CTF_APPROVAL_EVENT,
   CTF_EVENT_ABI,
 } from './abis.js';
-import { bigintArg, toDbInt } from './derive.js';
+import { bigintArg, stringArg, toDbInt } from './derive.js';
 import {
+  applyCollateralAllowanceSnapshots,
   handleDecodedEvent,
   initializeReadModel,
   preloadMarketIdentities,
+  type CollateralAllowanceSnapshot,
 } from './handlers.js';
 import { inspectRpcError, retryDelayMs } from './retry.js';
 import { lockIndexerCursor } from './cursor-lock.js';
@@ -203,6 +207,97 @@ function decodeIndexerLogs(
   });
 }
 
+export async function readExchangeFillAllowanceSnapshots(
+  prisma: PrismaClient,
+  client: PublicClient,
+  events: readonly DecodedEvent[],
+  requestSpacingMs = DEFAULT_INDEXER_REQUEST_SPACING_MS,
+  spacer: (milliseconds: number) => Promise<void> = (milliseconds) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
+): Promise<CollateralAllowanceSnapshot[]> {
+  const fillEvents = events.filter(
+    (event) =>
+      event.source === 'CTF_EXCHANGE' && event.eventName === 'OrderFilled',
+  );
+  if (fillEvents.length === 0) return [];
+
+  const orderHashes = [
+    ...new Set(
+      fillEvents.map((event) =>
+        stringArg(event.args, 'orderHash').toLowerCase(),
+      ),
+    ),
+  ];
+  const orders = await prisma.signedOrder.findMany({
+    where: { orderHash: { in: orderHashes } },
+    select: { orderHash: true, maker: true, side: true },
+  });
+  const orderByHash = new Map(
+    orders.map((order) => [order.orderHash.toLowerCase(), order]),
+  );
+  const payers: Address[] = [];
+  for (const event of fillEvents) {
+    const orderHash = stringArg(event.args, 'orderHash').toLowerCase();
+    const order = orderByHash.get(orderHash);
+    if (order === undefined) continue;
+    const eventMaker = stringArg(event.args, 'maker').toLowerCase();
+    const maker = order.maker.toLowerCase();
+    if (eventMaker !== maker) {
+      throw new Error(
+        `CTFExchange fill maker does not match persisted order ${orderHash}`,
+      );
+    }
+    const payer =
+      order.side === 'BID'
+        ? maker
+        : order.side === 'ASK'
+          ? stringArg(event.args, 'taker').toLowerCase()
+          : null;
+    if (payer === null) {
+      throw new Error(`Persisted order ${orderHash} has invalid side ${order.side}`);
+    }
+    payers.push(payer as Address);
+  }
+  if (payers.length === 0) return [];
+
+  const snapshotEvent = fillEvents.reduce((latest, candidate) =>
+    candidate.blockNumber > latest.blockNumber ? candidate : latest,
+  );
+  const owners = [...new Set(payers)].sort();
+  if (requestSpacingMs > 0) await spacer(requestSpacingMs);
+  const results = await client.multicall({
+    allowFailure: true,
+    blockNumber: BigInt(snapshotEvent.blockNumber),
+    contracts: owners.map((owner) => ({
+      address: ADDRESSES.usdc,
+      abi: collateralErc20Abi as Abi,
+      functionName: 'allowance',
+      args: [owner, ADDRESSES.ctfExchange],
+    })),
+  });
+  if (results.length !== owners.length) {
+    throw new Error(
+      `Arc multicall returned ${results.length} allowance results for ${owners.length} owners`,
+    );
+  }
+  return owners.map((owner, index) => {
+    const result = results[index];
+    if (result === undefined) {
+      throw new Error(`Arc allowance result was missing for owner ${owner}`);
+    }
+    if (result.status === 'failure') throw result.error;
+    if (typeof result.result !== 'bigint') {
+      throw new Error(`Arc returned a non-integer allowance for owner ${owner}`);
+    }
+    return {
+      owner,
+      allowanceRaw: result.result,
+      blockNumber: snapshotEvent.blockNumber,
+      updatedAt: snapshotEvent.ts,
+    };
+  });
+}
+
 async function decodedEventsForRange(
   client: PublicClient,
   fromBlock: number,
@@ -307,6 +402,7 @@ export async function applyDecodedEvents(
   marketDedupIndexer?: MarketDedupIndexer,
   successfulPollAt = new Date(),
   cursorGuard?: () => boolean,
+  collateralAllowanceSnapshots: readonly CollateralAllowanceSnapshot[] = [],
 ): Promise<number> {
   const newlyAppliedEvents = await prisma.$transaction(
     async (tx) => {
@@ -318,6 +414,10 @@ export async function applyDecodedEvents(
           applied.push(event);
         }
       }
+      await applyCollateralAllowanceSnapshots(
+        tx,
+        collateralAllowanceSnapshots,
+      );
 
       if (cursorGuard !== undefined && !cursorGuard()) {
         throw new SubscriptionAuthorityRevokedError();
@@ -388,6 +488,7 @@ async function applyRange(
   marketDedupIndexer?: MarketDedupIndexer,
   successfulPollAt = new Date(),
   cursorGuard?: () => boolean,
+  collateralAllowanceSnapshots: readonly CollateralAllowanceSnapshot[] = [],
 ): Promise<RangeResult> {
   const newlyAppliedLogs = await applyDecodedEvents(
     prisma,
@@ -398,6 +499,7 @@ async function applyRange(
     marketDedupIndexer,
     successfulPollAt,
     cursorGuard,
+    collateralAllowanceSnapshots,
   );
 
   return {
@@ -476,6 +578,36 @@ function logRpcRecovery(operation: string, failures: number): void {
         `${failures === 1 ? 'retry' : 'retries'}`,
     );
   }
+}
+
+async function requestExchangeFillAllowanceSnapshots(
+  prisma: PrismaClient,
+  client: PublicClient,
+  events: readonly DecodedEvent[],
+  operation: string,
+  requestSpacingMs: number,
+  signal: AbortSignal,
+  wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
+  random: () => number,
+): Promise<CollateralAllowanceSnapshot[] | undefined> {
+  const result = await requestRpcWithRetry(
+    prisma,
+    operation,
+    () =>
+      readExchangeFillAllowanceSnapshots(
+        prisma,
+        client,
+        events,
+        requestSpacingMs,
+        (milliseconds) => wait(milliseconds, signal),
+      ),
+    signal,
+    wait,
+    random,
+  );
+  if (result === undefined) return undefined;
+  logRpcRecovery(operation, result.failures);
+  return result.value;
 }
 
 function validateArcHead(value: unknown): number {
@@ -925,6 +1057,18 @@ export async function runIndexer(
           random,
         );
         if (decoded === undefined) return false;
+        const allowanceSnapshots =
+          await requestExchangeFillAllowanceSnapshots(
+            prisma,
+            client,
+            decoded.value,
+            `read fill allowances blocks=${nextBlock}-${toBlock}`,
+            config.requestSpacingMs,
+            stopController.signal,
+            wait,
+            random,
+          );
+        if (allowanceSnapshots === undefined) return false;
         const result = await applyRange(
           prisma,
           decoded.value,
@@ -934,6 +1078,8 @@ export async function runIndexer(
           options.onEvents,
           options.marketDedupIndexer,
           now(),
+          undefined,
+          allowanceSnapshots,
         );
         logRpcRecovery(`getLogs blocks=${nextBlock}-${toBlock}`, decoded.failures);
         console.info(
@@ -983,6 +1129,7 @@ export async function runIndexer(
         toBlock: number;
         headBlock: number;
         events: readonly DecodedEvent[];
+        collateralAllowanceSnapshots: readonly CollateralAllowanceSnapshot[];
         failures: number;
       }
 
@@ -1051,11 +1198,26 @@ export async function runIndexer(
             random,
           );
           if (decoded === undefined || controller.signal.aborted) return;
+          const allowanceSnapshots =
+            await requestExchangeFillAllowanceSnapshots(
+              prisma,
+              client,
+              decoded.value,
+              `safety read fill allowances blocks=${fromBlock}-${toBlock}`,
+              config.requestSpacingMs,
+              controller.signal,
+              wait,
+              random,
+            );
+          if (allowanceSnapshots === undefined || controller.signal.aborted) {
+            return;
+          }
           pendingSafetySweep = {
             fromBlock,
             toBlock,
             headBlock: polledHead,
             events: decoded.value,
+            collateralAllowanceSnapshots: allowanceSnapshots,
             failures: decoded.failures,
           };
         })()
@@ -1313,6 +1475,8 @@ export async function runIndexer(
             options.onEvents,
             options.marketDedupIndexer,
             now(),
+            undefined,
+            sweep.collateralAllowanceSnapshots,
           );
           safetySweepNextBlock = sweep.toBlock + 1;
           safetySweepConfirmedBlock = Math.max(
@@ -1391,6 +1555,18 @@ export async function runIndexer(
                     state.lastBlock + 1,
                     ...pushedLogs.map((log) => log.blockNumber),
                   );
+            const allowanceSnapshots =
+              await requestExchangeFillAllowanceSnapshots(
+                prisma,
+                client,
+                decoded,
+                `subscription read fill allowances blocks=${fromBlock}-${targetHead}`,
+                config.requestSpacingMs,
+                stopController.signal,
+                wait,
+                random,
+              );
+            if (allowanceSnapshots === undefined) break;
             let result: RangeResult;
             try {
               result = await applyRange(
@@ -1408,6 +1584,7 @@ export async function runIndexer(
                   activeGeneration === activeSession.generation &&
                   trustedGeneration === activeSession.generation &&
                   session === activeSession,
+                allowanceSnapshots,
               );
             } catch (error) {
               if (error instanceof SubscriptionAuthorityRevokedError) {

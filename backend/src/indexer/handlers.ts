@@ -25,6 +25,14 @@ type Tx = Prisma.TransactionClient;
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const PRICE_SCALE = 1_000_000n;
+const MAX_EVENT_LOG_INDEX = 2_147_483_647;
+
+export interface CollateralAllowanceSnapshot {
+  owner: string;
+  allowanceRaw: bigint;
+  blockNumber: number;
+  updatedAt: number;
+}
 
 const PHASE_RANK: Readonly<Record<string, number>> = {
   Opened: 0,
@@ -1162,6 +1170,43 @@ function eventIsNewer(
     event.blockNumber > existing.blockNumber ||
     (event.blockNumber === existing.blockNumber && event.logIndex > existing.logIndex)
   );
+}
+
+export async function applyCollateralAllowanceSnapshots(
+  tx: Prisma.TransactionClient,
+  snapshots: readonly CollateralAllowanceSnapshot[],
+): Promise<void> {
+  for (const snapshot of snapshots) {
+    const owner = lowerAddress(snapshot.owner);
+    const existing = await tx.collateralExchangeApproval.findUnique({
+      where: { owner },
+    });
+    if (
+      existing !== null &&
+      (existing.blockNumber > snapshot.blockNumber ||
+        (existing.blockNumber === snapshot.blockNumber &&
+          existing.logIndex >= MAX_EVENT_LOG_INDEX))
+    ) {
+      continue;
+    }
+    const allowanceRaw = snapshot.allowanceRaw.toString();
+    await tx.collateralExchangeApproval.upsert({
+      where: { owner },
+      create: {
+        owner,
+        allowanceRaw,
+        blockNumber: snapshot.blockNumber,
+        logIndex: MAX_EVENT_LOG_INDEX,
+        updatedAt: snapshot.updatedAt,
+      },
+      update: {
+        allowanceRaw,
+        blockNumber: snapshot.blockNumber,
+        logIndex: MAX_EVENT_LOG_INDEX,
+        updatedAt: snapshot.updatedAt,
+      },
+    });
+  }
 }
 
 async function handleCtfExchangeApproval(
