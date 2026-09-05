@@ -23,7 +23,11 @@ export interface TxFlowOptions {
   failurePhase?: 'rejected' | 'failed';
 }
 
-function hasNestedErrorName(error: unknown, names: ReadonlySet<string>) {
+function hasNestedErrorSignature(
+  error: unknown,
+  names: ReadonlySet<string>,
+  messageMatches?: (message: string) => boolean,
+) {
   const pending: unknown[] = [error];
   const seen = new Set<object>();
   for (let index = 0; index < pending.length && index < 16; index += 1) {
@@ -38,13 +42,29 @@ function hasNestedErrorName(error: unknown, names: ReadonlySet<string>) {
     seen.add(currentError);
     const nested = currentError as {
       name?: unknown;
+      message?: unknown;
       cause?: unknown;
       error?: unknown;
     };
     if (typeof nested.name === 'string' && names.has(nested.name)) return true;
+    if (
+      typeof nested.message === 'string' &&
+      messageMatches?.(nested.message) === true
+    ) {
+      return true;
+    }
     pending.push(nested.cause, nested.error);
   }
   return false;
+}
+
+function isTransportTimeoutMessage(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    message === 'Request timeout' ||
+    normalized.includes('timed out') ||
+    normalized.includes('timeout')
+  );
 }
 
 function failedProgress(
@@ -94,7 +114,11 @@ function failedProgress(
     !current.hash &&
     (current.phase === 'awaiting-transaction' ||
       current.phase === 'awaiting-approval') &&
-    hasNestedErrorName(error, new Set(['TransportTimeoutError']))
+    hasNestedErrorSignature(
+      error,
+      new Set(['TransportTimeoutError']),
+      isTransportTimeoutMessage,
+    )
   ) {
     return {
       phase: 'submission-unknown',
@@ -102,7 +126,7 @@ function failedProgress(
         'The wallet stopped waiting before returning a transaction hash. The transaction may still have been submitted or confirmed on Arc. Close this dialog and check Activity or the affected market before retrying.',
     };
   }
-  const transportFailure = hasNestedErrorName(
+  const transportFailure = hasNestedErrorSignature(
     error,
     new Set([
       'FetchError',

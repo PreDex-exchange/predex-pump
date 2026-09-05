@@ -1375,6 +1375,7 @@ export function HybridOrderBookPanel({
           !address ||
           wrongNetwork ||
           actionTx.isBusy ||
+          actionTx.state.phase === 'submission-unknown' ||
           actionTx.state.phase === 'confirmed'
         }
         confirmLabel={
@@ -1436,7 +1437,11 @@ export function HybridOrderBookPanel({
                 <ApprovalExplanation requirement={fillRequirement} />
                 {fillRequirement.kind === 'COLLATERAL' ? (
                   <Button
-                    disabled={approvalTx.isBusy || wrongNetwork}
+                    disabled={
+                      approvalTx.isBusy ||
+                      approvalTx.state.phase === 'submission-unknown' ||
+                      wrongNetwork
+                    }
                     onClick={() =>
                       void approveCollateral(fillRequirement.amountRaw)
                     }
@@ -1451,7 +1456,11 @@ export function HybridOrderBookPanel({
                   </Button>
                 ) : (
                   <Button
-                    disabled={approvalTx.isBusy || wrongNetwork}
+                    disabled={
+                      approvalTx.isBusy ||
+                      approvalTx.state.phase === 'submission-unknown' ||
+                      wrongNetwork
+                    }
                     onClick={() => void approveTokens()}
                     size="small"
                     variant="neutral"

@@ -62,12 +62,20 @@ function nestedTransportTimeoutError() {
   });
 }
 
+function nestedPlainRequestTimeoutError() {
+  return Object.assign(new Error('wrapped wallet failure'), {
+    cause: { error: new Error('Request timeout') },
+  });
+}
+
 function WalletSubmission({
   phase,
   onAttempt,
+  error = nestedTransportTimeoutError(),
 }: {
   phase: 'awaiting-signature' | 'awaiting-transaction' | 'awaiting-approval';
   onAttempt?: () => void;
+  error?: unknown;
 }) {
   const flow = useTxFlow();
   return (
@@ -77,7 +85,7 @@ function WalletSubmission({
           void flow.execute(async (report) => {
             onAttempt?.();
             report({ phase, message: 'Confirm this transaction in your wallet.' });
-            throw nestedTransportTimeoutError();
+            throw error;
           })
         }
         type="button"
@@ -229,10 +237,34 @@ describe('useTxFlow action-specific failure copy', () => {
     },
   );
 
+  it.each(['awaiting-transaction', 'awaiting-approval'] as const)(
+    'treats the SDK plain Request timeout from %s as an unknown submission',
+    async (phase) => {
+      render(
+        <WalletSubmission
+          error={nestedPlainRequestTimeoutError()}
+          phase={phase}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+
+      await waitFor(() =>
+        expect(screen.getByText(SUBMISSION_UNKNOWN_MESSAGE)).toBeTruthy(),
+      );
+      expect(screen.getByText('submission unknown')).toBeTruthy();
+      expect(document.body.textContent).not.toMatch(/\b(?:failed|reverted)\b/iu);
+      expect(document.body.textContent).not.toContain('Request timeout');
+    },
+  );
+
   it('keeps an unknown submission visible and blocks retries until remount', async () => {
     const onAttempt = vi.fn();
     const rendered = render(
-      <WalletSubmission phase="awaiting-transaction" onAttempt={onAttempt} />,
+      <WalletSubmission
+        error={nestedPlainRequestTimeoutError()}
+        phase="awaiting-transaction"
+        onAttempt={onAttempt}
+      />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
     await waitFor(() => expect(onAttempt).toHaveBeenCalledTimes(1));
@@ -247,7 +279,13 @@ describe('useTxFlow action-specific failure copy', () => {
     expect(screen.getByText(SUBMISSION_UNKNOWN_MESSAGE)).toBeTruthy();
 
     rendered.unmount();
-    render(<WalletSubmission phase="awaiting-transaction" onAttempt={onAttempt} />);
+    render(
+      <WalletSubmission
+        error={nestedPlainRequestTimeoutError()}
+        phase="awaiting-transaction"
+        onAttempt={onAttempt}
+      />,
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
 
     await waitFor(() => expect(onAttempt).toHaveBeenCalledTimes(2));
@@ -268,6 +306,19 @@ describe('useTxFlow action-specific failure copy', () => {
     expect(screen.queryByText('submission unknown')).toBeNull();
   });
 
+  it('keeps the SDK plain Request timeout during signing as an ordinary failure', async () => {
+    render(
+      <WalletSubmission
+        error={nestedPlainRequestTimeoutError()}
+        phase="awaiting-signature"
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+
+    await waitFor(() => expect(screen.getByText('failed')).toBeTruthy());
+    expect(screen.queryByText('submission unknown')).toBeNull();
+  });
+
   it('keeps the same timeout during checking as an ordinary failure', async () => {
     render(<FailedTransaction error={nestedTransportTimeoutError()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
@@ -280,6 +331,14 @@ describe('useTxFlow action-specific failure copy', () => {
       ).toBeTruthy(),
     );
     expect(screen.getByText('failed')).toBeTruthy();
+    expect(screen.queryByText('submission unknown')).toBeNull();
+  });
+
+  it('keeps the SDK plain Request timeout during checking as an ordinary failure', async () => {
+    render(<FailedTransaction error={nestedPlainRequestTimeoutError()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+
+    await waitFor(() => expect(screen.getByText('failed')).toBeTruthy());
     expect(screen.queryByText('submission unknown')).toBeNull();
   });
 });

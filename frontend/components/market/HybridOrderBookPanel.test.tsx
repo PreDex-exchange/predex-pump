@@ -30,6 +30,8 @@ import {
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { TxProgress } from '@/lib/chain/transactions';
+
 import { HybridOrderBookPanel } from './HybridOrderBookPanel';
 import { OrderBookPanel } from './OrderBookPanel';
 
@@ -78,6 +80,10 @@ const mocks = vi.hoisted(() => ({
   withdrawOrder: vi.fn(),
   approvalReset: vi.fn(),
   actionReset: vi.fn(),
+  approvalExecute: vi.fn(),
+  actionExecute: vi.fn(),
+  approvalTxState: { phase: 'idle', message: 'Ready.' } as TxProgress,
+  actionTxState: { phase: 'idle', message: 'Ready.' } as TxProgress,
   txHookCall: 0,
 }));
 
@@ -147,10 +153,8 @@ vi.mock('@/lib/chain/useTxFlow', () => ({
     const isApprovalFlow = mocks.txHookCall % 2 === 0;
     mocks.txHookCall += 1;
     return {
-      state: { phase: 'idle', message: 'Ready.' },
-      execute: async <T,>(
-        operation: (report: (state: unknown) => void) => Promise<T>,
-      ) => operation(vi.fn()),
+      state: isApprovalFlow ? mocks.approvalTxState : mocks.actionTxState,
+      execute: isApprovalFlow ? mocks.approvalExecute : mocks.actionExecute,
       reset: isApprovalFlow ? mocks.approvalReset : mocks.actionReset,
       isBusy: false,
     };
@@ -354,6 +358,8 @@ beforeEach(() => {
   mocks.collateralBalance.data = 5_000_000n;
   mocks.collateralBalance.isLoading = false;
   mocks.collateralBalance.error = null;
+  mocks.approvalTxState = { phase: 'idle', message: 'Ready.' };
+  mocks.actionTxState = { phase: 'idle', message: 'Ready.' };
   mocks.txHookCall = 0;
   for (const mock of [
     mocks.approvals.refetch,
@@ -369,6 +375,8 @@ beforeEach(() => {
     mocks.collateralBalance.refetch,
     mocks.approvalReset,
     mocks.actionReset,
+    mocks.approvalExecute,
+    mocks.actionExecute,
     mocks.ensureSession,
   ]) {
     mock.mockReset();
@@ -378,6 +386,14 @@ beforeEach(() => {
   mocks.fillOrder.mockResolvedValue({});
   mocks.submitCancel.mockResolvedValue({});
   mocks.ensureSession.mockResolvedValue(false);
+  mocks.approvalExecute.mockImplementation(
+    async (operation: (report: (state: unknown) => void) => Promise<unknown>) =>
+      operation(vi.fn()),
+  );
+  mocks.actionExecute.mockImplementation(
+    async (operation: (report: (state: unknown) => void) => Promise<unknown>) =>
+      operation(vi.fn()),
+  );
 });
 
 afterEach(() => {
@@ -1052,6 +1068,54 @@ describe('Hybrid human trading surface', () => {
     );
     expect(mocks.approveCollateral).not.toHaveBeenCalled();
     expect(mocks.ensureSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unknown approval visibly non-retryable while allowing close', () => {
+    mocks.approvals.data = {
+      ...mocks.approvals.data,
+      collateralAllowanceRaw: '0',
+    };
+    mocks.approvalTxState = {
+      phase: 'submission-unknown',
+      message: 'The wallet response was lost. Check Arc before retrying.',
+    };
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'a4')));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }));
+    const dialog = within(screen.getByRole('dialog'));
+    const approve = dialog.getByRole('button', {
+      name: 'Approve exactly 0.650000 USDC to fill',
+    });
+
+    expect(approve.hasAttribute('disabled')).toBe(true);
+    expect(dialog.getByText('submission unknown')).toBeTruthy();
+    expect(
+      dialog.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled'),
+    ).toBe(false);
+    expect(dialog.queryByText('failed')).toBeNull();
+    fireEvent.click(approve);
+    expect(mocks.approvalExecute).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unknown fill visibly non-retryable while allowing close', () => {
+    mocks.actionTxState = {
+      phase: 'submission-unknown',
+      message: 'The wallet response was lost. Check Arc before retrying.',
+    };
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'a5')));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }));
+    const dialog = within(screen.getByRole('dialog'));
+    const fill = dialog.getByRole('button', { name: 'Fill on-chain' });
+
+    expect(fill.hasAttribute('disabled')).toBe(true);
+    expect(dialog.getByText('submission unknown')).toBeTruthy();
+    expect(
+      dialog.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled'),
+    ).toBe(false);
+    expect(dialog.queryByText('failed')).toBeNull();
+    fireEvent.click(fill);
+    expect(mocks.actionExecute).not.toHaveBeenCalled();
   });
 
   it('clears a consumed optimistic collateral allowance after a fill', async () => {
