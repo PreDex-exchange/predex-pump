@@ -43,6 +43,7 @@
 .pending .heading > span,
 .awaiting-approval .heading > span,
 .awaiting-signature .heading > span,
+.awaiting-transaction .heading > span,
 .checking .heading > span {
   animation: tx-pulse 1.2s ease-in-out infinite;
 }

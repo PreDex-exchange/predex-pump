@@ -92,7 +92,7 @@ function failedProgress(
   }
   if (
     !current.hash &&
-    (current.phase === 'awaiting-signature' ||
+    (current.phase === 'awaiting-transaction' ||
       current.phase === 'awaiting-approval') &&
     hasNestedErrorName(error, new Set(['TransportTimeoutError']))
   ) {

@@ -97,6 +97,7 @@ export type TxPhase =
   | 'awaiting-approval'
   | 'approval-pending'
   | 'awaiting-signature'
+  | 'awaiting-transaction'
   | 'pending'
   | 'confirmed'
   | 'rejected'
@@ -267,7 +268,7 @@ async function sendAndConfirm(
 ) {
   assertConnectedAccount(account);
   report({
-    phase: labels.approval ? 'awaiting-approval' : 'awaiting-signature',
+    phase: labels.approval ? 'awaiting-approval' : 'awaiting-transaction',
     message: labels.awaiting,
   });
 

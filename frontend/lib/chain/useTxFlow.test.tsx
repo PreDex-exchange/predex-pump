@@ -66,7 +66,7 @@ function WalletSubmission({
   phase,
   onAttempt,
 }: {
-  phase: 'awaiting-signature' | 'awaiting-approval';
+  phase: 'awaiting-signature' | 'awaiting-transaction' | 'awaiting-approval';
   onAttempt?: () => void;
 }) {
   const flow = useTxFlow();
@@ -209,7 +209,7 @@ describe('useTxFlow action-specific failure copy', () => {
     expect(screen.getByText(/Tx 0x12121212/u)).toBeTruthy();
   });
 
-  it.each(['awaiting-signature', 'awaiting-approval'] as const)(
+  it.each(['awaiting-transaction', 'awaiting-approval'] as const)(
     'treats a nested wallet timeout from %s as an unknown submission',
     async (phase) => {
       render(<WalletSubmission phase={phase} />);
@@ -232,7 +232,7 @@ describe('useTxFlow action-specific failure copy', () => {
   it('keeps an unknown submission visible and blocks retries until remount', async () => {
     const onAttempt = vi.fn();
     const rendered = render(
-      <WalletSubmission phase="awaiting-signature" onAttempt={onAttempt} />,
+      <WalletSubmission phase="awaiting-transaction" onAttempt={onAttempt} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
     await waitFor(() => expect(onAttempt).toHaveBeenCalledTimes(1));
@@ -247,10 +247,25 @@ describe('useTxFlow action-specific failure copy', () => {
     expect(screen.getByText(SUBMISSION_UNKNOWN_MESSAGE)).toBeTruthy();
 
     rendered.unmount();
-    render(<WalletSubmission phase="awaiting-signature" onAttempt={onAttempt} />);
+    render(<WalletSubmission phase="awaiting-transaction" onAttempt={onAttempt} />);
     fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
 
     await waitFor(() => expect(onAttempt).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps an off-chain signature timeout as an ordinary failure', async () => {
+    render(<WalletSubmission phase="awaiting-signature" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'The action failed before a transaction was confirmed. Nothing was reported as reverted on-chain.',
+        ),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText('failed')).toBeTruthy();
+    expect(screen.queryByText('submission unknown')).toBeNull();
   });
 
   it('keeps the same timeout during checking as an ordinary failure', async () => {
