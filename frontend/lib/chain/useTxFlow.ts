@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import {
   OnchainTransactionRevertedError,
@@ -21,6 +21,30 @@ export interface TxFlowOptions {
   checkingMessage?: string;
   failureMessage?: string;
   failurePhase?: 'rejected' | 'failed';
+}
+
+function hasNestedErrorName(error: unknown, names: ReadonlySet<string>) {
+  const pending: unknown[] = [error];
+  const seen = new Set<object>();
+  for (let index = 0; index < pending.length && index < 16; index += 1) {
+    const currentError = pending[index];
+    if (
+      typeof currentError !== 'object' ||
+      currentError === null ||
+      seen.has(currentError)
+    ) {
+      continue;
+    }
+    seen.add(currentError);
+    const nested = currentError as {
+      name?: unknown;
+      cause?: unknown;
+      error?: unknown;
+    };
+    if (typeof nested.name === 'string' && names.has(nested.name)) return true;
+    pending.push(nested.cause, nested.error);
+  }
+  return false;
 }
 
 function failedProgress(
@@ -66,32 +90,28 @@ function failedProgress(
       hash: current.hash,
     };
   }
-  const transportFailure = (() => {
-    const pending: unknown[] = [error];
-    const seen = new Set<object>();
-    const names = new Set([
+  if (
+    !current.hash &&
+    (current.phase === 'awaiting-transaction' ||
+      current.phase === 'awaiting-approval') &&
+    hasNestedErrorName(error, new Set(['TransportTimeoutError']))
+  ) {
+    return {
+      phase: 'submission-unknown',
+      message:
+        'The wallet stopped waiting before returning a transaction hash. The transaction may still have been submitted or confirmed on Arc. Close this dialog and check Activity or the affected market before retrying.',
+    };
+  }
+  const transportFailure = hasNestedErrorName(
+    error,
+    new Set([
       'FetchError',
       'HttpRequestError',
       'NetworkError',
       'TimeoutError',
       'WebSocketRequestError',
-    ]);
-    for (let index = 0; index < pending.length && index < 16; index += 1) {
-      const currentError = pending[index];
-      if (
-        typeof currentError !== 'object' ||
-        currentError === null ||
-        seen.has(currentError)
-      ) {
-        continue;
-      }
-      seen.add(currentError);
-      const nested = currentError as { name?: unknown; cause?: unknown; error?: unknown };
-      if (typeof nested.name === 'string' && names.has(nested.name)) return true;
-      pending.push(nested.cause, nested.error);
-    }
-    return false;
-  })();
+    ]),
+  );
   return {
     phase: 'failed',
     message: current.hash
@@ -105,33 +125,45 @@ function failedProgress(
 
 export function useTxFlow() {
   const [state, setState] = useState<TxProgress>(INITIAL_STATE);
+  const progressRef = useRef<TxProgress>(INITIAL_STATE);
+
+  const report = useCallback<TxReporter>((progress) => {
+    progressRef.current = progress;
+    setState(progress);
+  }, []);
 
   const execute = useCallback(
     async <T,>(
       operation: (report: TxReporter) => Promise<T>,
       options: TxFlowOptions = {},
     ) => {
-      setState({
+      if (progressRef.current.phase === 'submission-unknown') return null;
+
+      report({
         phase: 'checking',
         message:
           options.checkingMessage ??
           'Reading transaction-critical state from Arc…',
       });
       try {
-        return await operation(setState);
+        return await operation(report);
       } catch (error) {
-        setState((current) => failedProgress(error, current, options));
+        report(failedProgress(error, progressRef.current, options));
         return null;
       }
     },
-    [],
+    [report],
   );
 
-  const reset = useCallback(() => setState(INITIAL_STATE), []);
+  const reset = useCallback(() => {
+    if (progressRef.current.phase === 'submission-unknown') return;
+    report(INITIAL_STATE);
+  }, [report]);
   const isBusy =
     state.phase !== 'idle' &&
     state.phase !== 'confirmed' &&
     state.phase !== 'rejected' &&
+    state.phase !== 'submission-unknown' &&
     state.phase !== 'failed' &&
     state.phase !== 'reverted';
 

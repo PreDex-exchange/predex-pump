@@ -5,8 +5,9 @@ import styles from './TxStatus.module.css';
 
 export function TxStatus({ state }: { state: TxProgress }) {
   if (state.phase === 'idle') return null;
-  const failed =
+  const urgent =
     state.phase === 'rejected' ||
+    state.phase === 'submission-unknown' ||
     state.phase === 'failed' ||
     state.phase === 'reverted';
 
@@ -14,7 +15,7 @@ export function TxStatus({ state }: { state: TxProgress }) {
     <div
       aria-live="polite"
       className={`${styles.status} ${styles[state.phase]}`}
-      role={failed ? 'alert' : 'status'}
+      role={urgent ? 'alert' : 'status'}
     >
       <div className={styles.heading}>
         <span aria-hidden="true" />
