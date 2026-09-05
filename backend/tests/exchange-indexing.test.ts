@@ -1,11 +1,19 @@
 import { ADDRESSES } from '@predex-pump/shared';
-import type { Address, Hex } from 'viem';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { Side } from '@predex-pump/shared/tx';
+import type { Address, Hex, PublicClient } from 'viem';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getMarketBook } from '../src/api/queries.js';
+import {
+  getExchangeApprovalState,
+  getMarketBook,
+} from '../src/api/queries.js';
 import { ServerEventBus } from '../src/events/bus.js';
 import { publishIndexedEvents } from '../src/events/projector.js';
-import { applyDecodedEvents } from '../src/indexer/runner.js';
+import type { CollateralAllowanceSnapshot } from '../src/indexer/handlers.js';
+import {
+  applyDecodedEvents,
+  readExchangeFillAllowanceSnapshots,
+} from '../src/indexer/runner.js';
 import type { DecodedEvent } from '../src/indexer/types.js';
 import { OffchainOrderService } from '../src/orderbook/service.js';
 import { resetDatabase, testPrisma } from './database.js';
@@ -17,7 +25,6 @@ import {
   throwawayAccount,
   validChainState,
 } from './orderbook-fixtures.js';
-import { Side } from '@predex-pump/shared/tx';
 
 function event(
   source: DecodedEvent['source'],
@@ -36,6 +43,30 @@ function event(
     blockNumber,
     ts: BOOK_NOW + blockNumber,
   };
+}
+
+function exchangeFillEvent(input: {
+  orderHash: string;
+  maker: Address;
+  taker: Address;
+  blockNumber: number;
+  makerAmountFilled?: bigint;
+  takerAmountFilled?: bigint;
+}): DecodedEvent {
+  return event(
+    'CTF_EXCHANGE',
+    ADDRESSES.ctfExchange,
+    'OrderFilled',
+    {
+      orderHash: input.orderHash,
+      maker: input.maker,
+      taker: input.taker,
+      tokenId: 101n,
+      makerAmountFilled: input.makerAmountFilled ?? 1_000n,
+      takerAmountFilled: input.takerAmountFilled ?? 498n,
+    },
+    input.blockNumber,
+  );
 }
 
 describe('exchange approval and lifecycle indexing', () => {
@@ -80,13 +111,20 @@ describe('exchange approval and lifecycle indexing', () => {
     return created;
   }
 
-  async function apply(indexedEvent: DecodedEvent): Promise<number> {
+  async function apply(
+    indexedEvent: DecodedEvent,
+    collateralAllowanceSnapshots: readonly CollateralAllowanceSnapshot[] = [],
+  ): Promise<number> {
     return applyDecodedEvents(
       testPrisma,
       [indexedEvent],
       indexedEvent.blockNumber,
       indexedEvent.blockNumber,
       (events) => publishIndexedEvents(testPrisma, eventBus, events),
+      undefined,
+      undefined,
+      undefined,
+      collateralAllowanceSnapshots,
     );
   }
 
@@ -198,6 +236,239 @@ describe('exchange approval and lifecycle indexing', () => {
       ),
     );
     expect((await getMarketBook(testPrisma, '1'))?.yes.offchainOrders).toHaveLength(1);
+  });
+
+  it('repairs a silently consumed 498 allowance from an idempotent fill replay', async () => {
+    const created = await ingestSell(209n);
+    const taker = '0x2222222222222222222222222222222222222222';
+    await testPrisma.collateralExchangeApproval.create({
+      data: {
+        owner: taker,
+        allowanceRaw: '498',
+        blockNumber: 213,
+        logIndex: 4,
+        updatedAt: BOOK_NOW + 213,
+      },
+    });
+    const fillEvent = exchangeFillEvent({
+      orderHash: created.request.orderHash,
+      maker: created.account.address,
+      taker,
+      blockNumber: 214,
+    });
+
+    expect(await apply(fillEvent)).toBe(1);
+    await expect(getExchangeApprovalState(testPrisma, taker)).resolves.toMatchObject({
+      collateralAllowanceRaw: '498',
+    });
+
+    expect(
+      await apply(fillEvent, [
+        {
+          owner: taker,
+          allowanceRaw: 0n,
+          blockNumber: fillEvent.blockNumber,
+          updatedAt: fillEvent.ts,
+        },
+      ]),
+    ).toBe(0);
+    await expect(
+      testPrisma.collateralExchangeApproval.findUniqueOrThrow({
+        where: { owner: taker },
+      }),
+    ).resolves.toMatchObject({
+      allowanceRaw: '0',
+      blockNumber: 214,
+      logIndex: 2_147_483_647,
+      updatedAt: fillEvent.ts,
+    });
+    await expect(
+      testPrisma.trade.count({
+        where: { id: `${fillEvent.txHash}:${fillEvent.logIndex}` },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it('creates missing snapshots, advances stale rows, and protects later rows', async () => {
+    const owner = '0x4444444444444444444444444444444444444444';
+    const applySnapshots = (
+      toBlock: number,
+      snapshots: readonly CollateralAllowanceSnapshot[],
+    ) =>
+      applyDecodedEvents(
+        testPrisma,
+        [],
+        toBlock,
+        toBlock,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        snapshots,
+      );
+
+    await applySnapshots(230, [
+      { owner, allowanceRaw: 700n, blockNumber: 230, updatedAt: BOOK_NOW + 230 },
+    ]);
+    await expect(
+      testPrisma.collateralExchangeApproval.findUniqueOrThrow({ where: { owner } }),
+    ).resolves.toMatchObject({ allowanceRaw: '700', blockNumber: 230 });
+
+    await testPrisma.collateralExchangeApproval.update({
+      where: { owner },
+      data: { blockNumber: 231, logIndex: 4, updatedAt: BOOK_NOW + 231 },
+    });
+    await applySnapshots(231, [
+      { owner, allowanceRaw: 400n, blockNumber: 231, updatedAt: BOOK_NOW + 231 },
+    ]);
+    await expect(
+      testPrisma.collateralExchangeApproval.findUniqueOrThrow({ where: { owner } }),
+    ).resolves.toMatchObject({
+      allowanceRaw: '400',
+      blockNumber: 231,
+      logIndex: 2_147_483_647,
+    });
+
+    await testPrisma.collateralExchangeApproval.update({
+      where: { owner },
+      data: {
+        allowanceRaw: '900',
+        blockNumber: 233,
+        logIndex: 1,
+        updatedAt: BOOK_NOW + 233,
+      },
+    });
+    await applySnapshots(234, [
+      { owner, allowanceRaw: 0n, blockNumber: 232, updatedAt: BOOK_NOW + 232 },
+    ]);
+    await expect(
+      testPrisma.collateralExchangeApproval.findUniqueOrThrow({ where: { owner } }),
+    ).resolves.toMatchObject({
+      allowanceRaw: '900',
+      blockNumber: 233,
+      logIndex: 1,
+    });
+  });
+
+  it('deduplicates known fill payers into one highest-block allowance read', async () => {
+    const ask = await ingestSell(210n);
+    const bid = await signedOrderRequest({
+      side: Side.BUY,
+      priceRaw: 600_000n,
+      sizeRaw: 1_000_000n,
+      salt: 211n,
+    });
+    reader.state = validChainState({
+      approvalKind: 'COLLATERAL_ALLOWANCE',
+      collateralAllowance: 10_000_000n,
+      ctfApprovedForAll: null,
+    });
+    await service.ingest(bid.request);
+    const askTaker = '0x5555555555555555555555555555555555555555';
+    const unknownHash = `0x${'f'.repeat(64)}`;
+    const fills = [
+      exchangeFillEvent({
+        orderHash: ask.request.orderHash,
+        maker: ask.account.address,
+        taker: askTaker,
+        blockNumber: 240,
+        takerAmountFilled: 650n,
+      }),
+      exchangeFillEvent({
+        orderHash: ask.request.orderHash,
+        maker: ask.account.address,
+        taker: askTaker,
+        blockNumber: 241,
+        takerAmountFilled: 650n,
+      }),
+      exchangeFillEvent({
+        orderHash: bid.request.orderHash,
+        maker: bid.account.address,
+        taker: '0x6666666666666666666666666666666666666666',
+        blockNumber: 245,
+        makerAmountFilled: 600n,
+        takerAmountFilled: 1_000n,
+      }),
+      exchangeFillEvent({
+        orderHash: unknownHash,
+        maker: '0x7777777777777777777777777777777777777777',
+        taker: '0x8888888888888888888888888888888888888888',
+        blockNumber: 250,
+        takerAmountFilled: 500n,
+      }),
+    ];
+    const multicall = vi.fn(async () => [
+      { status: 'success' as const, result: 0n },
+      { status: 'success' as const, result: 123n },
+    ]);
+    const spacer = vi.fn(async () => undefined);
+
+    const snapshots = await readExchangeFillAllowanceSnapshots(
+      testPrisma,
+      { multicall } as unknown as PublicClient,
+      fills,
+      400,
+      spacer,
+    );
+
+    expect(spacer).toHaveBeenCalledOnce();
+    expect(spacer).toHaveBeenCalledWith(400);
+    expect(multicall).toHaveBeenCalledOnce();
+    expect(multicall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowFailure: true,
+        blockNumber: 250n,
+        contracts: expect.arrayContaining([
+          expect.objectContaining({
+            functionName: 'allowance',
+            args: [askTaker, ADDRESSES.ctfExchange],
+          }),
+          expect.objectContaining({
+            functionName: 'allowance',
+            args: [bid.account.address.toLowerCase(), ADDRESSES.ctfExchange],
+          }),
+        ]),
+      }),
+    );
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots.map(({ owner }) => owner).sort()).toEqual(
+      [askTaker, bid.account.address.toLowerCase()].sort(),
+    );
+    expect(snapshots).toEqual(
+      snapshots.map((snapshot) => ({
+        ...snapshot,
+        blockNumber: 250,
+        updatedAt: BOOK_NOW + 250,
+      })),
+    );
+
+    multicall.mockClear();
+    spacer.mockClear();
+    await expect(
+      readExchangeFillAllowanceSnapshots(
+        testPrisma,
+        { multicall } as unknown as PublicClient,
+        [event('CTF_EXCHANGE', ADDRESSES.ctfExchange, 'OrderCancelled', {}, 251)],
+        400,
+        spacer,
+      ),
+    ).resolves.toEqual([]);
+    expect(multicall).not.toHaveBeenCalled();
+    expect(spacer).not.toHaveBeenCalled();
+
+    const partialMulticall = vi.fn(async () => [
+      { status: 'success' as const, result: 0n },
+      { status: 'failure' as const, error: new Error('one allowance read failed') },
+    ]);
+    await expect(
+      readExchangeFillAllowanceSnapshots(
+        testPrisma,
+        { multicall: partialMulticall } as unknown as PublicClient,
+        fills,
+        0,
+      ),
+    ).rejects.toThrow('one allowance read failed');
+    expect(partialMulticall).toHaveBeenCalledOnce();
   });
 
   it('indexes exchange fills, cancellation, and token registration', async () => {

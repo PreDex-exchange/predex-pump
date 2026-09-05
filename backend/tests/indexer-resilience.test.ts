@@ -1,4 +1,5 @@
 import { ADDRESSES } from '@predex-pump/shared';
+import { Side } from '@predex-pump/shared/tx';
 import type { FastifyInstance } from 'fastify';
 import {
   encodeAbiParameters,
@@ -22,8 +23,11 @@ import { loadRuntimeConfig, type RuntimeConfig } from '../src/config.js';
 import { ServerEventBus } from '../src/events/bus.js';
 import { CONTRACT_BY_ADDRESS } from '../src/indexer/abis.js';
 import { runIndexer } from '../src/indexer/runner.js';
+import { signedOrderCreateData } from '../src/orderbook/order.js';
 import { testChainStateReader } from './chain-state-fixtures.js';
 import { resetDatabase, testPrisma } from './database.js';
+import { MARKET_ONE_CONDITION, seedContractData } from './fixtures.js';
+import { BOOK_NOW, signedOrderRequest } from './orderbook-fixtures.js';
 
 const RPC_URL = 'https://rpc.example.test';
 
@@ -51,11 +55,13 @@ function asClient(methods: {
     toBlock?: bigint;
   }) => Promise<unknown[]>;
   getBlock?: () => Promise<{ timestamp: bigint }>;
+  multicall?: (parameters: unknown) => Promise<unknown>;
 }): PublicClient {
   return {
     getBlockNumber: methods.getBlockNumber,
     getLogs: methods.getLogs,
     getBlock: methods.getBlock ?? vi.fn(),
+    ...(methods.multicall === undefined ? {} : { multicall: methods.multicall }),
   } as unknown as PublicClient;
 }
 
@@ -89,6 +95,42 @@ function registeredMarketTypeLog() {
       args: { version: 7, lmsr: ADDRESSES.lmsr },
     }),
     transactionHash: `0x${'c'.repeat(64)}` as Hex,
+    transactionIndex: 0,
+  };
+}
+
+function exchangeOrderFilledLog(input: {
+  orderHash: Hex;
+  maker: `0x${string}`;
+  taker: `0x${string}`;
+  blockNumber: bigint;
+}) {
+  const abi = CONTRACT_BY_ADDRESS.get(ADDRESSES.ctfExchange.toLowerCase())?.abi;
+  if (abi === undefined) throw new Error('CTFExchange ABI unavailable');
+  return {
+    address: ADDRESSES.ctfExchange,
+    blockHash: `0x${'d'.repeat(64)}` as Hex,
+    blockNumber: input.blockNumber,
+    data: encodeAbiParameters(
+      [
+        { name: 'tokenId', type: 'uint256' },
+        { name: 'makerAmountFilled', type: 'uint256' },
+        { name: 'takerAmountFilled', type: 'uint256' },
+      ],
+      [101n, 1_000n, 498n],
+    ),
+    logIndex: 3,
+    removed: false,
+    topics: encodeEventTopics({
+      abi,
+      eventName: 'OrderFilled',
+      args: {
+        orderHash: input.orderHash,
+        maker: input.maker,
+        taker: input.taker,
+      },
+    }),
+    transactionHash: `0x${'e'.repeat(64)}` as Hex,
     transactionIndex: 0,
   };
 }
@@ -160,6 +202,96 @@ describe('indexer RPC resilience', () => {
       headBlock: 103,
       consecutiveRpcFailures: 0,
       lastSuccessfulPollAt: expect.any(Date),
+    });
+  });
+
+  it('leaves the fill, allowance row, and cursor untouched when its allowance read fails', async () => {
+    await seedContractData();
+    await testPrisma.indexerState.update({
+      where: { id: 1 },
+      data: { deployBlock: 100, lastBlock: 99, headBlock: 99 },
+    });
+    const makerOrder = await signedOrderRequest({
+      side: Side.SELL,
+      priceRaw: 498_000n,
+      sizeRaw: 1_000n,
+      salt: 301n,
+    });
+    await testPrisma.signedOrder.create({
+      data: signedOrderCreateData({
+        orderHash: makerOrder.request.orderHash,
+        order: makerOrder.order,
+        marketId: '1',
+        conditionId: MARKET_ONE_CONDITION,
+        outcome: 'YES',
+        now: BOOK_NOW,
+      }),
+    });
+    const taker = '0x2222222222222222222222222222222222222222';
+    await testPrisma.collateralExchangeApproval.create({
+      data: {
+        owner: taker,
+        allowanceRaw: '498',
+        blockNumber: 99,
+        logIndex: 1,
+        updatedAt: BOOK_NOW,
+      },
+    });
+    const fillLog = exchangeOrderFilledLog({
+      orderHash: makerOrder.request.orderHash,
+      maker: makerOrder.account.address,
+      taker,
+      blockNumber: 100n,
+    });
+    const controller = new AbortController();
+    const multicall = vi.fn(async () => {
+      throw new TimeoutError({ body: {}, url: RPC_URL });
+    });
+    const client = asClient({
+      getBlockNumber: async () => 100n,
+      getLogs: async ({ address }) => (Array.isArray(address) ? [fillLog] : []),
+      getBlock: async () => ({ timestamp: BigInt(BOOK_NOW + 100) }),
+      multicall,
+    });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    try {
+      await runIndexer(testPrisma, testConfig(), {
+        once: true,
+        client,
+        chainStateReader: testChainStateReader,
+        signal: controller.signal,
+        random: () => 0,
+        wait: async () => {
+          controller.abort();
+        },
+      });
+    } finally {
+      warning.mockRestore();
+      info.mockRestore();
+    }
+
+    expect(multicall).toHaveBeenCalledOnce();
+    expect(multicall).toHaveBeenCalledWith(
+      expect.objectContaining({ blockNumber: 100n }),
+    );
+    await expect(
+      testPrisma.activityEvent.count({
+        where: { txHash: fillLog.transactionHash },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      testPrisma.collateralExchangeApproval.findUniqueOrThrow({
+        where: { owner: taker },
+      }),
+    ).resolves.toMatchObject({ allowanceRaw: '498', blockNumber: 99 });
+    await expect(
+      testPrisma.indexerState.findUniqueOrThrow({ where: { id: 1 } }),
+    ).resolves.toMatchObject({
+      lastBlock: 99,
+      headBlock: 100,
+      consecutiveRpcFailures: 1,
     });
   });
 
