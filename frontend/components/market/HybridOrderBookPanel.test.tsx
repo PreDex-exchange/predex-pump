@@ -1053,4 +1053,52 @@ describe('Hybrid human trading surface', () => {
     expect(mocks.approveCollateral).not.toHaveBeenCalled();
     expect(mocks.ensureSession).not.toHaveBeenCalled();
   });
+
+  it('clears a consumed optimistic collateral allowance after a fill', async () => {
+    mocks.approvals.data = {
+      ...mocks.approvals.data,
+      collateralAllowanceRaw: '0',
+    };
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'a0')));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fill' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Approve exactly 0.650000 USDC to fill',
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.approveCollateral).toHaveBeenCalledWith({
+        account: mocks.address,
+        amountRaw: 650_000n,
+        report: expect.any(Function),
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText('Required taker approval is ready.')).toBeTruthy(),
+    );
+    expect(mocks.approvals.refetch).toHaveBeenCalledOnce();
+    mocks.approvals.refetch.mockClear();
+
+    const fill = screen.getByRole('button', { name: 'Fill on-chain' });
+    expect(fill.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(fill);
+
+    await waitFor(() => expect(mocks.fillOrder).toHaveBeenCalledOnce());
+    await waitFor(() => expect(mocks.approvals.refetch).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', {
+          name: 'Approve exactly 0.650000 USDC to fill',
+        }),
+      ).toBeTruthy(),
+    );
+    expect(mocks.approvals.data.collateralAllowanceRaw).toBe('0');
+    expect(
+      screen
+        .getByRole('button', { name: 'Fill on-chain' })
+        .hasAttribute('disabled'),
+    ).toBe(true);
+  });
 });

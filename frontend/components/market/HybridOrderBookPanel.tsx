@@ -589,6 +589,7 @@ export function HybridOrderBookPanel({
     ) {
       return;
     }
+    const collateralApprovalConsumed = fillRequirement.kind === 'COLLATERAL';
     actionTx.reset();
     const result = await actionTx.execute((report) =>
       fillCtfExchangeOrderOnArc({
@@ -599,6 +600,10 @@ export function HybridOrderBookPanel({
       }),
     );
     if (!result) return;
+    if (collateralApprovalConsumed) {
+      setCollateralConfirmed(null);
+      approvals.refetch();
+    }
     setCompletion(
       `Fill confirmed for ${formatRaw(fillSizeRaw.toString(), {
         minimumFractionDigits: 0,
