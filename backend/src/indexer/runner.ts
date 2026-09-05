@@ -590,6 +590,14 @@ async function requestExchangeFillAllowanceSnapshots(
   wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
   random: () => number,
 ): Promise<CollateralAllowanceSnapshot[] | undefined> {
+  if (
+    !events.some(
+      (event) =>
+        event.source === 'CTF_EXCHANGE' && event.eventName === 'OrderFilled',
+    )
+  ) {
+    return [];
+  }
   const result = await requestRpcWithRetry(
     prisma,
     operation,
