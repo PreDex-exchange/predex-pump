@@ -100,6 +100,7 @@ export type TxPhase =
   | 'pending'
   | 'confirmed'
   | 'rejected'
+  | 'submission-unknown'
   | 'failed'
   | 'reverted';
 

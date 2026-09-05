@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TxStatus } from '@/components/ui/TxStatus';
 
@@ -53,6 +53,50 @@ function FailedTransaction({ error }: { error: unknown }) {
     </>
   );
 }
+
+function nestedTransportTimeoutError() {
+  const timeout = new Error('unsafe wallet timeout details');
+  timeout.name = 'TransportTimeoutError';
+  return Object.assign(new Error('wrapped wallet failure'), {
+    cause: { error: timeout },
+  });
+}
+
+function WalletSubmission({
+  phase,
+  onAttempt,
+}: {
+  phase: 'awaiting-signature' | 'awaiting-approval';
+  onAttempt?: () => void;
+}) {
+  const flow = useTxFlow();
+  return (
+    <>
+      <button
+        onClick={() =>
+          void flow.execute(async (report) => {
+            onAttempt?.();
+            report({ phase, message: 'Confirm this transaction in your wallet.' });
+            throw nestedTransportTimeoutError();
+          })
+        }
+        type="button"
+      >
+        Transact
+      </button>
+      <button onClick={flow.reset} type="button">
+        Reset
+      </button>
+      <button disabled={flow.isBusy} type="button">
+        Close
+      </button>
+      <TxStatus state={flow.state} />
+    </>
+  );
+}
+
+const SUBMISSION_UNKNOWN_MESSAGE =
+  'The wallet stopped waiting before returning a transaction hash. The transaction may still have been submitted or confirmed on Arc. Close this dialog and check Activity or the affected market before retrying.';
 
 describe('useTxFlow action-specific failure copy', () => {
   it('does not label an off-chain rejection as a transaction failure', async () => {
@@ -163,5 +207,64 @@ describe('useTxFlow action-specific failure copy', () => {
     );
     expect(screen.getByText('reverted')).toBeTruthy();
     expect(screen.getByText(/Tx 0x12121212/u)).toBeTruthy();
+  });
+
+  it.each(['awaiting-signature', 'awaiting-approval'] as const)(
+    'treats a nested wallet timeout from %s as an unknown submission',
+    async (phase) => {
+      render(<WalletSubmission phase={phase} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+
+      await waitFor(() =>
+        expect(screen.getByText(SUBMISSION_UNKNOWN_MESSAGE)).toBeTruthy(),
+      );
+      expect(screen.getByText('submission unknown')).toBeTruthy();
+      expect(screen.getByRole('alert')).toBeTruthy();
+      expect(
+        (screen.getByRole('button', { name: 'Close' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+      expect(document.body.textContent).not.toMatch(/\b(?:failed|reverted)\b/iu);
+      expect(document.body.textContent).not.toContain('unsafe wallet timeout details');
+    },
+  );
+
+  it('keeps an unknown submission visible and blocks retries until remount', async () => {
+    const onAttempt = vi.fn();
+    const rendered = render(
+      <WalletSubmission phase="awaiting-signature" onAttempt={onAttempt} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+    await waitFor(() => expect(onAttempt).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByText(SUBMISSION_UNKNOWN_MESSAGE)).toBeTruthy(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+
+    expect(onAttempt).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(SUBMISSION_UNKNOWN_MESSAGE)).toBeTruthy();
+
+    rendered.unmount();
+    render(<WalletSubmission phase="awaiting-signature" onAttempt={onAttempt} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+
+    await waitFor(() => expect(onAttempt).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps the same timeout during checking as an ordinary failure', async () => {
+    render(<FailedTransaction error={nestedTransportTimeoutError()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Transact' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'The action failed before a transaction was confirmed. Nothing was reported as reverted on-chain.',
+        ),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText('failed')).toBeTruthy();
+    expect(screen.queryByText('submission unknown')).toBeNull();
   });
 });
