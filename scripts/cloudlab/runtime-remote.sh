@@ -487,7 +487,7 @@ unit_preflight() {
 }
 
 cleanup_failed_up() {
-  trap - ERR INT TERM
+  trap - EXIT ERR INT TERM
   systemctl_user stop predex-operator.service >/dev/null 2>&1 || true
   systemctl_user stop predex-frontend.service >/dev/null 2>&1 || true
   systemctl_user stop predex-indexer.service >/dev/null 2>&1 || true
@@ -496,7 +496,7 @@ cleanup_failed_up() {
   compose stop postgres qdrant redis >/dev/null 2>&1 || true
   systemctl_user stop predex.target >/dev/null 2>&1 || true
   systemctl_user disable predex.target >/dev/null 2>&1 || true
-  rm -f "$ACTIVE_FILE"
+  rm -f "$ACTIVE_FILE" || true
 }
 
 write_active_marker() {
@@ -521,7 +521,9 @@ up_runtime() {
   assert_operator_credential
   write_runtime_env "$source_id"
 
-  trap cleanup_failed_up ERR INT TERM
+  trap cleanup_failed_up EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   systemctl_user reset-failed "${SERVICE_UNITS[@]}" predex.target >/dev/null 2>&1 || true
   systemctl_user start predex-data.service
   wait_data
@@ -537,7 +539,7 @@ up_runtime() {
   systemctl_user start predex.target
   systemctl_user enable predex.target
   write_active_marker "$source_id"
-  trap - ERR INT TERM
+  trap - EXIT ERR INT TERM
   printf 'Predex persistent runtime is active at source %s.\n' "$source_id"
 }
 

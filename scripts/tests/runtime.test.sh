@@ -69,7 +69,10 @@ assert_file_contains "$UNIT_DIR/predex-operator.service" 'ExecStart=/usr/bin/env
 if grep -Fq 'OPERATOR_PRIVATE_KEY_FILE=%d' "$UNIT_DIR/predex-operator.service"; then
   fail 'operator unit uses unsupported percent-d credential expansion'
 fi
-assert_file_contains "$UNIT_DIR/predex-frontend.service" '127.0.0.1 --port 3002'
+assert_file_contains "$UNIT_DIR/predex-frontend.service" 'ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm start --hostname 127.0.0.1 --port 3002'
+if grep -Fq 'pnpm start -- --hostname' "$UNIT_DIR/predex-frontend.service"; then
+  fail 'frontend unit forwards an extra argument separator to Next.js'
+fi
 assert_file_contains "$UNIT_DIR/predex-api.service" 'Environment=DATABASE_POOL_SIZE=8'
 assert_file_contains "$UNIT_DIR/predex-indexer.service" 'Environment=DATABASE_POOL_SIZE=8'
 assert_file_contains "$UNIT_DIR/predex-operator.service" 'Environment=DATABASE_POOL_SIZE=8'
@@ -236,6 +239,8 @@ case "$command_name" in
     exit 3
     ;;
   is-failed)
+    unit="${args[${#args[@]} - 1]}"
+    [[ "$unit" == "${FAKE_SYSTEMCTL_FAILED_UNIT:-}" ]] && exit 0
     exit 1
     ;;
   reset-failed)
@@ -244,7 +249,9 @@ case "$command_name" in
     ;;
   start|restart)
     for unit in "${args[@]:1}"; do
-      [[ "$unit" == --* ]] || : > "$FAKE_SYSTEMCTL_STATE_DIR/$unit"
+      if [[ "$unit" != --* && "$unit" != "${FAKE_SYSTEMCTL_FAILED_UNIT:-}" ]]; then
+        : > "$FAKE_SYSTEMCTL_STATE_DIR/$unit"
+      fi
     done
     ;;
   stop)
@@ -417,6 +424,36 @@ up_env=(
   PREDEX_RUNTIME_CURL_BIN="$fake_curl"
   PREDEX_CHAIN_READY_TIMEOUT_SECONDS=2
 )
+
+# A direct fail() after partial startup must still run EXIT cleanup. Simulate
+# the frontend entering failed/inactive after data, API, and indexer started.
+: > "$systemctl_log"
+: > "$docker_log"
+if env "${up_env[@]}" \
+  FAKE_SYSTEMCTL_FAILED_UNIT=predex-frontend.service \
+  "$REMOTE_HELPER" up >"$test_root/failed-up.output" 2>&1; then
+  fail 'up accepted a failed frontend unit'
+fi
+[[ ! -e "$runtime_root/active" ]] ||
+  fail 'failed up left an active marker'
+for unit in "${expected_units[@]}"; do
+  [[ ! -e "$systemctl_state/$unit" ]] ||
+    fail "failed up left a partial unit active: $unit"
+done
+failed_systemctl_calls="$(cat "$systemctl_log")"
+assert_contains "$failed_systemctl_calls" '--user start predex-data.service'
+assert_contains "$failed_systemctl_calls" '--user start predex-api.service predex-indexer.service predex-frontend.service'
+assert_contains "$failed_systemctl_calls" '--user stop predex-operator.service'
+assert_contains "$failed_systemctl_calls" '--user stop predex-frontend.service'
+assert_contains "$failed_systemctl_calls" '--user stop predex-indexer.service'
+assert_contains "$failed_systemctl_calls" '--user stop predex-api.service'
+assert_contains "$failed_systemctl_calls" '--user stop predex-data.service'
+assert_contains "$failed_systemctl_calls" '--user stop predex.target'
+assert_contains "$failed_systemctl_calls" '--user disable predex.target'
+assert_contains "$(cat "$docker_log")" 'stop postgres qdrant redis'
+
+: > "$systemctl_log"
+: > "$docker_log"
 env "${up_env[@]}" "$REMOTE_HELPER" up >/dev/null
 [[ -f "$runtime_root/active" && ! -L "$runtime_root/active" ]] ||
   fail 'successful up did not write the active marker'
