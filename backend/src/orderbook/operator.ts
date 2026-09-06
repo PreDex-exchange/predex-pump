@@ -1,3 +1,5 @@
+import { lstat, readFile } from 'node:fs/promises';
+
 import type { PrismaClient } from '@prisma/client';
 import { ADDRESSES } from '@predex-pump/shared';
 import {
@@ -267,6 +269,14 @@ export class SettlementOperator {
 export function operatorAccountFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): LocalAccount {
+  if (
+    env.OPERATOR_PRIVATE_KEY !== undefined &&
+    env.OPERATOR_PRIVATE_KEY_FILE !== undefined
+  ) {
+    throw new Error(
+      'OPERATOR_PRIVATE_KEY and OPERATOR_PRIVATE_KEY_FILE are mutually exclusive',
+    );
+  }
   const value = env.OPERATOR_PRIVATE_KEY;
   if (value === undefined || !/^0x[0-9a-fA-F]{64}$/u.test(value)) {
     throw new Error('OPERATOR_PRIVATE_KEY must be a 32-byte hex key');
@@ -274,6 +284,67 @@ export function operatorAccountFromEnv(
   const account = privateKeyToAccount(value as Hex);
   if (!isAddressEqual(account.address, ADDRESSES.ctfExchangeOperator)) {
     throw new Error('OPERATOR_PRIVATE_KEY does not belong to the configured operator');
+  }
+  return account;
+}
+
+export interface OperatorCredentialFileReader {
+  lstat(path: string): Promise<{ mode: number; isFile(): boolean }>;
+  readFile(path: string): Promise<string>;
+}
+
+const nodeOperatorCredentialFileReader: OperatorCredentialFileReader = {
+  lstat,
+  readFile: (path) => readFile(path, 'utf8'),
+};
+
+export async function loadOperatorPrivateKey(
+  env: NodeJS.ProcessEnv = process.env,
+  reader: OperatorCredentialFileReader = nodeOperatorCredentialFileReader,
+): Promise<Hex> {
+  const direct = env.OPERATOR_PRIVATE_KEY;
+  const configuredPath = env.OPERATOR_PRIVATE_KEY_FILE;
+  if (direct !== undefined && configuredPath !== undefined) {
+    throw new Error(
+      'OPERATOR_PRIVATE_KEY and OPERATOR_PRIVATE_KEY_FILE are mutually exclusive',
+    );
+  }
+  if (direct !== undefined) {
+    if (!/^0x[0-9a-fA-F]{64}$/u.test(direct)) {
+      throw new Error('OPERATOR_PRIVATE_KEY must be a 32-byte hex key');
+    }
+    return direct as Hex;
+  }
+  const path = configuredPath?.trim();
+  if (!path) {
+    throw new Error(
+      'Set exactly one of OPERATOR_PRIVATE_KEY or OPERATOR_PRIVATE_KEY_FILE',
+    );
+  }
+  const metadata = await reader.lstat(path);
+  if (!metadata.isFile()) {
+    throw new Error('OPERATOR_PRIVATE_KEY_FILE must refer to a regular file');
+  }
+  if ((metadata.mode & 0o077) !== 0 || (metadata.mode & 0o400) === 0) {
+    throw new Error(
+      'OPERATOR_PRIVATE_KEY_FILE must be owner-readable and inaccessible to group/other users',
+    );
+  }
+  const value = (await reader.readFile(path)).trim();
+  if (!/^0x[0-9a-fA-F]{64}$/u.test(value)) {
+    throw new Error('OPERATOR_PRIVATE_KEY_FILE must contain a 32-byte hex key');
+  }
+  return value as Hex;
+}
+
+export async function operatorAccountFromRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+  reader: OperatorCredentialFileReader = nodeOperatorCredentialFileReader,
+): Promise<LocalAccount> {
+  const value = await loadOperatorPrivateKey(env, reader);
+  const account = privateKeyToAccount(value);
+  if (!isAddressEqual(account.address, ADDRESSES.ctfExchangeOperator)) {
+    throw new Error('Operator credential does not belong to the configured operator');
   }
   return account;
 }
