@@ -233,6 +233,10 @@ case "$command_name" in
   is-failed)
     exit 1
     ;;
+  reset-failed)
+    # systemd 249 rejects reset-failed for units it has never loaded.
+    exit 5
+    ;;
   start|restart)
     for unit in "${args[@]:1}"; do
       [[ "$unit" == --* ]] || : > "$FAKE_SYSTEMCTL_STATE_DIR/$unit"
@@ -414,6 +418,7 @@ env "${up_env[@]}" "$REMOTE_HELPER" up >/dev/null
 assert_file_contains "$runtime_root/active" "source_id=$source_id"
 assert_file_contains "$runtime_root/runtime.env" "PREDEX_EXPECTED_SOURCE_ID=$source_id"
 systemctl_calls="$(cat "$systemctl_log")"
+assert_contains "$systemctl_calls" '--user reset-failed predex-data.service predex-api.service predex-indexer.service predex-operator.service predex-frontend.service predex.target'
 assert_contains "$systemctl_calls" '--user start predex-data.service'
 assert_contains "$systemctl_calls" '--user start predex-api.service predex-indexer.service predex-frontend.service'
 assert_contains "$systemctl_calls" '--user start predex-operator.service'

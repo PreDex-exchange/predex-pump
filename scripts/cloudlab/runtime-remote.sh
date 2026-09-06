@@ -522,7 +522,7 @@ up_runtime() {
   write_runtime_env "$source_id"
 
   trap cleanup_failed_up ERR INT TERM
-  systemctl_user reset-failed "${SERVICE_UNITS[@]}" predex.target
+  systemctl_user reset-failed "${SERVICE_UNITS[@]}" predex.target >/dev/null 2>&1 || true
   systemctl_user start predex-data.service
   wait_data
   systemctl_user start predex-api.service predex-indexer.service predex-frontend.service
