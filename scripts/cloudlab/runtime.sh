@@ -15,7 +15,8 @@ case "$CLOUDLAB_REMOTE_ROOT" in
     ;;
 esac
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd -P)"
 REMOTE_HELPER="$CLOUDLAB_REMOTE_ROOT/source/scripts/cloudlab/runtime-remote.sh"
 LOCAL_OPERATOR_CREDENTIAL="${PREDEX_OPERATOR_CREDENTIAL_FILE:-$REPO_ROOT/../.credentials/.arc}"
 SSH_ARGS=(
