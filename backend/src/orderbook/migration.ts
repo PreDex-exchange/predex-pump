@@ -429,6 +429,12 @@ export class BookMigrationOperator {
         'Registry lifecycle does not match the graduated market',
       );
     }
+    if (state.registryTradingEndsAt !== BigInt(market.tradingEndsAt)) {
+      throw new MigrationInvariantError(
+        'REGISTRY_BINDING_MISMATCH',
+        'Registry trading deadline does not match the indexed market',
+      );
+    }
     if (
       !isAddressEqual(state.registryBinding.collateralAddress, ADDRESSES.usdc) ||
       !isAddressEqual(state.registryBinding.ctfAddress, ADDRESSES.ctf) ||
@@ -549,17 +555,21 @@ export class BookMigrationOperator {
     const { conditionId, yesTokenId, noTokenId } = this.stateInput(migration);
     const yesAbsent =
       state.yesRegistration.complementTokenId === 0n &&
-      state.yesRegistration.conditionId.toLowerCase() === zeroHash;
+      state.yesRegistration.conditionId.toLowerCase() === zeroHash &&
+      state.yesRegistration.tradingEndsAt === 0n;
     const noAbsent =
       state.noRegistration.complementTokenId === 0n &&
-      state.noRegistration.conditionId.toLowerCase() === zeroHash;
+      state.noRegistration.conditionId.toLowerCase() === zeroHash &&
+      state.noRegistration.tradingEndsAt === 0n;
     if (yesAbsent && noAbsent) return 'ABSENT';
     const expectedCondition = conditionId.toLowerCase();
     if (
       state.yesRegistration.complementTokenId === noTokenId &&
       state.noRegistration.complementTokenId === yesTokenId &&
       state.yesRegistration.conditionId.toLowerCase() === expectedCondition &&
-      state.noRegistration.conditionId.toLowerCase() === expectedCondition
+      state.noRegistration.conditionId.toLowerCase() === expectedCondition &&
+      state.yesRegistration.tradingEndsAt === state.registryTradingEndsAt &&
+      state.noRegistration.tradingEndsAt === state.registryTradingEndsAt
     ) {
       return 'REGISTERED';
     }
@@ -642,6 +652,7 @@ export class BookMigrationOperator {
           tokenId: yesTokenId,
           complement: noTokenId,
           conditionId,
+          tradingEndsAt: BigInt(migration.market.tradingEndsAt),
         }),
       );
     } catch (error) {
@@ -833,6 +844,9 @@ export class BookMigrationOperator {
     if (market.yesTokenId === null || market.noTokenId === null) {
       throw new MigrationInvariantError('INVALID_SEED', 'Market token binding is missing');
     }
+    if (this.tradingEnded(migration, state)) {
+      return this.stageEndedHandoff(migration, state);
+    }
     const minimumTickSizeRaw = BigInt(market.minimumTickSizeRaw);
     try {
       assertAllowedMinimumTickSizeRaw(minimumTickSizeRaw);
@@ -896,6 +910,7 @@ export class BookMigrationOperator {
           priceRaw: prices[outcome],
           sizeRaw,
           nonce: state.makerNonce,
+          expiration: BigInt(market.tradingEndsAt),
           salt,
         });
         if (ctfExchangeOrderTerms(unsigned).priceRaw !== prices[outcome]) {
@@ -998,6 +1013,94 @@ export class BookMigrationOperator {
     return { outcome: 'PROGRESSED', marketId: migration.marketId };
   }
 
+  private async stageEndedHandoff(
+    migration: ClaimedMigration,
+    state: BookMigrationChainState,
+  ): Promise<MigrationIterationResult> {
+    if (!state.conditionStale) {
+      throw new MigrationInvariantError(
+        'MINICLOB_NOT_STALE',
+        'Ended migration cannot stage before MiniCLOB cutover',
+      );
+    }
+    const noSeeds = zeroHandoff(state);
+    const yesOrder = noSeeds ? null : stateOrder(state, 'YES');
+    const noOrder = noSeeds ? null : stateOrder(state, 'NO');
+    const yesRecovered = yesOrder === null ? 0n : remaining(yesOrder);
+    const noRecovered = noOrder === null ? 0n : remaining(noOrder);
+    if (
+      state.yesBalanceRaw < yesRecovered ||
+      state.noBalanceRaw < noRecovered
+    ) {
+      throw new MigrationInvariantError(
+        'MISSING_RECOVERED_BALANCE',
+        'Recovered token balance is below the ended handoff inventory',
+      );
+    }
+
+    const now = this.now();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.signedOrder.updateMany({
+        where: {
+          marketId: migration.marketId,
+          origin: 'BOOK_MIGRATION',
+          status: 'STAGED',
+        },
+        data: { status: 'EXPIRED', updatedAt: now },
+      });
+      const updated = await tx.bookMigration.updateMany({
+        where: { marketId: migration.marketId, claimToken: migration.claimToken },
+        data: {
+          status: 'STAGED',
+          snapshotBlockNumber: state.blockNumber,
+          snapshotNonceRaw: state.makerNonce.toString(),
+          yesPriceRaw: yesOrder?.priceRaw.toString() ?? null,
+          noPriceRaw: noOrder?.priceRaw.toString() ?? null,
+          yesSnapshotRemainingRaw: yesRecovered.toString(),
+          noSnapshotRemainingRaw: noRecovered.toString(),
+          minimumTickSizeRaw: migration.market.minimumTickSizeRaw,
+          yesRealizedPriceRaw: null,
+          noRealizedPriceRaw: null,
+          yesPriceDeviationRaw: null,
+          noPriceDeviationRaw: null,
+          yesReplacementSizeRaw: '0',
+          noReplacementSizeRaw: '0',
+          yesUnquotedRemainderRaw: yesRecovered.toString(),
+          noUnquotedRemainderRaw: noRecovered.toString(),
+          yesReplacementOrderHash: null,
+          noReplacementOrderHash: null,
+          approvalStatus: 'NOT_REQUIRED',
+          yesCancelStatus:
+            yesOrder === null ? 'NOT_REQUIRED' : cancelStatus(yesOrder),
+          noCancelStatus:
+            noOrder === null ? 'NOT_REQUIRED' : cancelStatus(noOrder),
+          activeCancelOutcome: null,
+          yesRecoveredRaw: yesRecovered.toString(),
+          noRecoveredRaw: noRecovered.toString(),
+          yesBalanceRaw: state.yesBalanceRaw.toString(),
+          noBalanceRaw: state.noBalanceRaw.toString(),
+          recoveryBlockNumber: Math.max(
+            migration.recoveryBlockNumber ?? 0,
+            state.blockNumber,
+          ),
+          cancelledAt: migration.cancelledAt ?? now,
+          nextAttemptAt: 0,
+          lastFailureCode: null,
+          lastFailureMessage: null,
+          lastFailureAt: null,
+          claimToken: null,
+          claimExpiresAt: null,
+          updatedAt: now,
+        },
+      });
+      if (updated.count !== 1) throw new Error('Book migration claim was lost');
+    });
+    this.logger.info(
+      `[migration] market=${migration.marketId} trading=ENDED replacements=SKIPPED`,
+    );
+    return { outcome: 'PROGRESSED', marketId: migration.marketId };
+  }
+
   private async stageZeroHandoff(
     migration: ClaimedMigration,
     state: BookMigrationChainState,
@@ -1065,6 +1168,28 @@ export class BookMigrationOperator {
       migration.yesReplacementOrderHash,
       migration.noReplacementOrderHash,
     ].filter((hash): hash is string => hash !== null);
+    if (this.tradingEnded(migration, state)) {
+      const noSeeds = zeroHandoff(state);
+      const yesRecovered = noSeeds ? 0n : remaining(stateOrder(state, 'YES'));
+      const noRecovered = noSeeds ? 0n : remaining(stateOrder(state, 'NO'));
+      const stagedCount = await this.prisma.signedOrder.count({
+        where: {
+          marketId: migration.marketId,
+          origin: 'BOOK_MIGRATION',
+          status: 'STAGED',
+        },
+      });
+      return (
+        hashes.length === 0 &&
+        stagedCount === 0 &&
+        migration.yesSnapshotRemainingRaw === yesRecovered.toString() &&
+        migration.noSnapshotRemainingRaw === noRecovered.toString() &&
+        migration.yesReplacementSizeRaw === '0' &&
+        migration.noReplacementSizeRaw === '0' &&
+        migration.yesUnquotedRemainderRaw === yesRecovered.toString() &&
+        migration.noUnquotedRemainderRaw === noRecovered.toString()
+      );
+    }
     if (zeroHandoff(state)) {
       return (
         hashes.length === 0 &&
@@ -1115,7 +1240,8 @@ export class BookMigrationOperator {
         row.outcome !== outcome ||
         BigInt(row.sizeRaw) !== expectedSize ||
         BigInt(row.priceRaw) !== expectedPrice ||
-        BigInt(row.nonceRaw) !== state.makerNonce
+        BigInt(row.nonceRaw) !== state.makerNonce ||
+        BigInt(row.expiration) !== BigInt(migration.market.tradingEndsAt)
       ) {
         return false;
       }
@@ -1192,6 +1318,9 @@ export class BookMigrationOperator {
     if (!state.conditionStale) {
       throw new MigrationInvariantError('MINICLOB_NOT_STALE', 'MiniCLOB is active');
     }
+    if (this.tradingEnded(migration, state)) {
+      return this.stageEndedHandoff(migration, state);
+    }
     await this.checkpoint(migration, {
       status: 'STAGED',
       approvalStatus: state.ctfApprovedForAll ? 'CONFIRMED' : 'PENDING',
@@ -1208,6 +1337,13 @@ export class BookMigrationOperator {
   private async confirmApproval(
     migration: ClaimedMigration,
   ): Promise<MigrationIterationResult> {
+    const beforeReceipt = await this.readState(migration);
+    if (!beforeReceipt.conditionStale) {
+      throw new MigrationInvariantError('MINICLOB_NOT_STALE', 'MiniCLOB is active');
+    }
+    if (this.tradingEnded(migration, beforeReceipt)) {
+      return this.stageEndedHandoff(migration, beforeReceipt);
+    }
     if (migration.approvalTxHash === null) {
       return this.reconcileUnknownApproval(migration);
     }
@@ -1232,6 +1368,9 @@ export class BookMigrationOperator {
     const state = await this.readState(migration);
     if (!state.conditionStale) {
       throw new MigrationInvariantError('MINICLOB_NOT_STALE', 'MiniCLOB is active');
+    }
+    if (this.tradingEnded(migration, state)) {
+      return this.stageEndedHandoff(migration, state);
     }
     if (hasReplacements(migration) && !state.ctfApprovedForAll) {
       return this.failTerminal(
@@ -1258,6 +1397,7 @@ export class BookMigrationOperator {
     this.assertRegistrationNotMismatched(registration);
     if (
       !state.conditionStale &&
+      !this.tradingEnded(migration, state) &&
       registration === 'ABSENT' &&
       !this.registrationEnabled
     ) {
@@ -1265,6 +1405,7 @@ export class BookMigrationOperator {
     }
     if (
       !state.conditionStale &&
+      !this.tradingEnded(migration, state) &&
       registration === 'ABSENT' &&
       !state.registrationAuthorized
     ) {
@@ -1421,6 +1562,13 @@ export class BookMigrationOperator {
     return { outcome: 'PROGRESSED', marketId: migration.marketId };
   }
 
+  private tradingEnded(
+    migration: ClaimedMigration,
+    state: BookMigrationChainState,
+  ): boolean {
+    return state.blockTimestamp >= BigInt(migration.market.tradingEndsAt);
+  }
+
   private validateReplacementPreflight(
     row: SignedOrder,
     state: FreshOrderChainState,
@@ -1432,6 +1580,7 @@ export class BookMigrationOperator {
         nonce: state.makerNonce,
         complement: state.complementTokenId,
         conditionId: state.registeredConditionId,
+        registeredTradingEndsAt: state.registeredTradingEndsAt,
         payoutDenominator: state.payoutDenominator,
         balanceRaw: state.makerAssetBalance,
         approval: state.ctfApprovedForAll ?? false,
@@ -1504,6 +1653,12 @@ export class BookMigrationOperator {
         signedOrderFromRow(row),
         migration.market.conditionId as Hex,
       );
+      if (fresh.blockTimestamp >= fresh.registeredTradingEndsAt) {
+        const endedState = await this.readState(migration);
+        if (this.tradingEnded(migration, endedState)) {
+          return this.stageFromState(migration, endedState);
+        }
+      }
       const expectedComplement = BigInt(
         row.outcome === 'YES'
           ? migration.market.noTokenId ?? '0'

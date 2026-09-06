@@ -127,6 +127,25 @@ describe('POST /orders validation', () => {
     await expectReason(request, 'EXPIRED');
   });
 
+  it('rejects a new order at the fresh Exchange registration deadline', async () => {
+    const { request } = await signedOrderRequest({ salt: 61n });
+    reader.state = validChainState({
+      blockTimestamp: 2_000_086_400n,
+    });
+
+    await expectReason(request, 'TRADING_ENDED');
+    expect(await testPrisma.signedOrder.count()).toBe(0);
+  });
+
+  it('rejects a registration deadline that differs from the indexed market', async () => {
+    const { request } = await signedOrderRequest({ salt: 62n });
+    reader.state = validChainState({
+      registeredTradingEndsAt: 2_000_086_401n,
+    });
+
+    await expectReason(request, 'TOKEN_PAIR_MISMATCH');
+  });
+
   it('rejects an unregistered token with TOKEN_NOT_REGISTERED', async () => {
     const { request } = await signedOrderRequest({ salt: 7n });
     reader.state = validChainState({
@@ -145,6 +164,16 @@ describe('POST /orders validation', () => {
   it('rejects a fresh on-chain resolution with MARKET_RESOLVED', async () => {
     const { request } = await signedOrderRequest({ salt: 9n });
     reader.state = validChainState({ payoutDenominator: 1n });
+    await expectReason(request, 'MARKET_RESOLVED');
+  });
+
+  it('reports resolution before the deadline when both are terminal', async () => {
+    const { request } = await signedOrderRequest({ salt: 91n });
+    reader.state = validChainState({
+      payoutDenominator: 1n,
+      blockTimestamp: 2_000_086_400n,
+    });
+
     await expectReason(request, 'MARKET_RESOLVED');
   });
 
@@ -244,6 +273,10 @@ describe('POST /orders validation', () => {
         migratedAt: BOOK_NOW,
       },
     });
+    await testPrisma.market.update({
+      where: { id: '1' },
+      data: { tradingEndsAt: BOOK_NOW },
+    });
     const token = 'throwaway-test-session';
     await testPrisma.userAccount.create({
       data: { address: account.address.toLowerCase() },
@@ -265,7 +298,14 @@ describe('POST /orders validation', () => {
     expect(own.statusCode).toBe(200);
     expect(own.json<MakerOrdersResponse>()).toMatchObject({
       offchainWithdrawalIsOnchainCancellation: false,
-      orders: [{ orderHash: request.orderHash.toLowerCase() }],
+      orders: [
+        {
+          orderHash: request.orderHash.toLowerCase(),
+          status: 'OPEN',
+          fillable: false,
+          unfillableReason: 'TRADING_ENDED',
+        },
+      ],
       onchainOrders: [{ orderId: '900', maker: account.address.toLowerCase() }],
     });
 

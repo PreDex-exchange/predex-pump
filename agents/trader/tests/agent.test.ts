@@ -83,7 +83,7 @@ function market(
       minimumTickSizeRaw: '1000',
     },
     createdAt: 100,
-    tradingEndsAt: 200,
+    tradingEndsAt: 2_000,
     graduatedAt: 150,
     resolvedAt: null,
     ...overrides,
@@ -137,6 +137,7 @@ function book(
     marketId: marketValue.id,
     minimumTickSizeRaw: marketValue.params.minimumTickSizeRaw,
     minimumTickSizeAppliesTo: 'NEW_ORDERS',
+    tradingOpen: true,
     orderBookAvailable: true,
     liveVenue: 'MINICLOB',
     yes: {
@@ -698,6 +699,62 @@ describe('TraderAgent', () => {
     ).toHaveLength(2);
   });
 
+  it('does not count an ended market retained order against an active market cap', async () => {
+    const endedMarket = market('1', { tradingEndsAt: 2_000 });
+    const activeMarket = market('2', { tradingEndsAt: 3_000 });
+    const retained = offchainOrder({
+      maker: TRADER,
+      marketId: '1',
+      fillable: false,
+      unfillableReason: 'TRADING_ENDED',
+    });
+    const hybridActionExecutor = hybridExecutor();
+    hybridActionExecutor.getMakerOrders.mockResolvedValue({
+      orders: [retained],
+      onchainOrders: [],
+      offchainWithdrawalIsOnchainCancellation: false,
+      warning: 'Withdrawal is off-chain only.',
+    });
+    const { agent } = createAgent({
+      dataClient: dataClient({
+        markets: [endedMarket, activeMarket],
+        books: new Map([
+          ['1', { ...hybridBook(endedMarket), tradingOpen: false }],
+          ['2', hybridBook(activeMarket)],
+        ]),
+        accountResponse: account([
+          {
+            account: TRADER,
+            marketId: '2',
+            outcome: 'YES',
+            qtyRaw: '1000000',
+            costBasisRaw: '0',
+            costBasisEstimated: true,
+            realizedPnlRaw: '0',
+            unrealizedPnlRaw: '0',
+            updatedAt: 900,
+          },
+        ]),
+      }),
+      hybridExecutor: hybridActionExecutor,
+      dryRun: false,
+      maxOrdersInFlight: 2,
+      nowSeconds: () => 2_000,
+    });
+
+    await agent.runCycle();
+
+    expect(hybridActionExecutor.placeOrder).toHaveBeenCalledTimes(2);
+    expect(hybridActionExecutor.placeOrder).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ marketId: '2', side: 'BID' }),
+    );
+    expect(hybridActionExecutor.placeOrder).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ marketId: '2', side: 'ASK' }),
+    );
+  });
+
   it('fails the placement cap closed when the authenticated Hybrid order read fails', async () => {
     const marketValue = market();
     const hybridActionExecutor = hybridExecutor();
@@ -823,6 +880,43 @@ describe('TraderAgent', () => {
       expect.objectContaining({
         event: 'refused',
         reason: expect.stringContaining('liveVenue=LMSR'),
+      }),
+    );
+  });
+
+  it('holds without reading a signal or placing/filling at the global deadline', async () => {
+    const endedMarket = market('1', { tradingEndsAt: 2_000 });
+    const endedBook: AvailableMarketBookResponse = {
+      ...book(endedMarket, [order({ maker: MAKER, priceRaw: '100000' })]),
+      tradingOpen: false,
+    };
+    const actionExecutor = executor();
+    const readSignal = vi.fn(async ({ marketId }: { marketId: string }) => ({
+      signal: signal(marketId),
+      paymentSpendRaw: 0n,
+    }));
+    const { agent, logger } = createAgent({
+      dataClient: dataClient({
+        markets: [endedMarket],
+        books: new Map([['1', endedBook]]),
+      }),
+      executor: actionExecutor,
+      readSignal,
+      dryRun: false,
+      nowSeconds: () => 2_000,
+    });
+
+    await agent.runCycle();
+
+    expect(readSignal).not.toHaveBeenCalled();
+    expect(actionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(actionExecutor.fillOrder).not.toHaveBeenCalled();
+    expect(actionExecutor.cancelOrder).not.toHaveBeenCalled();
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'refused',
+        action: 'HOLD',
+        reason: expect.stringContaining('global trading deadline reached'),
       }),
     );
   });

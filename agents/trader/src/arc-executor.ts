@@ -83,11 +83,16 @@ interface ChainReceipt {
 }
 
 export interface TraderChainClient {
+  getBlock(parameters: { blockTag: 'latest' }): Promise<{
+    number: bigint | null;
+    timestamp: bigint;
+  }>;
   readContract(parameters: {
     address: Address;
     abi: Abi | readonly unknown[];
     functionName: string;
     args?: readonly unknown[];
+    blockNumber?: bigint;
   }): Promise<unknown>;
   waitForTransactionReceipt(parameters: { hash: Hash }): Promise<ChainReceipt>;
 }
@@ -154,22 +159,39 @@ export class ArcTraderExecutor implements TraderExecutor {
 
   private async readTradableBinding(
     marketId: bigint,
+    expectedTradingEndsAt: number,
     expectedConditionId: Hex,
     expectedTokenId: bigint,
     outcome: 'YES' | 'NO',
   ): Promise<TokenBinding> {
-    const [lifecycleValue, bindingValue] = await Promise.all([
+    if (!Number.isSafeInteger(expectedTradingEndsAt) || expectedTradingEndsAt <= 0) {
+      throw new Error('Indexed market trading deadline is invalid.');
+    }
+    const block = await this.chainClient.getBlock({ blockTag: 'latest' });
+    if (block.number === null) {
+      throw new Error('Latest Arc block omitted its number.');
+    }
+    const [lifecycleValue, bindingValue, tradingEndsAtValue] = await Promise.all([
       this.chainClient.readContract({
         address: ADDRESSES.registry,
         abi: incubatorRegistryAbi,
         functionName: 'marketLifecycle',
         args: [marketId],
+        blockNumber: block.number,
       }),
       this.chainClient.readContract({
         address: ADDRESSES.registry,
         abi: incubatorRegistryAbi,
         functionName: 'tokenBinding',
         args: [marketId],
+        blockNumber: block.number,
+      }),
+      this.chainClient.readContract({
+        address: ADDRESSES.registry,
+        abi: incubatorRegistryAbi,
+        functionName: 'marketTradingEndsAt',
+        args: [marketId],
+        blockNumber: block.number,
       }),
     ]);
     const lifecycle = lifecycleValue as MarketLifecycle;
@@ -195,23 +217,34 @@ export class ArcTraderExecutor implements TraderExecutor {
     if (boundTokenId !== expectedTokenId) {
       throw new Error('Fresh Arc token binding differs from the indexed market.');
     }
+    if (
+      typeof tradingEndsAtValue !== 'bigint' ||
+      tradingEndsAtValue !== BigInt(expectedTradingEndsAt)
+    ) {
+      throw new Error('Fresh Registry trading deadline differs from the indexed market.');
+    }
     const [prepared, payoutDenominator] = await Promise.all([
       this.chainClient.readContract({
         address: ADDRESSES.ctf,
         abi: conditionalTokensAbi,
         functionName: 'isConditionPrepared',
         args: [binding[4]],
+        blockNumber: block.number,
       }) as Promise<boolean>,
       this.chainClient.readContract({
         address: ADDRESSES.ctf,
         abi: conditionalTokensAbi,
         functionName: 'payoutDenominator',
         args: [binding[4]],
+        blockNumber: block.number,
       }) as Promise<bigint>,
     ]);
     if (!prepared) throw new Error('Fresh Arc condition is not prepared.');
     if (payoutDenominator !== 0n) {
       throw new Error('Fresh Arc condition is resolved; place/fill is forbidden.');
+    }
+    if (block.timestamp >= tradingEndsAtValue) {
+      throw new Error('Fresh Arc state says the global trading deadline has ended.');
     }
     return binding;
   }
@@ -266,6 +299,7 @@ export class ArcTraderExecutor implements TraderExecutor {
     for (let pass = 0; pass < 2; pass += 1) {
       binding = await this.readTradableBinding(
         marketId,
+        action.tradingEndsAt,
         conditionId,
         tokenId,
         action.outcome,
@@ -365,6 +399,7 @@ export class ArcTraderExecutor implements TraderExecutor {
   ): Promise<{ order: MiniClobOrder; paymentRaw: bigint }> {
     await this.readTradableBinding(
       marketId,
+      action.tradingEndsAt,
       conditionId,
       tokenId,
       action.outcome,

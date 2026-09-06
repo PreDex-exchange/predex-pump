@@ -28,10 +28,18 @@ interface ChainOptions {
   minimumFillRaw?: bigint;
   orderOpen?: boolean;
   receiptError?: string;
+  blockTimestamp?: bigint;
+  tradingEndsAt?: bigint;
 }
 
 function chainClient(options: ChainOptions = {}): TraderChainClient {
   return {
+    async getBlock() {
+      return {
+        number: 100n,
+        timestamp: options.blockTimestamp ?? 1_900_000_000n,
+      };
+    },
     async readContract({ functionName }) {
       switch (functionName) {
         case 'marketLifecycle':
@@ -46,6 +54,8 @@ function chainClient(options: ChainOptions = {}): TraderChainClient {
             YES_TOKEN,
             102n,
           ];
+        case 'marketTradingEndsAt':
+          return options.tradingEndsAt ?? 2_000_000_000n;
         case 'isConditionPrepared':
           return true;
         case 'payoutDenominator':
@@ -98,6 +108,7 @@ function writeClient(): TraderWriteClient & {
 function placeAction(): PlaceOrderAction {
   return {
     marketId: '1',
+    tradingEndsAt: 2_000_000_000,
     conditionId: CONDITION,
     tokenId: YES_TOKEN.toString(),
     outcome: 'YES',
@@ -111,6 +122,7 @@ function placeAction(): PlaceOrderAction {
 function fillAction(): FillOrderAction {
   return {
     marketId: '1',
+    tradingEndsAt: 2_000_000_000,
     conditionId: CONDITION,
     tokenId: YES_TOKEN.toString(),
     outcome: 'YES',
@@ -145,6 +157,38 @@ describe('ArcTraderExecutor fresh-state gates', () => {
     );
 
     await expect(executor.fillOrder(fillAction())).rejects.toThrow(/resolved/u);
+    expect(writes.fillOrder).not.toHaveBeenCalled();
+  });
+
+  it('refuses place at the exact global deadline before approval or submission', async () => {
+    const writes = writeClient();
+    const executor = new ArcTraderExecutor(
+      ACCOUNT,
+      chainClient({ blockTimestamp: 2_000_000_000n }),
+      writes,
+    );
+
+    await expect(executor.placeOrder(placeAction())).rejects.toThrow(
+      /global trading deadline has ended/u,
+    );
+    expect(writes.approveCollateral).not.toHaveBeenCalled();
+    expect(writes.approveCtfOperator).not.toHaveBeenCalled();
+    expect(writes.placeOrder).not.toHaveBeenCalled();
+  });
+
+  it('refuses fill at the exact global deadline before approval or submission', async () => {
+    const writes = writeClient();
+    const executor = new ArcTraderExecutor(
+      ACCOUNT,
+      chainClient({ blockTimestamp: 2_000_000_000n }),
+      writes,
+    );
+
+    await expect(executor.fillOrder(fillAction())).rejects.toThrow(
+      /global trading deadline has ended/u,
+    );
+    expect(writes.approveCollateral).not.toHaveBeenCalled();
+    expect(writes.approveCtfOperator).not.toHaveBeenCalled();
     expect(writes.fillOrder).not.toHaveBeenCalled();
   });
 

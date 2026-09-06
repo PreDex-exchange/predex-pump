@@ -26,6 +26,7 @@ const CALLS_PER_ORDER = 7;
 
 export type PreflightFailureCode =
   | 'MARKET_RESOLVED'
+  | 'TRADING_ENDED'
   | 'WRONG_NONCE'
   | 'EXPIRED'
   | 'TOKEN_NOT_REGISTERED'
@@ -46,6 +47,7 @@ export interface FreshSignedOrderPreflightState {
   nonce: bigint;
   complement: bigint;
   conditionId: Hex;
+  registeredTradingEndsAt: bigint;
   payoutDenominator: bigint;
   cancelled?: boolean;
   filledRaw?: bigint;
@@ -53,21 +55,27 @@ export interface FreshSignedOrderPreflightState {
   approval: bigint | boolean;
 }
 
-function registryTuple(value: unknown): readonly [bigint, Hex] {
+function registryTuple(value: unknown): readonly [bigint, Hex, bigint] {
   if (
     Array.isArray(value) &&
     typeof value[0] === 'bigint' &&
-    typeof value[1] === 'string'
+    typeof value[1] === 'string' &&
+    typeof value[2] === 'bigint'
   ) {
-    return [value[0], value[1] as Hex];
+    return [value[0], value[1] as Hex, value[2]];
   }
   if (typeof value === 'object' && value !== null) {
     const record = value as Record<string, unknown>;
     if (
       typeof record.complement === 'bigint' &&
-      typeof record.conditionId === 'string'
+      typeof record.conditionId === 'string' &&
+      typeof record.tradingEndsAt === 'bigint'
     ) {
-      return [record.complement, record.conditionId as Hex];
+      return [
+        record.complement,
+        record.conditionId as Hex,
+        record.tradingEndsAt,
+      ];
     }
   }
   throw new Error('CTFExchange registry returned an unexpected value');
@@ -161,11 +169,12 @@ function parseFreshOrderState(
   ) {
     throw new Error('Arc returned an unexpected settlement preflight value');
   }
-  const [complement, conditionId] = registryTuple(registry);
+  const [complement, conditionId, registeredTradingEndsAt] = registryTuple(registry);
   return {
     nonce,
     complement,
     conditionId,
+    registeredTradingEndsAt,
     payoutDenominator,
     cancelled,
     filledRaw,
@@ -207,16 +216,6 @@ export function preflightSignedOrder(input: {
     );
   }
   if (
-    order.expiration !== 0 &&
-    BigInt(order.expiration) <= input.blockTimestamp
-  ) {
-    return blocked(
-      'EXPIRED',
-      `Order ${order.orderHash} expired before settlement`,
-      blockNumber,
-    );
-  }
-  if (
     state.complement === 0n ||
     state.conditionId.toLowerCase() === zeroHash ||
     state.conditionId.toLowerCase() !== order.conditionId.toLowerCase() ||
@@ -226,6 +225,23 @@ export function preflightSignedOrder(input: {
     return blocked(
       'TOKEN_NOT_REGISTERED',
       `Order ${order.orderHash} token registration is unavailable`,
+      blockNumber,
+    );
+  }
+  if (input.blockTimestamp >= state.registeredTradingEndsAt) {
+    return blocked(
+      'TRADING_ENDED',
+      `Market ${order.marketId} reached its global trading deadline before settlement`,
+      blockNumber,
+    );
+  }
+  if (
+    order.expiration !== 0 &&
+    BigInt(order.expiration) <= input.blockTimestamp
+  ) {
+    return blocked(
+      'EXPIRED',
+      `Order ${order.orderHash} expired before settlement`,
       blockNumber,
     );
   }

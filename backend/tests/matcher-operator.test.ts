@@ -142,6 +142,35 @@ describe('matcher and settlement operator', () => {
     expect(await testPrisma.settlementMatch.count()).toBe(0);
   });
 
+  it('reserves no crossing match at the indexed global deadline', async () => {
+    await createOrder({ side: Side.BUY, priceRaw: 700_000n, salt: 317n });
+    await createOrder({ side: Side.SELL, priceRaw: 650_000n, salt: 318n });
+    await testPrisma.market.update({
+      where: { id: '1' },
+      data: { tradingEndsAt: BOOK_NOW },
+    });
+    const preflight = new FakePreflight();
+    const submit = vi.fn<SettlementSubmitter['submit']>();
+    const operator = new SettlementOperator(
+      testPrisma,
+      preflight,
+      { submit },
+      { info: vi.fn(), warn: vi.fn() },
+      () => BOOK_NOW,
+    );
+
+    await expect(operator.processOnce()).resolves.toEqual({ outcome: 'IDLE' });
+    expect(preflight.calls).toBe(0);
+    expect(submit).not.toHaveBeenCalled();
+    expect(await testPrisma.settlementMatch.count()).toBe(0);
+    expect(
+      await testPrisma.signedOrder.findMany({
+        select: { status: true },
+        orderBy: { orderHash: 'asc' },
+      }),
+    ).toEqual([{ status: 'OPEN' }, { status: 'OPEN' }]);
+  });
+
   it('fresh preflight blocks submission when the market resolved after ingest', async () => {
     await createOrder({ side: Side.BUY, priceRaw: 700_000n, salt: 305n });
     await createOrder({ side: Side.SELL, priceRaw: 650_000n, salt: 306n });
@@ -173,6 +202,44 @@ describe('matcher and settlement operator', () => {
     expect(
       await testPrisma.signedOrder.findMany({ select: { status: true } }),
     ).toEqual([{ status: 'MARKET_RESOLVED' }, { status: 'MARKET_RESOLVED' }]);
+  });
+
+  it('fresh deadline preflight blocks submission while keeping orders cancellable', async () => {
+    await createOrder({ side: Side.BUY, priceRaw: 700_000n, salt: 3051n });
+    await createOrder({ side: Side.SELL, priceRaw: 650_000n, salt: 3061n });
+    const preflight = new FakePreflight();
+    preflight.result = {
+      ok: false,
+      code: 'TRADING_ENDED',
+      message: 'Global market trading deadline reached at the fresh block',
+      blockNumber: 1_001,
+    };
+    const submit = vi.fn<SettlementSubmitter['submit']>();
+    const operator = new SettlementOperator(
+      testPrisma,
+      preflight,
+      { submit },
+      { info: vi.fn(), warn: vi.fn() },
+      () => BOOK_NOW,
+    );
+
+    await expect(operator.processOnce()).resolves.toMatchObject({
+      outcome: 'BLOCKED',
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(await testPrisma.settlementMatch.findFirst()).toMatchObject({
+      status: 'BLOCKED',
+      failureCode: 'TRADING_ENDED',
+    });
+    expect(
+      await testPrisma.signedOrder.findMany({
+        select: { status: true, lastFailureCode: true },
+        orderBy: { orderHash: 'asc' },
+      }),
+    ).toEqual([
+      { status: 'OPEN', lastFailureCode: 'TRADING_ENDED' },
+      { status: 'OPEN', lastFailureCode: 'TRADING_ENDED' },
+    ]);
   });
 
   it('claims durably before send so a restart cannot submit the same match twice', async () => {

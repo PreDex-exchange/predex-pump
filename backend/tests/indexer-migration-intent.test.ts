@@ -125,6 +125,7 @@ async function seedMarketBeforeGraduation(): Promise<void> {
       yesPriceRaw: '500000',
       noPriceRaw: '500000',
       createdAt: 1_700_000_000,
+      tradingEndsAt: 2_000_000_000,
     },
   });
   await testPrisma.order.createMany({

@@ -70,7 +70,7 @@ describe('block-pinned settlement preflight', () => {
   function valuesFor(match: ReservedMatch, payoutDenominator = 0n) {
     return [match.takerOrder, match.makerOrder].flatMap((order) => [
       7n,
-      [102n, MARKET_ONE_CONDITION],
+      [102n, MARKET_ONE_CONDITION, 2_000_086_400n],
       payoutDenominator,
       false,
       BigInt(order.filledRaw),
@@ -116,6 +116,40 @@ describe('block-pinned settlement preflight', () => {
       ok: false,
       code: 'MARKET_RESOLVED',
       blockNumber: 1_000,
+    });
+  });
+
+  it('rejects at the registered global deadline before submitting a fill', async () => {
+    const match = await crossingMatch();
+    const client = {
+      getBlock: vi.fn(async () => ({
+        number: 1_001n,
+        timestamp: 2_000_086_400n,
+      })),
+      multicall: vi.fn(async () => valuesFor(match)),
+    } as unknown as PublicClient;
+
+    await expect(new ViemSettlementPreflight(client).check(match)).resolves.toMatchObject({
+      ok: false,
+      code: 'TRADING_ENDED',
+      blockNumber: 1_001,
+    });
+  });
+
+  it('reports resolution before deadline closure when both are terminal', async () => {
+    const match = await crossingMatch();
+    const client = {
+      getBlock: vi.fn(async () => ({
+        number: 1_002n,
+        timestamp: 2_000_086_400n,
+      })),
+      multicall: vi.fn(async () => valuesFor(match, 1n)),
+    } as unknown as PublicClient;
+
+    await expect(new ViemSettlementPreflight(client).check(match)).resolves.toMatchObject({
+      ok: false,
+      code: 'MARKET_RESOLVED',
+      blockNumber: 1_002,
     });
   });
 });

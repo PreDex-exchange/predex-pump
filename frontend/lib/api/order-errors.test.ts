@@ -11,6 +11,7 @@ const rejectionCodes = [
   'BAD_SIGNATURE',
   'WRONG_NONCE',
   'EXPIRED',
+  'TRADING_ENDED',
   'INSUFFICIENT_BALANCE',
   'MISSING_APPROVAL',
   'ORDER_ALREADY_WITHDRAWN',
@@ -45,6 +46,12 @@ describe('Hybrid order rejection messages', () => {
     );
     expect(new Set(Object.values(ORDER_REJECTION_MESSAGES)).size).toBe(
       rejectionCodes.length,
+    );
+  });
+
+  it('describes an ended trading window as permanent market closure', () => {
+    expect(humanizeOrderRejection('TRADING_ENDED')).toBe(
+      'This market’s trading window has permanently closed. New orders cannot be accepted; manage an existing signed order or use settlement controls instead of retrying.',
     );
   });
 

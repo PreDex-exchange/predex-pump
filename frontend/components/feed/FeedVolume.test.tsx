@@ -105,6 +105,42 @@ describe('feed volume display', () => {
   });
 
   it.each([
+    {
+      timing: 'before',
+      offset: -1,
+      expected: 'Order book live',
+      absent: 'Trading ended',
+    },
+    {
+      timing: 'at',
+      offset: 0,
+      expected: 'Trading ended',
+      absent: 'Order book live',
+    },
+  ])(
+    'shows truthful Graduated book status $timing the deadline',
+    ({ offset, expected, absent }) => {
+      mocks.usePriceHistory.mockReturnValue({ data: { points: [] } });
+      const snapshot: Market = {
+        ...market('1000000'),
+        phase: 'Graduated',
+        graduatedAt: 1_785_503_600,
+        tradingEndsAt: 1_785_504_000,
+      };
+
+      render(
+        <MarketCard
+          market={snapshot}
+          referenceTimestamp={snapshot.tradingEndsAt + offset}
+        />,
+      );
+
+      expect(screen.getByText(expected)).toBeTruthy();
+      expect(screen.queryByText(absent)).toBeNull();
+    },
+  );
+
+  it.each([
     ['0', '$0.00'],
     ['1', '<$0.01'],
     ['4000', '<$0.01'],

@@ -49,11 +49,13 @@ export function buildCtfExchangeRegisterTokenTx({
   tokenId,
   complement,
   conditionId,
+  tradingEndsAt,
 }: CtfExchangeRegisterTokenTxInput) {
   return buildCtfExchangeTx('registerToken', [
     tokenId,
     complement,
     conditionId,
+    tradingEndsAt,
   ]);
 }
 

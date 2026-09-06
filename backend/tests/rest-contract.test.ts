@@ -482,6 +482,7 @@ describe('REST shared contract', () => {
     expect(body.marketId).toBe('1');
     expect(body.liveVenue).toBe('MINICLOB');
     expect(body.orderBookAvailable).toBe(true);
+    expect(body.tradingOpen).toBe(true);
     expect('venueTransition' in body).toBe(false);
     expect(body.minimumTickSizeRaw).toBe('1000');
     expect(body.minimumTickSizeAppliesTo).toBe('NEW_ORDERS');
@@ -520,6 +521,34 @@ describe('REST shared contract', () => {
       asks: [],
       bestBidRaw: null,
       bestAskRaw: null,
+      orders: [],
+      offchainOrders: [],
+    });
+  });
+
+  it('keeps ended MiniCLOB orders on the market book only for cancellation', async () => {
+    await testPrisma.market.update({
+      where: { id: '1' },
+      data: { tradingEndsAt: Math.floor(Date.now() / 1_000) },
+    });
+
+    const [marketResponse, tokenResponse] = await Promise.all([
+      app.inject({ method: 'GET', url: '/markets/1/book' }),
+      app.inject({ method: 'GET', url: '/orderbook/101' }),
+    ]);
+    const marketBook = marketResponse.json<MarketBookResponse>();
+    const tokenBook = tokenResponse.json<OrderBookResponse>();
+
+    expect(marketBook).toMatchObject({
+      orderBookAvailable: true,
+      liveVenue: 'MINICLOB',
+      tradingOpen: false,
+      yes: { bids: [], asks: [], bestBidRaw: null, bestAskRaw: null },
+    });
+    expect(marketBook.yes.orders).toHaveLength(3);
+    expect(tokenBook).toMatchObject({
+      bids: [],
+      asks: [],
       orders: [],
       offchainOrders: [],
     });
@@ -565,6 +594,7 @@ describe('REST shared contract', () => {
       expect(body).toMatchObject({
         liveVenue: expectedVenue,
         orderBookAvailable: expectedBookAvailable,
+        tradingOpen: true,
         minimumTickSizeRaw: '1000',
         minimumTickSizeAppliesTo: 'NEW_ORDERS',
       });
@@ -606,6 +636,7 @@ describe('REST shared contract', () => {
     expect(body).toMatchObject({
       orderBookAvailable: false,
       liveVenue: 'NONE',
+      tradingOpen: true,
       venueTransition: { state: 'PREPARING' },
     });
     expect(body.yes.bids).toEqual([]);

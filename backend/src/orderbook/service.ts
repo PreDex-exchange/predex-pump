@@ -313,12 +313,6 @@ export class OffchainOrderService {
       );
     }
     if (
-      order.expiration !== 0n &&
-      order.expiration <= chainState.blockTimestamp
-    ) {
-      reject('EXPIRED', 'Order expiration is not later than the latest Arc block');
-    }
-    if (
       chainState.registeredConditionId.toLowerCase() === zeroHash ||
       chainState.complementTokenId === 0n
     ) {
@@ -338,10 +332,27 @@ export class OffchainOrderService {
         'CTFExchange token registration does not match the indexed market pair',
       );
     }
+    if (chainState.registeredTradingEndsAt !== BigInt(market.tradingEndsAt)) {
+      reject(
+        'TOKEN_PAIR_MISMATCH',
+        'CTFExchange token registration deadline does not match the indexed market',
+      );
+    }
     if (chainState.payoutDenominator !== 0n) {
       reject('MARKET_RESOLVED', `Market ${market.id} is already resolved on-chain`);
     }
-
+    if (chainState.blockTimestamp >= chainState.registeredTradingEndsAt) {
+      reject(
+        'TRADING_ENDED',
+        `Market ${market.id} reached its global trading deadline`,
+      );
+    }
+    if (
+      order.expiration !== 0n &&
+      order.expiration <= chainState.blockTimestamp
+    ) {
+      reject('EXPIRED', 'Order expiration is not later than the latest Arc block');
+    }
     const requiredMakerAsset = ctfExchangeMakerAmountForFill(order, terms.sizeRaw);
     if (chainState.makerAssetBalance < requiredMakerAsset) {
       reject(
