@@ -274,6 +274,7 @@ assert_ports_free() {
   for port in 3001 3002 5432 6333 6379; do
     port_is_listening "$port" && fail "required loopback port is already occupied: $port"
   done
+  return 0
 }
 
 container_id() {

@@ -208,15 +208,41 @@ printf 'PREDEX_EXPECTED_SOURCE_ID=%s\n' "$source_id" > "$runtime_root/runtime.en
 chmod 600 "$runtime_root/runtime.env"
 
 systemctl_log="$test_root/systemctl.log"
+systemctl_state="$test_root/systemctl-state"
+mkdir -p "$systemctl_state"
 fake_systemctl="$fake_bin/systemctl"
 cat > "$fake_systemctl" <<'FAKE_SYSTEMCTL'
 #!/usr/bin/env bash
 set -eu
 printf '%s\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"
-case "$*" in
-  *' is-active --quiet '*) exit 1 ;;
-  *' is-active '*) printf 'inactive\n'; exit 3 ;;
-  *' is-failed --quiet '*) exit 1 ;;
+args=("$@")
+if [[ "${args[0]:-}" == --user ]]; then
+  args=("${args[@]:1}")
+fi
+command_name="${args[0]:-}"
+case "$command_name" in
+  is-active)
+    unit="${args[${#args[@]} - 1]}"
+    if [[ -f "$FAKE_SYSTEMCTL_STATE_DIR/$unit" ]]; then
+      [[ " ${args[*]} " == *' --quiet '* ]] || printf 'active\n'
+      exit 0
+    fi
+    [[ " ${args[*]} " == *' --quiet '* ]] || printf 'inactive\n'
+    exit 3
+    ;;
+  is-failed)
+    exit 1
+    ;;
+  start|restart)
+    for unit in "${args[@]:1}"; do
+      [[ "$unit" == --* ]] || : > "$FAKE_SYSTEMCTL_STATE_DIR/$unit"
+    done
+    ;;
+  stop)
+    for unit in "${args[@]:1}"; do
+      [[ "$unit" == --* ]] || rm -f "$FAKE_SYSTEMCTL_STATE_DIR/$unit"
+    done
+    ;;
 esac
 exit 0
 FAKE_SYSTEMCTL
@@ -251,6 +277,7 @@ runtime_env=(
   PREDEX_RUNTIME_SYSTEMCTL_BIN="$fake_systemctl"
   PREDEX_RUNTIME_SUDO_BIN="$fake_sudo"
   FAKE_SYSTEMCTL_LOG="$systemctl_log"
+  FAKE_SYSTEMCTL_STATE_DIR="$systemctl_state"
   FAKE_SUDO_LOG="$sudo_log"
   FAKE_PNPM_LOG="$pnpm_log"
 )
@@ -347,5 +374,54 @@ assert_contains "$docker_calls" 'stop postgres qdrant redis'
 assert_not_contains "$docker_calls" '--volumes'
 assert_not_contains "$docker_calls" 'prune'
 assert_not_contains "$docker_calls" 'backend_predex-pump-postgres'
+
+# Exercise the complete successful transition. The empty fake ss output means
+# every required port is free; this regresses the function-level success status
+# that must not inherit the final negative port probe.
+fake_ss="$fake_bin/ss"
+cat > "$fake_ss" <<'FAKE_SS'
+#!/usr/bin/env bash
+exit 0
+FAKE_SS
+chmod +x "$fake_ss"
+
+fake_curl="$fake_bin/curl"
+cat > "$fake_curl" <<'FAKE_CURL'
+#!/usr/bin/env bash
+set -eu
+if [[ " $* " == *' --output /dev/null '* ]]; then
+  exit 0
+fi
+case "$*" in
+  *'http://127.0.0.1:3001/health'*)
+    printf '%s\n' '{"ok":true,"chainState":{"ready":true},"balancesReconciled":true,"lagBlocks":0}'
+    ;;
+  *) printf 'ok\n' ;;
+esac
+FAKE_CURL
+chmod +x "$fake_curl"
+
+: > "$systemctl_log"
+up_env=(
+  "${data_env[@]}"
+  PREDEX_RUNTIME_SS_BIN="$fake_ss"
+  PREDEX_RUNTIME_CURL_BIN="$fake_curl"
+  PREDEX_CHAIN_READY_TIMEOUT_SECONDS=2
+)
+env "${up_env[@]}" "$REMOTE_HELPER" up >/dev/null
+[[ -f "$runtime_root/active" && ! -L "$runtime_root/active" ]] ||
+  fail 'successful up did not write the active marker'
+assert_file_contains "$runtime_root/active" "source_id=$source_id"
+assert_file_contains "$runtime_root/runtime.env" "PREDEX_EXPECTED_SOURCE_ID=$source_id"
+systemctl_calls="$(cat "$systemctl_log")"
+assert_contains "$systemctl_calls" '--user start predex-data.service'
+assert_contains "$systemctl_calls" '--user start predex-api.service predex-indexer.service predex-frontend.service'
+assert_contains "$systemctl_calls" '--user start predex-operator.service'
+assert_contains "$systemctl_calls" '--user start predex.target'
+assert_contains "$systemctl_calls" '--user enable predex.target'
+[[ -f "$systemctl_state/predex-operator.service" ]] ||
+  fail 'successful up did not leave the operator active'
+[[ -f "$systemctl_state/predex.target" ]] ||
+  fail 'successful up did not leave the target active'
 
 printf 'runtime shell tests passed\n'
