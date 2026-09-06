@@ -64,8 +64,10 @@ for unit in predex-data.service predex-api.service predex-indexer.service predex
 done
 assert_file_contains "$UNIT_DIR/predex-api.service" 'ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm api'
 assert_file_contains "$UNIT_DIR/predex-indexer.service" 'ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm indexer'
-assert_file_contains "$UNIT_DIR/predex-operator.service" 'ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm operator'
-assert_file_contains "$UNIT_DIR/predex-operator.service" 'Environment=OPERATOR_PRIVATE_KEY_FILE=%d/operator-private-key'
+assert_file_contains "$UNIT_DIR/predex-operator.service" 'ExecStart=/usr/bin/env OPERATOR_PRIVATE_KEY_FILE=${CREDENTIALS_DIRECTORY}/operator-private-key /users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm operator'
+if grep -Fq 'OPERATOR_PRIVATE_KEY_FILE=%d' "$UNIT_DIR/predex-operator.service"; then
+  fail 'operator unit uses unsupported percent-d credential expansion'
+fi
 assert_file_contains "$UNIT_DIR/predex-frontend.service" '127.0.0.1 --port 3002'
 assert_file_contains "$UNIT_DIR/predex-api.service" 'Environment=DATABASE_POOL_SIZE=8'
 assert_file_contains "$UNIT_DIR/predex-indexer.service" 'Environment=DATABASE_POOL_SIZE=8'

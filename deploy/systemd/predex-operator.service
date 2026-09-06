@@ -14,12 +14,11 @@ Environment=DATABASE_URL=postgresql://predex:predex@127.0.0.1:5432/predex_pump?s
 Environment=DATABASE_POOL_SIZE=8
 Environment=QDRANT_URL=http://127.0.0.1:6333
 Environment=OPERATOR_REGISTER_TOKENS=true
-Environment=OPERATOR_PRIVATE_KEY_FILE=%d/operator-private-key
 Environment=PATH=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
 LoadCredential=operator-private-key:/users/span14/predex-builds/predex-pump/runtime/operator.key
 WorkingDirectory=/users/span14/predex-builds/predex-pump/source/backend
 ExecStartPre=/users/span14/predex-builds/predex-pump/runtime/bin/runtime-remote.sh unit-preflight operator
-ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm operator
+ExecStart=/usr/bin/env OPERATOR_PRIVATE_KEY_FILE=${CREDENTIALS_DIRECTORY}/operator-private-key /users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm operator
 Restart=on-failure
 RestartSec=3s
 KillMode=control-group
