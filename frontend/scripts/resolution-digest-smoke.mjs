@@ -12,7 +12,7 @@ import {
 const chainId = 5_042_002;
 const oracle =
   process.env.ARC_ORACLE_ADDRESS ??
-  '0xf6a765fB79e31e62733EcAEbbED7d96d56386877';
+  '0xfE6D5ad250f97381b4Ec66C81D9B6c215E205424';
 const rpcUrl =
   process.env.ARC_RPC_URL ?? 'https://rpc.drpc.testnet.arc.network';
 // The deterministic default is intentionally an uninitialized question probe:
