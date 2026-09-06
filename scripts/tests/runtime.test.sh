@@ -61,6 +61,7 @@ for unit in predex-data.service predex-api.service predex-indexer.service predex
   assert_file_contains "$UNIT_DIR/$unit" 'Restart=on-failure'
   assert_file_contains "$UNIT_DIR/$unit" 'KillMode=control-group'
   assert_file_contains "$UNIT_DIR/$unit" 'StandardOutput=journal'
+  assert_file_contains "$UNIT_DIR/$unit" 'Environment=PATH=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin'
 done
 assert_file_contains "$UNIT_DIR/predex-api.service" 'ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm api'
 assert_file_contains "$UNIT_DIR/predex-indexer.service" 'ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm indexer'

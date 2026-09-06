@@ -9,6 +9,7 @@ StartLimitBurst=5
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=/users/span14/predex-builds/predex-pump/runtime/runtime.env
+Environment=PATH=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
 ExecStartPre=/users/span14/predex-builds/predex-pump/runtime/bin/runtime-remote.sh unit-preflight data
 ExecStart=/users/span14/predex-builds/predex-pump/runtime/bin/runtime-remote.sh data-up
 ExecStartPost=/users/span14/predex-builds/predex-pump/runtime/bin/runtime-remote.sh migrate-database
