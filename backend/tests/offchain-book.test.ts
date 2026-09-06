@@ -230,7 +230,7 @@ describe('hybrid off-chain book', () => {
     expect(indexerRead).not.toHaveBeenCalled();
   });
 
-  it('bounds Hybrid wire orders while preserving complete fillable levels', async () => {
+  it('walks past unfillable Hybrid candidates to build a bounded top-of-book', async () => {
     const lowerBid = await ingestBuy(650_000n, 500_000n, 201n);
     const bestBid = await ingestBuy(700_000n, 500_000n, 202n);
     const higherAsk = await ingestSell(640_000n, 200_000n, 203n);
@@ -258,11 +258,9 @@ describe('hybrid off-chain book', () => {
 
     expect(bounded?.yes.bids.map(({ priceRaw }) => priceRaw)).toEqual([
       '700000',
-      '650000',
     ]);
     expect(bounded?.yes.asks.map(({ priceRaw }) => priceRaw)).toEqual([
       '620000',
-      '640000',
     ]);
     expect(
       bounded?.yes.offchainOrders.map(({ orderHash }) => orderHash),
@@ -272,10 +270,13 @@ describe('hybrid off-chain book', () => {
         .map(({ request }) => request.orderHash.toLowerCase())
         .sort((left, right) => left.localeCompare(right))[0],
     ]);
+    expect(
+      bounded?.yes.offchainOrders.map(({ orderHash }) => orderHash),
+    ).not.toContain(expired.request.orderHash.toLowerCase());
     expect(bounded?.yes.orderWindow).toEqual({
       limitPerSide: 1,
-      orders: { returned: 0, total: 0, truncated: false },
-      offchainOrders: { returned: 2, total: 5, truncated: true },
+      orders: { returned: 0, truncated: false },
+      offchainOrders: { returned: 2, truncated: true },
     });
     expect(boundedToken?.offchainOrders).toEqual(bounded?.yes.offchainOrders);
     expect(boundedToken?.bids).toEqual(bounded?.yes.bids);

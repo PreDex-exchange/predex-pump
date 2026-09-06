@@ -148,8 +148,7 @@ export interface BookLevel {
 export interface OrderBookCollectionWindow {
   /** Number of complete wire DTOs returned in this snapshot. */
   returned: number;
-  /** Number of matching source orders before the complete DTO window is applied. */
-  total: number;
+  /** True when at least one deeper executable order exists beyond this window. */
   truncated: boolean;
 }
 
@@ -224,8 +223,10 @@ export interface OrderBook {
   minimumTickSizeRaw: Raw;
   outcome: Outcome;
   tokenId: string;
-  bids: BookLevel[]; // sorted best (highest price) first
-  asks: BookLevel[]; // sorted best (lowest price) first
+  // Sorted best-first. A bounded response aggregates only its visible top-of-book
+  // order window; an unbounded response aggregates the complete executable book.
+  bids: BookLevel[];
+  asks: BookLevel[];
   bestBidRaw: Raw | null;
   bestAskRaw: Raw | null;
   // Raw open MiniCLOB orders. After trading ends they leave the ladder but stay

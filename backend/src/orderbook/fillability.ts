@@ -345,14 +345,11 @@ export async function findFillableSignedOrders(
     .map(({ order }) => order);
 }
 
-export async function findFillableSignedOrderBookRows(
+export async function findActiveSignedOrderBookRows(
   prisma: Prisma.TransactionClient,
   where: Prisma.SignedOrderWhereInput,
-  now: number,
 ): Promise<SignedOrderBookRow[]> {
-  // This path runs inside a repeatable-read public-book snapshot. Expiration is
-  // evaluated below without mutating durable order status inside that snapshot.
-  const orders = await prisma.signedOrder.findMany({
+  return prisma.signedOrder.findMany({
     where: {
       ...where,
       status: { in: [...ACTIVE_ORDER_STATUSES] },
@@ -360,8 +357,4 @@ export async function findFillableSignedOrderBookRows(
     },
     select: SIGNED_ORDER_BOOK_SELECT,
   });
-  const fillability = await fillabilityForOrders(prisma, orders, now);
-  return orders.filter(
-    (order) => fillability.get(order.orderHash)?.fillable === true,
-  );
 }

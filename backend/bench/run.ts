@@ -699,12 +699,10 @@ async function assertHotHybridWorkload(
   const bulkHybrid = assertHotHybridResponses(bulkMarketBook, bulkTokenBook);
   if (
     hotHybrid.marketBookOffchainOrders !== 80 ||
-    hotHybrid.marketBookTotalOffchainOrders !== 400 ||
-    hotHybrid.tokenBookOffchainOrders !== 40 ||
-    hotHybrid.tokenBookTotalOffchainOrders !== 200
+    hotHybrid.tokenBookOffchainOrders !== 40
   ) {
     throw new Error(
-      'Benchmark bounded Hybrid response must expose 20 orders per side while representing all 400 seeded orders',
+      'Benchmark bounded Hybrid response must expose at most 20 orders per side',
     );
   }
   if (

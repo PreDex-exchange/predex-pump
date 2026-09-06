@@ -120,9 +120,7 @@ export interface HotHybridEvidence {
   tradingOpen: true;
   orderLimitPerSide: number | null;
   marketBookOffchainOrders: number;
-  marketBookTotalOffchainOrders: number;
   tokenBookOffchainOrders: number;
-  tokenBookTotalOffchainOrders: number;
   marketBookLevels: number;
   tokenBookLevels: number;
 }
@@ -233,19 +231,24 @@ function boundedOffchainWindow(
     throw new Error('Benchmark Hybrid book used the wrong per-side order limit');
   }
   const offchain = object(window.offchainOrders, 'offchain order window');
-  const total = offchain.total;
   const truncated = offchain.truncated;
+  const sideCounts = { BID: 0, ASK: 0 };
+  for (const orderValue of list(book, 'offchainOrders')) {
+    const side = object(orderValue, 'offchain order').side;
+    if (side !== 'BID' && side !== 'ASK') {
+      throw new Error('Benchmark Hybrid order has invalid side');
+    }
+    sideCounts[side] += 1;
+  }
   if (
     offchain.returned !== returnedOrders ||
-    typeof total !== 'number' ||
-    !Number.isSafeInteger(total) ||
-    total < returnedOrders ||
     typeof truncated !== 'boolean' ||
-    truncated !== (total > returnedOrders)
+    sideCounts.BID > expectedLimitPerSide ||
+    sideCounts.ASK > expectedLimitPerSide
   ) {
     throw new Error('Benchmark Hybrid book has invalid bounded-order metadata');
   }
-  return { total, truncated };
+  return { truncated };
 }
 
 export function assertHotHybridResponses(
@@ -291,8 +294,6 @@ export function assertHotHybridResponses(
   ) {
     throw new Error('Benchmark Hybrid books must contain fillable orders and levels');
   }
-  let marketBookTotalOffchainOrders = marketOrders.length;
-  let tokenBookTotalOffchainOrders = tokenOrders.length;
   if (expectedOrderLimitPerSide !== undefined) {
     const yesWindow = boundedOffchainWindow(
       yes,
@@ -309,8 +310,6 @@ export function assertHotHybridResponses(
       expectedOrderLimitPerSide,
       tokenOrders.length,
     );
-    marketBookTotalOffchainOrders = yesWindow.total + noWindow.total;
-    tokenBookTotalOffchainOrders = tokenWindow.total;
     if (
       !yesWindow.truncated ||
       !noWindow.truncated ||
@@ -319,10 +318,10 @@ export function assertHotHybridResponses(
       throw new Error('Benchmark Hybrid fixture did not exercise bounded orders');
     }
     if (
-      representedOrders(marketLevels) !== marketBookTotalOffchainOrders ||
-      representedOrders(tokenLevels) !== tokenBookTotalOffchainOrders
+      representedOrders(marketLevels) !== marketOrders.length ||
+      representedOrders(tokenLevels) !== tokenOrders.length
     ) {
-      throw new Error('Benchmark Hybrid levels do not represent every fillable order');
+      throw new Error('Benchmark Hybrid levels do not match visible orders');
     }
   } else {
     if (
@@ -345,9 +344,7 @@ export function assertHotHybridResponses(
     tradingOpen: true,
     orderLimitPerSide: expectedOrderLimitPerSide ?? null,
     marketBookOffchainOrders: marketOrders.length,
-    marketBookTotalOffchainOrders,
     tokenBookOffchainOrders: tokenOrders.length,
-    tokenBookTotalOffchainOrders,
     marketBookLevels: marketLevels.length,
     tokenBookLevels: tokenLevels.length,
   };

@@ -115,10 +115,10 @@ Every route is declared in `shared/src/rest.ts`:
 | --- | --- | --- |
 | GET | `/markets` | Keyset-paginated markets (`phase`, `creator`, `limit`, `cursor`) |
 | GET | `/markets/:id` | Market, recent trades, resolution |
-| GET | `/markets/:id/book` | YES and NO books (`orderLimitPerSide` optionally bounds complete order DTOs, not aggregate levels) |
+| GET | `/markets/:id/book` | YES and NO books (`orderLimitPerSide` optionally returns bounded top-of-book levels and complete order DTOs) |
 | GET | `/markets/:id/prices` | Indexed price curve (`fromTs`, `limit`) |
 | GET | `/truth/:marketId` | Explainable indexed fair value; x402-protected when seller mode is `circle` |
-| GET | `/orderbook/:tokenId` | One token's aggregated ladder and optionally bounded complete orders (`orderLimitPerSide`) |
+| GET | `/orderbook/:tokenId` | One token's aggregated ladder or bounded top-of-book (`orderLimitPerSide`) |
 | GET | `/accounts/:addr` | Account, positions (`marketId`, `positionsLimit`, `positionsCursor`), recent trades, aggregate PnL |
 | GET | `/activity` | Keyset-paginated activity (`marketId`, `account`, `limit`, `cursor`) |
 | GET | `/config` | Registry params, addresses, trading-window bounds, committee |

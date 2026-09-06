@@ -75,7 +75,8 @@ export type VenueTransition =
 // GET /markets/:id/book → a lifecycle-aware venue and both outcome snapshots.
 export interface OrderBookQuery {
   /**
-   * Optional best-price/time window for complete order DTOs, applied per side; max 100.
+   * Optional best-price/time top-of-book window, applied per side; max 100.
+   * Its levels and complete order DTOs cover only that visible window.
    * Ended MiniCLOB market books ignore it so every cancellable escrow row remains reachable.
    */
   orderLimitPerSide?: number;

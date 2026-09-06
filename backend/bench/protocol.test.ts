@@ -13,8 +13,8 @@ function outcomeBook() {
     bids: [{ priceRaw: '400000', sizeRaw: '1000000', orderCount: 1 }],
     asks: [{ priceRaw: '600000', sizeRaw: '1000000', orderCount: 1 }],
     offchainOrders: [
-      { orderHash: `0x${'1'.repeat(64)}`, fillable: true },
-      { orderHash: `0x${'2'.repeat(64)}`, fillable: true },
+      { orderHash: `0x${'1'.repeat(64)}`, fillable: true, side: 'BID' },
+      { orderHash: `0x${'2'.repeat(64)}`, fillable: true, side: 'ASK' },
     ],
   };
 }
@@ -80,22 +80,19 @@ describe('hot Hybrid workload assertion', () => {
       tradingOpen: true,
       orderLimitPerSide: null,
       marketBookOffchainOrders: 4,
-      marketBookTotalOffchainOrders: 4,
       tokenBookOffchainOrders: 2,
-      tokenBookTotalOffchainOrders: 2,
       marketBookLevels: 4,
       tokenBookLevels: 2,
     });
   });
 
-  it('proves the timed Hybrid fixtures are bounded but retain larger totals', () => {
+  it('proves the timed Hybrid fixtures are truncated top-of-book windows', () => {
     const boundedOutcome = {
       ...outcomeBook(),
-      offchainOrders: outcomeBook().offchainOrders.slice(0, 1),
       orderWindow: {
         limitPerSide: 20,
-        orders: { returned: 0, total: 0, truncated: false },
-        offchainOrders: { returned: 1, total: 2, truncated: true },
+        orders: { returned: 0, truncated: false },
+        offchainOrders: { returned: 2, truncated: true },
       },
     };
     expect(
@@ -106,10 +103,8 @@ describe('hot Hybrid workload assertion', () => {
       ),
     ).toMatchObject({
       orderLimitPerSide: 20,
-      marketBookOffchainOrders: 2,
-      marketBookTotalOffchainOrders: 4,
-      tokenBookOffchainOrders: 1,
-      tokenBookTotalOffchainOrders: 2,
+      marketBookOffchainOrders: 4,
+      tokenBookOffchainOrders: 2,
     });
   });
 

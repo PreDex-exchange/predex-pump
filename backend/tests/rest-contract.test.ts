@@ -527,7 +527,7 @@ describe('REST shared contract', () => {
     });
   });
 
-  it('bounds MiniCLOB wire orders per side and outcome without truncating levels', async () => {
+  it('returns a truthful bounded MiniCLOB top-of-book per side and outcome', async () => {
     await testPrisma.order.createMany({
       data: [
         {
@@ -575,25 +575,23 @@ describe('REST shared contract', () => {
     expect(marketBook.yes.orders.map(({ orderId }) => orderId)).toEqual(['1', '3']);
     expect(marketBook.no.orders.map(({ orderId }) => orderId)).toEqual(['5', '7']);
     expect(marketBook.yes.bids).toEqual([
-      { priceRaw: '600000', sizeRaw: '1250000', orderCount: 2 },
+      { priceRaw: '600000', sizeRaw: '750000', orderCount: 1 },
     ]);
-    expect(marketBook.no.bids.map(({ priceRaw }) => priceRaw)).toEqual([
-      '450000',
-      '400000',
+    expect(marketBook.no.bids).toEqual([
+      { priceRaw: '450000', sizeRaw: '1000000', orderCount: 1 },
     ]);
-    expect(marketBook.no.asks.map(({ priceRaw }) => priceRaw)).toEqual([
-      '500000',
-      '550000',
+    expect(marketBook.no.asks).toEqual([
+      { priceRaw: '500000', sizeRaw: '1000000', orderCount: 1 },
     ]);
     expect(marketBook.yes.orderWindow).toEqual({
       limitPerSide: 1,
-      orders: { returned: 2, total: 3, truncated: true },
-      offchainOrders: { returned: 0, total: 0, truncated: false },
+      orders: { returned: 2, truncated: true },
+      offchainOrders: { returned: 0, truncated: false },
     });
     expect(marketBook.no.orderWindow).toEqual({
       limitPerSide: 1,
-      orders: { returned: 2, total: 4, truncated: true },
-      offchainOrders: { returned: 0, total: 0, truncated: false },
+      orders: { returned: 2, truncated: true },
+      offchainOrders: { returned: 0, truncated: false },
     });
     expect(tokenBook.orders.map(({ orderId }) => orderId)).toEqual(['5', '7']);
     expect(tokenBook.bids).toEqual(marketBook.no.bids);
@@ -642,9 +640,12 @@ describe('REST shared contract', () => {
         .map(({ orderId }) => orderId),
     ).toEqual(['2']);
     expect(body.yes.bids).toEqual([
-      { priceRaw: '700000', sizeRaw: '1500000', orderCount: 2 },
-      { priceRaw: '600000', sizeRaw: '750000', orderCount: 1 },
+      { priceRaw: '700000', sizeRaw: '500000', orderCount: 1 },
     ]);
+    expect(body.yes.orderWindow?.orders).toEqual({
+      returned: 2,
+      truncated: true,
+    });
   });
 
   it('keeps ended MiniCLOB orders on the market book only for cancellation', async () => {
