@@ -942,7 +942,7 @@ describe('WebSocket-driven indexer', () => {
       'silent-stall fallback',
     );
 
-    expect(await getHealth(testPrisma, 1_000)).toMatchObject({
+    expect(await getHealth(testPrisma, 1_000, new Date(nowMs))).toMatchObject({
       ok: true,
       indexerStatus: 'degraded',
       indexedBlock: 100,
