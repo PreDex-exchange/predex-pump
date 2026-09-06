@@ -531,6 +531,11 @@ interface RpcRetryResult<T> {
   failures: number;
 }
 
+interface RpcRetryOptions {
+  /** False for asynchronous safety fetches; their database commit belongs to the main loop. */
+  updateIndexerState?: boolean;
+}
+
 async function requestRpcWithRetry<T>(
   prisma: PrismaClient,
   operation: string,
@@ -538,6 +543,7 @@ async function requestRpcWithRetry<T>(
   signal: AbortSignal,
   wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
   random: () => number,
+  options: RpcRetryOptions = {},
 ): Promise<RpcRetryResult<T> | undefined> {
   let failures = 0;
   while (!signal.aborted) {
@@ -549,12 +555,14 @@ async function requestRpcWithRetry<T>(
       if (details === null) throw error;
 
       failures += 1;
-      // A failure from this database write escapes the current catch block; it
-      // is fatal rather than being misclassified as another RPC retry.
-      await prisma.indexerState.update({
-        where: { id: 1 },
-        data: { consecutiveRpcFailures: { increment: 1 } },
-      });
+      // When enabled, a failure from this database write escapes the current
+      // catch block instead of being misclassified as another RPC retry.
+      if (options.updateIndexerState !== false) {
+        await prisma.indexerState.update({
+          where: { id: 1 },
+          data: { consecutiveRpcFailures: { increment: 1 } },
+        });
+      }
       const delay = retryDelayMs(failures, details, random);
       const retryAfter =
         details.retryAfterMs === undefined
@@ -589,6 +597,7 @@ async function requestExchangeFillAllowanceSnapshots(
   signal: AbortSignal,
   wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
   random: () => number,
+  retryOptions: RpcRetryOptions = {},
 ): Promise<CollateralAllowanceSnapshot[] | undefined> {
   if (
     !events.some(
@@ -612,6 +621,7 @@ async function requestExchangeFillAllowanceSnapshots(
     signal,
     wait,
     random,
+    retryOptions,
   );
   if (result === undefined) return undefined;
   logRpcRecovery(operation, result.failures);
@@ -663,6 +673,7 @@ async function pollHead(
   wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
   random: () => number,
   now: () => Date,
+  options: RpcRetryOptions = {},
 ): Promise<number | undefined> {
   const result = await requestRpcWithRetry(
     prisma,
@@ -671,21 +682,24 @@ async function pollHead(
     signal,
     wait,
     random,
+    options,
   );
   if (result === undefined) return undefined;
   const head = result.value;
-  const state = await prisma.indexerState.findUniqueOrThrow({
-    where: { id: 1 },
-  });
-  assertHeadGuards(state, head);
-  await prisma.indexerState.update({
-    where: { id: 1 },
-    data: {
-      headBlock: head,
-      lastSuccessfulPollAt: now(),
-      consecutiveRpcFailures: 0,
-    },
-  });
+  if (options.updateIndexerState !== false) {
+    const state = await prisma.indexerState.findUniqueOrThrow({
+      where: { id: 1 },
+    });
+    assertHeadGuards(state, head);
+    await prisma.indexerState.update({
+      where: { id: 1 },
+      data: {
+        headBlock: head,
+        lastSuccessfulPollAt: now(),
+        consecutiveRpcFailures: 0,
+      },
+    });
+  }
   logRpcRecovery('getBlockNumber', result.failures);
   return head;
 }
@@ -1178,6 +1192,7 @@ export async function runIndexer(
             wait,
             random,
             now,
+            { updateIndexerState: false },
           );
           if (polledHead === undefined || controller.signal.aborted) return;
           head = Math.max(head ?? polledHead, polledHead);
@@ -1204,6 +1219,7 @@ export async function runIndexer(
             controller.signal,
             wait,
             random,
+            { updateIndexerState: false },
           );
           if (decoded === undefined || controller.signal.aborted) return;
           const allowanceSnapshots =
@@ -1216,6 +1232,7 @@ export async function runIndexer(
               controller.signal,
               wait,
               random,
+              { updateIndexerState: false },
             );
           if (allowanceSnapshots === undefined || controller.signal.aborted) {
             return;
