@@ -23,6 +23,10 @@ import {
 const BASE_TS = 1_750_000_000;
 const BASE_BLOCK = 60_000_000;
 const INSERT_BATCH = 1_000;
+const ACTIVE_HYBRID_TRADING_ENDS_AT = 2_100_000_000;
+const HOT_HYBRID_SIGNED_ORDERS = 400;
+const HOT_HYBRID_MAKER_CAPACITY_RAW = '1000000000000';
+const EOA_SIGNATURE = `0x${'ab'.repeat(65)}`;
 const ACTIVITY_TYPES = [
   'MarketCreated',
   'Trade',
@@ -210,6 +214,157 @@ async function maybeBackfillAccountRollups(
   `);
 }
 
+async function seedHotHybridBook(
+  prisma: ReturnType<typeof makePrisma>,
+): Promise<void> {
+  const maker = address(0).toLowerCase();
+  const conditionId = hash(3_000_000);
+  const yesTokenId = '1000000000';
+  const noTokenId = '1000000001';
+  await prisma.market.update({
+    where: { id: '1' },
+    data: {
+      phase: 'Graduated',
+      bookAddress: ADDRESSES.miniClob.toLowerCase(),
+      yesSeedOrderId: '1',
+      noSeedOrderId: '2',
+      tradingEndsAt: ACTIVE_HYBRID_TRADING_ENDS_AT,
+      resolvedAt: null,
+      closedOutAt: null,
+    },
+  });
+  await prisma.order.updateMany({
+    where: { marketId: '1' },
+    data: { open: false },
+  });
+  await prisma.bookMigration.create({
+    data: {
+      marketId: '1',
+      status: 'MIGRATED',
+      yesSeedOrderId: '1',
+      noSeedOrderId: '2',
+      registrationStatus: 'CONFIRMED',
+      approvalStatus: 'CONFIRMED',
+      yesCancelStatus: 'CONFIRMED',
+      noCancelStatus: 'CONFIRMED',
+      createdAt: BASE_TS + 3_600,
+      updatedAt: BASE_TS + 7_200,
+      cancelledAt: BASE_TS + 7_100,
+      migratedAt: BASE_TS + 7_200,
+    },
+  });
+  for (const outcome of ['YES', 'NO'] as const) {
+    await prisma.position.upsert({
+      where: {
+        account_marketId_outcome: { account: maker, marketId: '1', outcome },
+      },
+      create: {
+        account: maker,
+        marketId: '1',
+        outcome,
+        qtyRaw: HOT_HYBRID_MAKER_CAPACITY_RAW,
+        costBasisRaw: '0',
+        realizedPnlRaw: '0',
+        unrealizedPnlRaw: '0',
+        updatedAt: BASE_TS + 7_200,
+      },
+      update: {
+        qtyRaw: HOT_HYBRID_MAKER_CAPACITY_RAW,
+        updatedAt: BASE_TS + 7_200,
+      },
+    });
+  }
+  await prisma.exchangeTokenRegistration.createMany({
+    data: [
+      {
+        tokenId: yesTokenId,
+        complementTokenId: noTokenId,
+        conditionId,
+        blockNumber: BASE_BLOCK,
+        logIndex: 0,
+        registeredAt: BASE_TS + 7_200,
+      },
+      {
+        tokenId: noTokenId,
+        complementTokenId: yesTokenId,
+        conditionId,
+        blockNumber: BASE_BLOCK,
+        logIndex: 1,
+        registeredAt: BASE_TS + 7_200,
+      },
+    ],
+  });
+  await Promise.all([
+    prisma.ctfExchangeApproval.create({
+      data: {
+        owner: maker,
+        approved: true,
+        blockNumber: BASE_BLOCK,
+        logIndex: 0,
+        updatedAt: BASE_TS,
+      },
+    }),
+    prisma.collateralExchangeApproval.create({
+      data: {
+        owner: maker,
+        allowanceRaw: HOT_HYBRID_MAKER_CAPACITY_RAW,
+        blockNumber: BASE_BLOCK,
+        logIndex: 0,
+        updatedAt: BASE_TS,
+      },
+    }),
+    prisma.collateralBalance.create({
+      data: {
+        owner: maker,
+        balanceRaw: HOT_HYBRID_MAKER_CAPACITY_RAW,
+        blockNumber: BASE_BLOCK,
+        logIndex: 0,
+        updatedAt: BASE_TS,
+      },
+    }),
+  ]);
+  await generatedBatches<Prisma.SignedOrderCreateManyInput>(
+    HOT_HYBRID_SIGNED_ORDERS,
+    INSERT_BATCH,
+    (index) => {
+      const outcome = index % 2 === 0 ? 'YES' : 'NO';
+      const exchangeSide = Math.floor(index / 2) % 2;
+      const priceRaw = BigInt(300_000 + ((index * 7_919) % 400_001));
+      const sizeRaw = 1_000_000n;
+      return {
+        orderHash: hash(70_000_000 + index),
+        saltRaw: String(80_000_000 + index),
+        maker,
+        signer: maker,
+        taker: '0x0000000000000000000000000000000000000000',
+        tokenId: outcome === 'YES' ? yesTokenId : noTokenId,
+        makerAmountRaw: (exchangeSide === 0 ? priceRaw : sizeRaw).toString(),
+        takerAmountRaw: (exchangeSide === 0 ? sizeRaw : priceRaw).toString(),
+        expiration: ACTIVE_HYBRID_TRADING_ENDS_AT,
+        nonceRaw: '0',
+        feeRateBpsRaw: '0',
+        exchangeSide,
+        signatureType: 0,
+        signature: EOA_SIGNATURE,
+        marketId: '1',
+        conditionId,
+        outcome,
+        side: exchangeSide === 0 ? 'BID' : 'ASK',
+        priceRaw: priceRaw.toString(),
+        sizeRaw: sizeRaw.toString(),
+        filledRaw: '0',
+        remainingRaw: sizeRaw.toString(),
+        status: 'OPEN',
+        origin: 'USER',
+        createdAt: BASE_TS + 7_200 + index,
+        updatedAt: BASE_TS + 7_200 + index,
+      };
+    },
+    (data) => prisma.signedOrder.createMany({ data }),
+    'hot Hybrid signed orders',
+  );
+}
+
 async function seed(scale: Scale, databaseUrl: string): Promise<void> {
   const prisma = makePrisma(databaseUrl);
   const startedAt = performance.now();
@@ -295,7 +450,10 @@ async function seed(scale: Scale, databaseUrl: string): Promise<void> {
           inventoryYesRaw: '5000000',
           inventoryNoRaw: '5000000',
           createdAt: BASE_TS + index * 60,
-          tradingEndsAt: BASE_TS + index * 60 + 86_400,
+          tradingEndsAt:
+            index === 0
+              ? ACTIVE_HYBRID_TRADING_ENDS_AT
+              : BASE_TS + index * 60 + 86_400,
           graduatedAt: graduated ? BASE_TS + index * 60 + 3_600 : null,
           resolvedAt: resolved ? BASE_TS + index * 60 + 7_200 : null,
           closedOutAt: phase === 'ClosedOut' ? BASE_TS + index * 60 + 10_800 : null,
@@ -361,8 +519,6 @@ async function seed(scale: Scale, databaseUrl: string): Promise<void> {
       (data) => prisma.position.createMany({ data }),
       'positions',
     );
-    await maybeBackfillAccountRollups(prisma, benchSchema(databaseUrl));
-
     await generatedBatches<Prisma.TradeCreateManyInput>(
       scale.trades,
       INSERT_BATCH,
@@ -471,7 +627,7 @@ async function seed(scale: Scale, databaseUrl: string): Promise<void> {
           escrowRaw: size.toString(),
           filledRaw: filled.toString(),
           remainingRaw: (size - filled).toString(),
-          open: index % 4 !== 0,
+          open: marketIndex === 0 ? false : index % 4 !== 0,
           isSeed: index < 2,
           txHash,
           logIndex: 0,
@@ -483,6 +639,9 @@ async function seed(scale: Scale, databaseUrl: string): Promise<void> {
       (data) => prisma.order.createMany({ data }),
       'orders',
     );
+
+    await seedHotHybridBook(prisma);
+    await maybeBackfillAccountRollups(prisma, benchSchema(databaseUrl));
 
     await generatedBatches<Prisma.FillCreateManyInput>(
       scale.fills,
@@ -574,6 +733,7 @@ async function seed(scale: Scale, databaseUrl: string): Promise<void> {
         marketOneTrades: marketTradeCounts[0] ?? 0,
         marketOnePricePoints: hotPrices,
         marketOneOrders: hotOrders,
+        marketOneSignedOrders: HOT_HYBRID_SIGNED_ORDERS,
         marketOneActivityEvents: hotActivity,
         denseAccount: address(0),
       },

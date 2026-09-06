@@ -2,18 +2,22 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { cpus, platform, release } from 'node:os';
 import { resolve } from 'node:path';
 
-import { ADDRESSES, type ServerEvent } from '@predex-pump/shared';
+import { ADDRESSES } from '@predex-pump/shared';
 import type { PrismaClient } from '@prisma/client';
 import type { Address, Hex } from 'viem';
 import { WebSocket } from 'ws';
 
-import { buildServer } from '../src/api/server.js';
-import { createNodeRedisPublicJsonReadCache } from '../src/cache/node-redis.js';
-import { loadRuntimeConfig } from '../src/config.js';
-import { ServerEventBus } from '../src/events/bus.js';
 import { applyDecodedEvents } from '../src/indexer/runner.js';
 import type { DecodedEvent } from '../src/indexer/types.js';
+import {
+  assertHotHybridResponses,
+  type HotHybridEvidence,
+} from './protocol.js';
 import { resolveBenchmarkProvenance } from './provenance.js';
+import {
+  launchBenchmarkServer,
+  type BenchmarkServerController,
+} from './server-process.js';
 import {
   address,
   benchDatabaseUrl,
@@ -72,6 +76,8 @@ interface ObservedScale {
   fills: number;
   pricePoints: number;
   activityEvents: number;
+  signedOrders: number;
+  bookMigrations: number;
 }
 
 function percentile(sorted: readonly number[], fraction: number): number {
@@ -103,6 +109,15 @@ async function requestOnce(
     );
   }
   return { elapsedMs, bytes: body.byteLength };
+}
+
+async function requestJson(baseUrl: string, path: string): Promise<unknown> {
+  const response = await fetch(`${baseUrl}${path}`);
+  const body = await response.json();
+  if (response.status !== 200) {
+    throw new Error(`${path} returned ${response.status}: ${JSON.stringify(body)}`);
+  }
+  return body;
 }
 
 async function benchmarkRest(
@@ -291,6 +306,10 @@ async function collectPlans(
     {
       name: 'market.book',
       sql: `SELECT * FROM "Order" WHERE "marketId" = '1' AND "open" = true`,
+    },
+    {
+      name: 'market.hybrid-book',
+      sql: `SELECT * FROM "SignedOrder" WHERE "marketId" = '1' AND "status" IN ('OPEN', 'PARTIALLY_FILLED') AND "withdrawnAt" IS NULL`,
     },
     {
       name: 'market.prices',
@@ -486,7 +505,7 @@ function closeSocket(socket: WebSocket): Promise<void> {
 
 async function benchmarkWebsocket(
   websocketUrl: string,
-  eventBus: ServerEventBus,
+  server: Pick<BenchmarkServerController, 'publish'>,
   clientCount: number,
   targetSubscribers: number,
   eventCount: number,
@@ -553,24 +572,7 @@ async function benchmarkWebsocket(
       await Promise.all(batch);
     }
 
-    const event: ServerEvent = {
-      channel: 'market:bench-target',
-      event: 'price.tick',
-      data: {
-        marketId: 'bench-target',
-        yesPriceRaw: '500000',
-        noPriceRaw: '500000',
-        ts: BASE_TS,
-      },
-    };
-    const samples: number[] = [];
     const endToEndStartedAt = performance.now();
-    for (let index = 0; index < eventCount; index += 1) {
-      const startedAt = performance.now();
-      eventBus.publish(event, BASE_TS + index);
-      samples.push(performance.now() - startedAt);
-    }
-    const publishDurationMs = samples.reduce((sum, value) => sum + value, 0);
     let deliveryTimer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
       deliveryTimer = setTimeout(
@@ -584,35 +586,37 @@ async function benchmarkWebsocket(
       );
     });
     try {
-      await Promise.race([delivered, timeout]);
+      const [publish] = await Promise.all([
+        server.publish(eventCount, BASE_TS),
+        Promise.race([delivered, timeout]),
+      ]);
+      const endToEndDurationMs = performance.now() - endToEndStartedAt;
+      if (targetDeliveries !== expectedTargetDeliveries) {
+        throw new Error(
+          `Target clients received ${targetDeliveries}/${expectedTargetDeliveries} updates`,
+        );
+      }
+      if (nonTargetDeliveries !== 0) {
+        throw new Error(`Non-target clients received ${nonTargetDeliveries} updates`);
+      }
+      const result = {
+        clients: clientCount,
+        targetSubscribers,
+        events: eventCount,
+        deliveredMessages: targetDeliveries,
+        nonTargetDeliveries,
+        ...publish,
+        endToEndDurationMs,
+      };
+      console.info(
+        `[bench:ws] clients=${clientCount} target=${targetSubscribers} ` +
+          `p95=${result.publishP95Us.toFixed(2)}us ` +
+          `rate=${result.publishesPerSecond.toFixed(1)} broadcasts/s`,
+      );
+      return result;
     } finally {
       if (deliveryTimer !== undefined) clearTimeout(deliveryTimer);
     }
-    const endToEndDurationMs = performance.now() - endToEndStartedAt;
-    if (nonTargetDeliveries !== 0) {
-      throw new Error(`Non-target clients received ${nonTargetDeliveries} updates`);
-    }
-    const stats = distribution(samples.map((value) => value * 1_000));
-    const result = {
-      clients: clientCount,
-      targetSubscribers,
-      events: eventCount,
-      deliveredMessages: targetDeliveries,
-      nonTargetDeliveries,
-      publishP50Us: stats.p50,
-      publishP95Us: stats.p95,
-      publishP99Us: stats.p99,
-      publishDurationMs,
-      publishesPerSecond: eventCount / (publishDurationMs / 1_000),
-      endToEndDurationMs,
-    };
-    console.info(
-      `[bench:ws] clients=${clientCount} target=${targetSubscribers} ` +
-        `p95=${stats.p95.toFixed(2)}us rate=${result.publishesPerSecond.toFixed(
-          1,
-        )} broadcasts/s`,
-    );
-    return result;
   } finally {
     await Promise.all(sockets.map(closeSocket));
   }
@@ -628,6 +632,8 @@ async function observedScale(prisma: PrismaClient): Promise<ObservedScale> {
     fills,
     pricePoints,
     activityEvents,
+    signedOrders,
+    bookMigrations,
   ] = await Promise.all([
     prisma.market.count(),
     prisma.account.count(),
@@ -637,6 +643,8 @@ async function observedScale(prisma: PrismaClient): Promise<ObservedScale> {
     prisma.fill.count(),
     prisma.pricePoint.count(),
     prisma.activityEvent.count(),
+    prisma.signedOrder.count(),
+    prisma.bookMigration.count(),
   ]);
   return {
     markets,
@@ -647,6 +655,36 @@ async function observedScale(prisma: PrismaClient): Promise<ObservedScale> {
     fills,
     pricePoints,
     activityEvents,
+    signedOrders,
+    bookMigrations,
+  };
+}
+
+async function assertHotHybridWorkload(
+  prisma: PrismaClient,
+  baseUrl: string,
+): Promise<
+  HotHybridEvidence & {
+    historicalMiniClobOrders: number;
+    historicalMiniClobOpenOrders: 0;
+  }
+> {
+  const [marketBook, tokenBook, historicalMiniClobOrders, openHistoricalOrders] =
+    await Promise.all([
+      requestJson(baseUrl, '/markets/1/book'),
+      requestJson(baseUrl, '/orderbook/1000000000'),
+      prisma.order.count({ where: { marketId: '1' } }),
+      prisma.order.count({ where: { marketId: '1', open: true } }),
+    ]);
+  if (historicalMiniClobOrders === 0 || openHistoricalOrders !== 0) {
+    throw new Error(
+      'Benchmark market 1 must retain closed historical MiniCLOB rows',
+    );
+  }
+  return {
+    ...assertHotHybridResponses(marketBook, tokenBook),
+    historicalMiniClobOrders,
+    historicalMiniClobOpenOrders: 0,
   };
 }
 
@@ -667,26 +705,28 @@ async function main(): Promise<void> {
     throw new Error('--ws-subscribers cannot exceed --ws-clients');
   }
 
-  const runtimeConfig = loadRuntimeConfig();
   const prisma = makePrisma(databaseUrl);
-  const eventBus = new ServerEventBus();
-  const publicReadCache = createNodeRedisPublicJsonReadCache({
-    url: runtimeConfig.redisUrl,
-    keyPrefix: runtimeConfig.redisKeyPrefix,
-  });
-  const app = await buildServer({
-    prisma,
-    eventBus,
-    logger: false,
-    publicReadCache,
-    marketListCacheTtlSeconds: runtimeConfig.marketsCacheTtlSeconds,
-  });
+  let server: BenchmarkServerController | undefined;
   try {
     const observed = await observedScale(prisma);
-    if (observed.markets === 0 || observed.activityEvents === 0) {
+    if (
+      observed.markets === 0 ||
+      observed.activityEvents === 0 ||
+      observed.signedOrders === 0 ||
+      observed.bookMigrations === 0
+    ) {
       throw new Error('Benchmark schema is empty; run pnpm bench:seed first');
     }
-    const addressUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+    server = await launchBenchmarkServer(databaseUrl);
+    if (!server.isolation.redisConfigured) {
+      console.warn(
+        '[bench] REDIS_URL is not configured; market-list cache measurements use the disabled cache',
+      );
+    }
+    const hotHybrid = await assertHotHybridWorkload(
+      prisma,
+      server.baseUrl,
+    );
     const marketCursor = encodeCursor({
       kind: 'markets',
       createdAt: BASE_TS + Math.floor(observed.markets / 2) * 60,
@@ -729,7 +769,7 @@ async function main(): Promise<void> {
     for (const scenario of scenarios) {
       rest.push(
         await benchmarkRest(
-          addressUrl,
+          server.baseUrl,
           scenario.name,
           scenario.path,
           requestCount,
@@ -737,6 +777,13 @@ async function main(): Promise<void> {
           warmupRequests,
         ),
       );
+    }
+    const hotHybridAfterRest = await assertHotHybridWorkload(
+      prisma,
+      server.baseUrl,
+    );
+    if (JSON.stringify(hotHybridAfterRest) !== JSON.stringify(hotHybrid)) {
+      throw new Error('Benchmark Hybrid workload changed during REST measurement');
     }
 
     const plans = await collectPlans(prisma, benchSchema(databaseUrl), observed);
@@ -746,8 +793,8 @@ async function main(): Promise<void> {
       ingestPositions,
     );
     const websocket = await benchmarkWebsocket(
-      `${addressUrl.replace(/^http/, 'ws')}/ws`,
-      eventBus,
+      server.websocketUrl,
+      server,
       wsClients,
       wsSubscribers,
       wsEvents,
@@ -762,6 +809,8 @@ async function main(): Promise<void> {
       sourceProvenance: provenance.kind,
       schema: benchSchema(databaseUrl),
       syntheticOnly: true,
+      isolatedProcesses: true,
+      processIsolation: server.isolation,
       environment: {
         node: process.version,
         platform: `${platform()} ${release()}`,
@@ -784,6 +833,7 @@ async function main(): Promise<void> {
         wsPublishP95Us: 250,
       },
       observedScale: observed,
+      hotHybrid,
       rest,
       plans,
       indexer,
@@ -795,9 +845,11 @@ async function main(): Promise<void> {
     await writeFile(output, `${JSON.stringify(result, null, 2)}\n`);
     console.info(`[bench] wrote ${output}`);
   } finally {
-    await app.close();
-    await publicReadCache.close();
-    await prisma.$disconnect();
+    try {
+      await server?.close();
+    } finally {
+      await prisma.$disconnect();
+    }
   }
 }
 

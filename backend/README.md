@@ -97,11 +97,12 @@ pnpm bench:teardown
 
 `bench:seed` drops and recreates only the selected benchmark schema. Every count can be overridden
 with flags such as `--markets=200` or `--activity-events=100000`; `BENCH_DATABASE_URL` selects a
-different safely named benchmark schema. `bench:run` measures every REST route at fixed
-concurrency, emits JSON `EXPLAIN (ANALYZE, BUFFERS)` plans, runs a transactional synthetic
-TradeState ingest fixture, and measures channel-selective fan-out with many real WebSocket
-connections. Its explicit targets are REST p95 below 100 ms, at least 20 indexed price ticks/sec
-when each tick re-marks 100 positions, and WebSocket publish p95 below 250 µs with 500 clients.
+different safely named benchmark schema. Market 1 is a deliberately active migrated Hybrid hot
+book; the runner refuses to time an ended or empty book. `bench:run` starts Fastify, Redis, and the
+event bus in a dedicated child process, drives REST and WebSocket clients from the parent process,
+emits JSON `EXPLAIN (ANALYZE, BUFFERS)` plans, and runs a transactional synthetic TradeState ingest
+fixture. Its explicit targets are REST p95 below 100 ms, at least 20 indexed price ticks/sec when
+each tick re-marks 100 positions, and WebSocket publish p95 below 250 µs with 500 clients.
 
 ## Serving contract
 
