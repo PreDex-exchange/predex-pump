@@ -100,10 +100,20 @@ interface ActivityCursorData {
   logIndex: number;
 }
 
+interface PositionCursorData {
+  kind: 'positions';
+  updatedAt: number;
+  marketId: string;
+  outcome: 'YES' | 'NO';
+}
+
 export type MarketCursorDataInput = Omit<MarketCursorData, 'kind'>;
 export type ActivityCursorDataInput = Omit<ActivityCursorData, 'kind'>;
+export type PositionCursorDataInput = Omit<PositionCursorData, 'kind'>;
 
-function encode(value: MarketCursorData | ActivityCursorData): string {
+function encode(
+  value: MarketCursorData | ActivityCursorData | PositionCursorData,
+): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
@@ -161,5 +171,34 @@ export function decodeActivityCursor(value: string): ActivityCursorDataInput {
   return {
     blockNumber: decoded.blockNumber,
     logIndex: decoded.logIndex,
+  };
+}
+
+export function encodePositionCursor(value: PositionCursorDataInput): string {
+  return encode({ kind: 'positions', ...value });
+}
+
+export function decodePositionCursor(value: string): PositionCursorDataInput {
+  const decoded = decode(value);
+  if (
+    typeof decoded !== 'object' ||
+    decoded === null ||
+    !('kind' in decoded) ||
+    decoded.kind !== 'positions' ||
+    !('updatedAt' in decoded) ||
+    typeof decoded.updatedAt !== 'number' ||
+    !Number.isSafeInteger(decoded.updatedAt) ||
+    !('marketId' in decoded) ||
+    typeof decoded.marketId !== 'string' ||
+    !DECIMAL_PATTERN.test(decoded.marketId) ||
+    !('outcome' in decoded) ||
+    (decoded.outcome !== 'YES' && decoded.outcome !== 'NO')
+  ) {
+    throw new HttpError(400, 'cursor is invalid for positions');
+  }
+  return {
+    updatedAt: decoded.updatedAt,
+    marketId: decoded.marketId,
+    outcome: decoded.outcome,
   };
 }

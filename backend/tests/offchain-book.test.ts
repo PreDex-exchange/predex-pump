@@ -132,6 +132,87 @@ describe('hybrid off-chain book', () => {
     });
   });
 
+  it('rejects an invalid numeric exchange side in reduced fillability rows', async () => {
+    const created = await ingestBuy(700_000n, 500_000n, 107n);
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+
+    await expect(
+      fillabilityForOrders(
+        testPrisma,
+        [{ ...row, exchangeSide: 2 }],
+        BOOK_NOW,
+      ),
+    ).rejects.toThrow('Order side must be Side.BUY or Side.SELL.');
+  });
+
+  it('bounds Hybrid wire orders while preserving complete fillable levels', async () => {
+    const lowerBid = await ingestBuy(650_000n, 500_000n, 201n);
+    const bestBid = await ingestBuy(700_000n, 500_000n, 202n);
+    const higherAsk = await ingestSell(640_000n, 200_000n, 203n);
+    const bestAsk = await ingestSell(620_000n, 300_000n, 204n);
+    const tiedBestAsk = await ingestSell(620_000n, 100_000n, 206n);
+    const expired = await ingestSell(610_000n, 100_000n, 205n);
+    await testPrisma.signedOrder.update({
+      where: { orderHash: expired.request.orderHash.toLowerCase() },
+      data: { expiration: 1 },
+    });
+
+    const bounded = await getMarketBook(testPrisma, '1', BOOK_NOW, 1);
+    await expect(
+      testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: expired.request.orderHash.toLowerCase() },
+      }),
+    ).resolves.toMatchObject({ status: 'OPEN', expiration: 1 });
+    const boundedToken = await getOrderBook(testPrisma, '101', BOOK_NOW, 1);
+    await expect(
+      testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: expired.request.orderHash.toLowerCase() },
+      }),
+    ).resolves.toMatchObject({ status: 'OPEN', expiration: 1 });
+    const legacy = await getMarketBook(testPrisma, '1', BOOK_NOW);
+
+    expect(bounded?.yes.bids.map(({ priceRaw }) => priceRaw)).toEqual([
+      '700000',
+      '650000',
+    ]);
+    expect(bounded?.yes.asks.map(({ priceRaw }) => priceRaw)).toEqual([
+      '620000',
+      '640000',
+    ]);
+    expect(
+      bounded?.yes.offchainOrders.map(({ orderHash }) => orderHash),
+    ).toEqual([
+      bestBid.request.orderHash.toLowerCase(),
+      [bestAsk, tiedBestAsk]
+        .map(({ request }) => request.orderHash.toLowerCase())
+        .sort((left, right) => left.localeCompare(right))[0],
+    ]);
+    expect(bounded?.yes.orderWindow).toEqual({
+      limitPerSide: 1,
+      orders: { returned: 0, total: 0, truncated: false },
+      offchainOrders: { returned: 2, total: 5, truncated: true },
+    });
+    expect(boundedToken?.offchainOrders).toEqual(bounded?.yes.offchainOrders);
+    expect(boundedToken?.bids).toEqual(bounded?.yes.bids);
+    expect(boundedToken?.asks).toEqual(bounded?.yes.asks);
+    expect(boundedToken?.orderWindow).toEqual(bounded?.yes.orderWindow);
+    expect(legacy?.yes.offchainOrders).toHaveLength(5);
+    expect(legacy?.yes).not.toHaveProperty('orderWindow');
+    await expect(
+      testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: expired.request.orderHash.toLowerCase() },
+      }),
+    ).resolves.toMatchObject({ status: 'EXPIRED' });
+    expect(legacy?.yes.offchainOrders.map(({ orderHash }) => orderHash)).toEqual(
+      expect.arrayContaining([
+        lowerBid.request.orderHash.toLowerCase(),
+        higherAsk.request.orderHash.toLowerCase(),
+      ]),
+    );
+  });
+
   it('keeps ended Hybrid orders manageable but removes them from public ladders', async () => {
     const created = await ingestSell(640_000n, 200_000n, 1061n);
     await testPrisma.market.update({

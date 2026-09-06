@@ -1,20 +1,78 @@
-import type { Prisma, PrismaClient, SignedOrder } from '@prisma/client';
-import {
-  Side,
-  ctfExchangeMakerAmountForFill,
-} from '@predex-pump/shared/tx';
+import type { Prisma, SignedOrder } from '@prisma/client';
+import { Side } from '@predex-pump/shared/tx';
 
 import type { Fillability } from './order.js';
-import { signedOrderFromRow } from './order.js';
 
 export const ACTIVE_ORDER_STATUSES = ['OPEN', 'PARTIALLY_FILLED'] as const;
 
-function positionKey(order: Pick<SignedOrder, 'maker' | 'marketId' | 'outcome'>) {
+export interface SignedOrderFillabilityRow {
+  orderHash: string;
+  maker: string;
+  marketId: string;
+  outcome: string;
+  exchangeSide: number;
+  status: string;
+  withdrawnAt: number | null;
+  expiration: number;
+  remainingRaw: string;
+  origin: string;
+  makerAmountRaw: string;
+  takerAmountRaw: string;
+}
+
+export const SIGNED_ORDER_BOOK_SELECT = {
+  orderHash: true,
+  maker: true,
+  tokenId: true,
+  marketId: true,
+  outcome: true,
+  side: true,
+  priceRaw: true,
+  exchangeSide: true,
+  status: true,
+  withdrawnAt: true,
+  expiration: true,
+  remainingRaw: true,
+  origin: true,
+  makerAmountRaw: true,
+  takerAmountRaw: true,
+  createdAt: true,
+} as const satisfies Prisma.SignedOrderSelect;
+
+export type SignedOrderBookRow = Prisma.SignedOrderGetPayload<{
+  select: typeof SIGNED_ORDER_BOOK_SELECT;
+}>;
+
+function positionKey(
+  order: Pick<SignedOrderFillabilityRow, 'maker' | 'marketId' | 'outcome'>,
+) {
   return `${order.maker}:${order.marketId}:${order.outcome}`;
 }
 
+function makerAmountForRemaining(order: SignedOrderFillabilityRow): bigint {
+  if (
+    order.exchangeSide !== Side.BUY &&
+    order.exchangeSide !== Side.SELL
+  ) {
+    throw new Error('Order side must be Side.BUY or Side.SELL.');
+  }
+  const makerAmount = BigInt(order.makerAmountRaw);
+  const takerAmount = BigInt(order.takerAmountRaw);
+  const remaining = BigInt(order.remainingRaw);
+  if (makerAmount <= 0n || takerAmount <= 0n) {
+    throw new Error('Order maker and taker amounts must be greater than zero.');
+  }
+  const size = order.exchangeSide === Side.SELL ? makerAmount : takerAmount;
+  if (remaining > size) {
+    throw new Error('Fill size exceeds the signed order size.');
+  }
+  return order.exchangeSide === Side.SELL
+    ? remaining
+    : (remaining * makerAmount) / takerAmount;
+}
+
 export async function expireSignedOrders(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   now: number,
 ): Promise<number> {
   const expired = await prisma.signedOrder.updateMany({
@@ -28,8 +86,8 @@ export async function expireSignedOrders(
 }
 
 export async function fillabilityForOrders(
-  prisma: PrismaClient,
-  orders: readonly SignedOrder[],
+  prisma: Prisma.TransactionClient,
+  orders: readonly SignedOrderFillabilityRow[],
   now: number,
 ): Promise<Map<string, Fillability>> {
   if (orders.length === 0) return new Map();
@@ -194,10 +252,7 @@ export async function fillabilityForOrders(
           { fillable: false, reason: 'INDEXED_STATE_UNAVAILABLE' },
         ];
       }
-      const required = ctfExchangeMakerAmountForFill(
-        signedOrderFromRow(order),
-        BigInt(order.remainingRaw),
-      );
+      const required = makerAmountForRemaining(order);
       if (balance < required) {
         return [
           order.orderHash,
@@ -216,7 +271,7 @@ export async function fillabilityForOrders(
 }
 
 export async function findSignedOrdersWithFillability(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   where: Prisma.SignedOrderWhereInput,
   now: number,
 ): Promise<
@@ -238,7 +293,7 @@ export async function findSignedOrdersWithFillability(
 }
 
 export async function findFillableSignedOrders(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   where: Prisma.SignedOrderWhereInput,
   now: number,
 ): Promise<SignedOrder[]> {
@@ -254,4 +309,25 @@ export async function findFillableSignedOrders(
   return candidates
     .filter(({ fillability }) => fillability.fillable)
     .map(({ order }) => order);
+}
+
+export async function findFillableSignedOrderBookRows(
+  prisma: Prisma.TransactionClient,
+  where: Prisma.SignedOrderWhereInput,
+  now: number,
+): Promise<SignedOrderBookRow[]> {
+  // This path runs inside a repeatable-read public-book snapshot. Expiration is
+  // evaluated below without mutating durable order status inside that snapshot.
+  const orders = await prisma.signedOrder.findMany({
+    where: {
+      ...where,
+      status: { in: [...ACTIVE_ORDER_STATUSES] },
+      withdrawnAt: null,
+    },
+    select: SIGNED_ORDER_BOOK_SELECT,
+  });
+  const fillability = await fillabilityForOrders(prisma, orders, now);
+  return orders.filter(
+    (order) => fillability.get(order.orderHash)?.fillable === true,
+  );
 }

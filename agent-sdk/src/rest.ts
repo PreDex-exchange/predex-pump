@@ -1,5 +1,6 @@
 import {
   routes,
+  type AccountQuery,
   type AccountResponse,
   type ActivityQuery,
   type ActivityResponse,
@@ -15,6 +16,7 @@ import {
   type MarketBookResponse,
   type MarketDetailResponse,
   type OrderBookResponse,
+  type OrderBookQuery,
   type OrderIngestRejectionCode,
   type PriceHistoryQuery,
   type PriceHistoryResponse,
@@ -45,9 +47,15 @@ export interface PredexRestClient {
   listMarkets(query?: ListMarketsQuery): Promise<ListMarketsResponse>;
   dedupCheck(input: DedupCheckRequest): Promise<DedupCheckResponse>;
   getMarket(id: string): Promise<MarketDetailResponse | null>;
-  getAccount(address: string): Promise<AccountResponse>;
-  getOrderBook(marketId: string): Promise<MarketBookResponse>;
-  getTokenOrderBook(tokenId: string): Promise<OrderBookResponse>;
+  getAccount(address: string, query?: AccountQuery): Promise<AccountResponse>;
+  getOrderBook(
+    marketId: string,
+    query?: OrderBookQuery,
+  ): Promise<MarketBookResponse>;
+  getTokenOrderBook(
+    tokenId: string,
+    query?: OrderBookQuery,
+  ): Promise<OrderBookResponse>;
   postOrder(input: IngestOrderRequest): Promise<IngestOrderResponse>;
   getMyOrders(sessionCookie: string): Promise<MakerOrdersResponse>;
   getMakerOrders(sessionCookie: string): Promise<MakerOrdersResponse>;
@@ -280,21 +288,29 @@ class FetchPredexRestClient implements PredexRestClient {
     );
   }
 
-  getAccount(address: string) {
+  getAccount(address: string, query: AccountQuery = {}) {
     return this.request<AccountResponse>(
-      routes.account(encodeURIComponent(address)),
+      withQuery(routes.account(encodeURIComponent(address)), {
+        marketId: query.marketId,
+        positionsLimit: query.positionsLimit,
+        positionsCursor: query.positionsCursor,
+      }),
     );
   }
 
-  getOrderBook(marketId: string) {
+  getOrderBook(marketId: string, query: OrderBookQuery = {}) {
     return this.request<MarketBookResponse>(
-      routes.marketBook(encodeURIComponent(marketId)),
+      withQuery(routes.marketBook(encodeURIComponent(marketId)), {
+        orderLimitPerSide: query.orderLimitPerSide,
+      }),
     );
   }
 
-  getTokenOrderBook(tokenId: string) {
+  getTokenOrderBook(tokenId: string, query: OrderBookQuery = {}) {
     return this.request<OrderBookResponse>(
-      routes.orderbook(encodeURIComponent(tokenId)),
+      withQuery(routes.orderbook(encodeURIComponent(tokenId)), {
+        orderLimitPerSide: query.orderLimitPerSide,
+      }),
     );
   }
 

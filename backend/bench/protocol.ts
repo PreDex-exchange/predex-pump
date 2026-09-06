@@ -118,10 +118,83 @@ export interface HotHybridEvidence {
   marketId: '1';
   liveVenue: 'HYBRID';
   tradingOpen: true;
+  orderLimitPerSide: number | null;
   marketBookOffchainOrders: number;
+  marketBookTotalOffchainOrders: number;
   tokenBookOffchainOrders: number;
+  tokenBookTotalOffchainOrders: number;
   marketBookLevels: number;
   tokenBookLevels: number;
+}
+
+export interface BenchmarkRestScenario {
+  name: string;
+  path: string;
+  gated: boolean;
+}
+
+export function payloadRestScenarios(accountAddress: string): BenchmarkRestScenario[] {
+  return [
+    {
+      name: 'market.book',
+      path: '/markets/1/book?orderLimitPerSide=20',
+      gated: true,
+    },
+    { name: 'market.book.bulk', path: '/markets/1/book', gated: false },
+    {
+      name: 'market.prices',
+      path: '/markets/1/prices?limit=500',
+      gated: true,
+    },
+    {
+      name: 'market.prices.bulk',
+      path: '/markets/1/prices?limit=2000',
+      gated: false,
+    },
+    {
+      name: 'orderbook.token',
+      path: '/orderbook/1000000000?orderLimitPerSide=20',
+      gated: true,
+    },
+    {
+      name: 'orderbook.token.bulk',
+      path: '/orderbook/1000000000',
+      gated: false,
+    },
+    {
+      name: 'account.detail',
+      path: `/accounts/${accountAddress}?positionsLimit=100`,
+      gated: true,
+    },
+    {
+      name: 'account.detail.bulk',
+      path: `/accounts/${accountAddress}`,
+      gated: false,
+    },
+  ];
+}
+
+export interface RestGateSample {
+  name: string;
+  p95: number;
+  gated: boolean;
+}
+
+export function evaluateRestGate(
+  results: readonly RestGateSample[],
+  targetP95Ms: number,
+) {
+  const gated = results.filter((result) => result.gated);
+  return {
+    targetP95Ms,
+    passed: gated.every((result) => result.p95 < targetP95Ms),
+    failures: gated
+      .filter((result) => result.p95 >= targetP95Ms)
+      .map((result) => ({ name: result.name, p95: result.p95 })),
+    informationalScenarios: results
+      .filter((result) => !result.gated)
+      .map((result) => result.name),
+  };
 }
 
 function list(book: Record<string, unknown>, field: string): unknown[] {
@@ -136,9 +209,49 @@ function assertFillable(orders: readonly unknown[]): void {
   }
 }
 
+function representedOrders(levels: readonly unknown[]): number {
+  return levels.reduce<number>((total, level) => {
+    const orderCount = object(level, 'level').orderCount;
+    if (
+      typeof orderCount !== 'number' ||
+      !Number.isSafeInteger(orderCount) ||
+      orderCount < 0
+    ) {
+      throw new Error('Benchmark Hybrid level has invalid orderCount');
+    }
+    return total + orderCount;
+  }, 0);
+}
+
+function boundedOffchainWindow(
+  book: Record<string, unknown>,
+  expectedLimitPerSide: number,
+  returnedOrders: number,
+) {
+  const window = object(book.orderWindow, 'order window');
+  if (window.limitPerSide !== expectedLimitPerSide) {
+    throw new Error('Benchmark Hybrid book used the wrong per-side order limit');
+  }
+  const offchain = object(window.offchainOrders, 'offchain order window');
+  const total = offchain.total;
+  const truncated = offchain.truncated;
+  if (
+    offchain.returned !== returnedOrders ||
+    typeof total !== 'number' ||
+    !Number.isSafeInteger(total) ||
+    total < returnedOrders ||
+    typeof truncated !== 'boolean' ||
+    truncated !== (total > returnedOrders)
+  ) {
+    throw new Error('Benchmark Hybrid book has invalid bounded-order metadata');
+  }
+  return { total, truncated };
+}
+
 export function assertHotHybridResponses(
   marketBookValue: unknown,
   tokenBookValue: unknown,
+  expectedOrderLimitPerSide?: number,
 ): HotHybridEvidence {
   const market = object(marketBookValue, 'market book');
   const token = object(tokenBookValue, 'token book');
@@ -178,12 +291,63 @@ export function assertHotHybridResponses(
   ) {
     throw new Error('Benchmark Hybrid books must contain fillable orders and levels');
   }
+  let marketBookTotalOffchainOrders = marketOrders.length;
+  let tokenBookTotalOffchainOrders = tokenOrders.length;
+  if (expectedOrderLimitPerSide !== undefined) {
+    const yesWindow = boundedOffchainWindow(
+      yes,
+      expectedOrderLimitPerSide,
+      list(yes, 'offchainOrders').length,
+    );
+    const noWindow = boundedOffchainWindow(
+      no,
+      expectedOrderLimitPerSide,
+      list(no, 'offchainOrders').length,
+    );
+    const tokenWindow = boundedOffchainWindow(
+      token,
+      expectedOrderLimitPerSide,
+      tokenOrders.length,
+    );
+    marketBookTotalOffchainOrders = yesWindow.total + noWindow.total;
+    tokenBookTotalOffchainOrders = tokenWindow.total;
+    if (
+      !yesWindow.truncated ||
+      !noWindow.truncated ||
+      !tokenWindow.truncated
+    ) {
+      throw new Error('Benchmark Hybrid fixture did not exercise bounded orders');
+    }
+    if (
+      representedOrders(marketLevels) !== marketBookTotalOffchainOrders ||
+      representedOrders(tokenLevels) !== tokenBookTotalOffchainOrders
+    ) {
+      throw new Error('Benchmark Hybrid levels do not represent every fillable order');
+    }
+  } else {
+    if (
+      'orderWindow' in yes ||
+      'orderWindow' in no ||
+      'orderWindow' in token
+    ) {
+      throw new Error('Benchmark unbounded Hybrid response exposed window metadata');
+    }
+    if (
+      representedOrders(marketLevels) !== marketOrders.length ||
+      representedOrders(tokenLevels) !== tokenOrders.length
+    ) {
+      throw new Error('Benchmark unbounded Hybrid response omitted full orders');
+    }
+  }
   return {
     marketId: '1',
     liveVenue: 'HYBRID',
     tradingOpen: true,
+    orderLimitPerSide: expectedOrderLimitPerSide ?? null,
     marketBookOffchainOrders: marketOrders.length,
+    marketBookTotalOffchainOrders,
     tokenBookOffchainOrders: tokenOrders.length,
+    tokenBookTotalOffchainOrders,
     marketBookLevels: marketLevels.length,
     tokenBookLevels: tokenLevels.length,
   };

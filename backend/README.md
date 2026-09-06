@@ -102,7 +102,10 @@ book; the runner refuses to time an ended or empty book. `bench:run` starts Fast
 event bus in a dedicated child process, drives REST and WebSocket clients from the parent process,
 emits JSON `EXPLAIN (ANALYZE, BUFFERS)` plans, and runs a transactional synthetic TradeState ingest
 fixture. Its explicit targets are REST p95 below 100 ms, at least 20 indexed price ticks/sec when
-each tick re-marks 100 positions, and WebSocket publish p95 below 250 µs with 500 clients.
+each tick re-marks 100 positions, and WebSocket publish p95 below 250 µs with 500 clients. The
+REST target applies to bounded interactive reads: 20 complete book orders per side, 500 price
+points, and 100 account positions. Matching unbounded/2,000-point `.bulk` scenarios remain in the
+result as informational capacity measurements and do not decide the interactive gate.
 
 ## Serving contract
 
@@ -112,11 +115,11 @@ Every route is declared in `shared/src/rest.ts`:
 | --- | --- | --- |
 | GET | `/markets` | Keyset-paginated markets (`phase`, `creator`, `limit`, `cursor`) |
 | GET | `/markets/:id` | Market, recent trades, resolution |
-| GET | `/markets/:id/book` | YES and NO books |
+| GET | `/markets/:id/book` | YES and NO books (`orderLimitPerSide` optionally bounds complete order DTOs, not aggregate levels) |
 | GET | `/markets/:id/prices` | Indexed price curve (`fromTs`, `limit`) |
 | GET | `/truth/:marketId` | Explainable indexed fair value; x402-protected when seller mode is `circle` |
-| GET | `/orderbook/:tokenId` | One token's aggregated ladder and open orders |
-| GET | `/accounts/:addr` | Account, positions, recent trades, estimated PnL |
+| GET | `/orderbook/:tokenId` | One token's aggregated ladder and optionally bounded complete orders (`orderLimitPerSide`) |
+| GET | `/accounts/:addr` | Account, positions (`marketId`, `positionsLimit`, `positionsCursor`), recent trades, aggregate PnL |
 | GET | `/activity` | Keyset-paginated activity (`marketId`, `account`, `limit`, `cursor`) |
 | GET | `/config` | Registry params, addresses, trading-window bounds, committee |
 | GET | `/health` | Indexed block, Arc head, and lag |

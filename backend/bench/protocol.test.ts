@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertHotHybridResponses,
+  evaluateRestGate,
   parseBenchmarkServerMessage,
   parseBenchmarkServerRequest,
+  payloadRestScenarios,
 } from './protocol.js';
 
 function outcomeBook() {
@@ -12,6 +14,7 @@ function outcomeBook() {
     asks: [{ priceRaw: '600000', sizeRaw: '1000000', orderCount: 1 }],
     offchainOrders: [
       { orderHash: `0x${'1'.repeat(64)}`, fillable: true },
+      { orderHash: `0x${'2'.repeat(64)}`, fillable: true },
     ],
   };
 }
@@ -75,10 +78,38 @@ describe('hot Hybrid workload assertion', () => {
       marketId: '1',
       liveVenue: 'HYBRID',
       tradingOpen: true,
-      marketBookOffchainOrders: 2,
-      tokenBookOffchainOrders: 1,
+      orderLimitPerSide: null,
+      marketBookOffchainOrders: 4,
+      marketBookTotalOffchainOrders: 4,
+      tokenBookOffchainOrders: 2,
+      tokenBookTotalOffchainOrders: 2,
       marketBookLevels: 4,
       tokenBookLevels: 2,
+    });
+  });
+
+  it('proves the timed Hybrid fixtures are bounded but retain larger totals', () => {
+    const boundedOutcome = {
+      ...outcomeBook(),
+      offchainOrders: outcomeBook().offchainOrders.slice(0, 1),
+      orderWindow: {
+        limitPerSide: 20,
+        orders: { returned: 0, total: 0, truncated: false },
+        offchainOrders: { returned: 1, total: 2, truncated: true },
+      },
+    };
+    expect(
+      assertHotHybridResponses(
+        { ...marketBook, yes: boundedOutcome, no: boundedOutcome },
+        { ...tokenBook, ...boundedOutcome },
+        20,
+      ),
+    ).toMatchObject({
+      orderLimitPerSide: 20,
+      marketBookOffchainOrders: 2,
+      marketBookTotalOffchainOrders: 4,
+      tokenBookOffchainOrders: 1,
+      tokenBookTotalOffchainOrders: 2,
     });
   });
 
@@ -99,5 +130,59 @@ describe('hot Hybrid workload assertion', () => {
         offchainOrders: [],
       }),
     ).toThrow(/fillable orders and levels/u);
+  });
+});
+
+describe('REST fluency gate configuration', () => {
+  it('gates bounded product reads and retains full reads as informational', () => {
+    const scenarios = payloadRestScenarios(`0x${'1'.repeat(40)}`);
+    expect(
+      scenarios.filter(({ gated }) => gated).map(({ name, path }) => ({ name, path })),
+    ).toEqual([
+      {
+        name: 'market.book',
+        path: '/markets/1/book?orderLimitPerSide=20',
+      },
+      {
+        name: 'market.prices',
+        path: '/markets/1/prices?limit=500',
+      },
+      {
+        name: 'orderbook.token',
+        path: '/orderbook/1000000000?orderLimitPerSide=20',
+      },
+      {
+        name: 'account.detail',
+        path: `/accounts/0x${'1'.repeat(40)}?positionsLimit=100`,
+      },
+    ]);
+    expect(
+      scenarios.filter(({ gated }) => !gated).map(({ name, path }) => ({ name, path })),
+    ).toEqual([
+      { name: 'market.book.bulk', path: '/markets/1/book' },
+      { name: 'market.prices.bulk', path: '/markets/1/prices?limit=2000' },
+      { name: 'orderbook.token.bulk', path: '/orderbook/1000000000' },
+      {
+        name: 'account.detail.bulk',
+        path: `/accounts/0x${'1'.repeat(40)}`,
+      },
+    ]);
+  });
+
+  it('excludes informational bulk misses from the REST target', () => {
+    expect(
+      evaluateRestGate(
+        [
+          { name: 'market.book', p95: 99, gated: true },
+          { name: 'market.book.bulk', p95: 500, gated: false },
+        ],
+        100,
+      ),
+    ).toEqual({
+      targetP95Ms: 100,
+      passed: true,
+      failures: [],
+      informationalScenarios: ['market.book.bulk'],
+    });
   });
 });

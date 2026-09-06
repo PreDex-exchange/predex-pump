@@ -11,6 +11,9 @@ import { applyDecodedEvents } from '../src/indexer/runner.js';
 import type { DecodedEvent } from '../src/indexer/types.js';
 import {
   assertHotHybridResponses,
+  evaluateRestGate,
+  payloadRestScenarios,
+  type BenchmarkRestScenario,
   type HotHybridEvidence,
 } from './protocol.js';
 import { resolveBenchmarkProvenance } from './provenance.js';
@@ -46,6 +49,7 @@ interface RestResult extends Distribution {
   concurrency: number;
   throughputRps: number;
   averagePayloadBytes: number;
+  gated: boolean;
 }
 
 interface PlanNodeSummary {
@@ -124,6 +128,7 @@ async function benchmarkRest(
   baseUrl: string,
   name: string,
   path: string,
+  gated: boolean,
   requestCount: number,
   concurrency: number,
   warmupRequests: number,
@@ -157,6 +162,7 @@ async function benchmarkRest(
     concurrency,
     throughputRps: requestCount / durationSeconds,
     averagePayloadBytes: bytes / requestCount,
+    gated,
     ...stats,
   };
   console.info(
@@ -669,20 +675,48 @@ async function assertHotHybridWorkload(
     historicalMiniClobOpenOrders: 0;
   }
 > {
-  const [marketBook, tokenBook, historicalMiniClobOrders, openHistoricalOrders] =
-    await Promise.all([
-      requestJson(baseUrl, '/markets/1/book'),
-      requestJson(baseUrl, '/orderbook/1000000000'),
-      prisma.order.count({ where: { marketId: '1' } }),
-      prisma.order.count({ where: { marketId: '1', open: true } }),
-    ]);
+  const [
+    marketBook,
+    tokenBook,
+    bulkMarketBook,
+    bulkTokenBook,
+    historicalMiniClobOrders,
+    openHistoricalOrders,
+  ] = await Promise.all([
+    requestJson(baseUrl, '/markets/1/book?orderLimitPerSide=20'),
+    requestJson(baseUrl, '/orderbook/1000000000?orderLimitPerSide=20'),
+    requestJson(baseUrl, '/markets/1/book'),
+    requestJson(baseUrl, '/orderbook/1000000000'),
+    prisma.order.count({ where: { marketId: '1' } }),
+    prisma.order.count({ where: { marketId: '1', open: true } }),
+  ]);
   if (historicalMiniClobOrders === 0 || openHistoricalOrders !== 0) {
     throw new Error(
       'Benchmark market 1 must retain closed historical MiniCLOB rows',
     );
   }
+  const hotHybrid = assertHotHybridResponses(marketBook, tokenBook, 20);
+  const bulkHybrid = assertHotHybridResponses(bulkMarketBook, bulkTokenBook);
+  if (
+    hotHybrid.marketBookOffchainOrders !== 80 ||
+    hotHybrid.marketBookTotalOffchainOrders !== 400 ||
+    hotHybrid.tokenBookOffchainOrders !== 40 ||
+    hotHybrid.tokenBookTotalOffchainOrders !== 200
+  ) {
+    throw new Error(
+      'Benchmark bounded Hybrid response must expose 20 orders per side while representing all 400 seeded orders',
+    );
+  }
+  if (
+    bulkHybrid.marketBookOffchainOrders !== 400 ||
+    bulkHybrid.tokenBookOffchainOrders !== 200
+  ) {
+    throw new Error(
+      'Benchmark informational Hybrid responses must retain all 400 seeded orders',
+    );
+  }
   return {
-    ...assertHotHybridResponses(marketBook, tokenBook),
+    ...hotHybrid,
     historicalMiniClobOrders,
     historicalMiniClobOpenOrders: 0,
   };
@@ -737,33 +771,30 @@ async function main(): Promise<void> {
       blockNumber: BASE_BLOCK + Math.floor(observed.activityEvents / 20),
       logIndex: 5,
     });
-    const scenarios = [
-      { name: 'markets.list', path: '/markets?limit=50' },
+    const scenarios: BenchmarkRestScenario[] = [
+      { name: 'markets.list', path: '/markets?limit=50', gated: true },
       {
         name: 'markets.phase',
         path: '/markets?phase=Graduated&limit=50',
+        gated: true,
       },
       {
         name: 'markets.deep-keyset',
         path: `/markets?limit=50&cursor=${encodeURIComponent(marketCursor)}`,
+        gated: true,
       },
-      { name: 'market.detail', path: '/markets/1' },
-      { name: 'market.book', path: '/markets/1/book' },
-      {
-        name: 'market.prices',
-        path: `/markets/1/prices?fromTs=${BASE_TS}&limit=2000`,
-      },
-      { name: 'orderbook.token', path: '/orderbook/1000000000' },
-      { name: 'account.detail', path: `/accounts/${address(0)}` },
-      { name: 'activity.list', path: '/activity?limit=50' },
+      { name: 'market.detail', path: '/markets/1', gated: true },
+      ...payloadRestScenarios(address(0)),
+      { name: 'activity.list', path: '/activity?limit=50', gated: true },
       {
         name: 'activity.market-deep-keyset',
         path: `/activity?marketId=1&limit=50&cursor=${encodeURIComponent(
           activityCursor,
         )}`,
+        gated: true,
       },
-      { name: 'config', path: '/config' },
-      { name: 'health', path: '/health' },
+      { name: 'config', path: '/config', gated: true },
+      { name: 'health', path: '/health', gated: true },
     ];
     const rest: RestResult[] = [];
     for (const scenario of scenarios) {
@@ -772,6 +803,7 @@ async function main(): Promise<void> {
           server.baseUrl,
           scenario.name,
           scenario.path,
+          scenario.gated,
           requestCount,
           concurrency,
           warmupRequests,
@@ -829,12 +861,14 @@ async function main(): Promise<void> {
       },
       targets: {
         restP95Ms: 100,
+        restP95AppliesTo: 'gated',
         indexerEventsPerSecond: 20,
         wsPublishP95Us: 250,
       },
       observedScale: observed,
       hotHybrid,
       rest,
+      restGate: evaluateRestGate(rest, 100),
       plans,
       indexer,
       websocket,

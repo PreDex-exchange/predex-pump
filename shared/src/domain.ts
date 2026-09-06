@@ -145,6 +145,21 @@ export interface BookLevel {
   orderCount: number;
 }
 
+export interface OrderBookCollectionWindow {
+  /** Number of complete wire DTOs returned in this snapshot. */
+  returned: number;
+  /** Number of matching source orders before the complete DTO window is applied. */
+  total: number;
+  truncated: boolean;
+}
+
+export interface OrderBookWindow {
+  /** Maximum complete wire DTOs returned for each of BID and ASK. */
+  limitPerSide: number;
+  orders: OrderBookCollectionWindow;
+  offchainOrders: OrderBookCollectionWindow;
+}
+
 /** JSON-safe representation of the exact CTFExchange struct that was signed. */
 export interface SignedCtfExchangeOrder {
   saltRaw: Raw;
@@ -216,8 +231,10 @@ export interface OrderBook {
   // Raw open MiniCLOB orders. After trading ends they leave the ladder but stay
   // visible so their makers can recover escrow through cancellation.
   orders: Order[];
-  /** Fillable signed CTFExchange orders included in the same aggregated levels. */
+  /** Complete wire DTOs for fillable signed orders; orderWindow reports any bound. */
   offchainOrders: OffchainOrder[];
+  /** Present only when the caller requested a bounded raw-order window. */
+  orderWindow?: OrderBookWindow;
 }
 
 export interface Position {
