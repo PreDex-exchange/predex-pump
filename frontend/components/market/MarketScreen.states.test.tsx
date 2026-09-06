@@ -1,6 +1,7 @@
 import type { MarketDetailResponse } from '@predex-pump/shared/rest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -26,7 +27,11 @@ vi.mock('wagmi', async (importOriginal) => {
   const original = await importOriginal<typeof import('wagmi')>();
   return {
     ...original,
-    useAccount: () => ({ address: undefined }),
+    useAccount: () => ({
+      address: `0x${'12'.repeat(20)}`,
+      chainId: 5_042_002,
+      isConnected: true,
+    }),
   };
 });
 
@@ -49,6 +54,31 @@ vi.mock('@/lib/api/hooks', () => ({
     refetch: vi.fn(),
   }),
   usePriceHistory: () => ({ data: { points: [] } }),
+}));
+
+vi.mock('@/lib/chain/useGraduationStatus', () => ({
+  useGraduationStatus: () => ({
+    data: {
+      qualified: true,
+      activityMoneyInRaw: '0',
+      activityThresholdRaw: '0',
+      openedAt: 1_900_000_000,
+      minimumTimeOpen: 0,
+      earliestGraduationAt: 1_900_000_000,
+    },
+    error: null,
+    isLoading: false,
+    isRefreshing: false,
+    refetch: vi.fn(),
+  }),
+}));
+
+vi.mock('./SettlementPanel', () => ({
+  SettlementPanel: () => <section>Settlement controls</section>,
+}));
+
+vi.mock('./TradePanel', () => ({
+  TradePanel: () => <button type="button">Buy YES</button>,
 }));
 
 function renderScreen() {
@@ -115,5 +145,68 @@ describe('MarketScreen money states', () => {
     expect(
       within(alert).getByRole('link', { name: 'Return to feed' }).getAttribute('href'),
     ).toBe('/');
+  });
+
+  it('keeps graduation available after Bootstrap trading ends without reopening trading', async () => {
+    const tradingEndsAt = 1_900_003_600;
+    const clock = vi
+      .spyOn(Date, 'now')
+      .mockReturnValue((tradingEndsAt + 60) * 1_000);
+    mocks.market.data = {
+      market: {
+        id: '17',
+        creator: `0x${'12'.repeat(20)}`,
+        question: 'Will an expired Bootstrap market remain gradable?',
+        phase: 'Opened',
+        conditionId: `0x${'34'.repeat(32)}`,
+        questionId: `0x${'56'.repeat(32)}`,
+        yesTokenId: '1701',
+        noTokenId: '1702',
+        seedRaw: '1000000',
+        yesPriceRaw: '500000',
+        noPriceRaw: '500000',
+        graduationActivityRaw: '0',
+        bookAddress: null,
+        frozenYesPriceRaw: null,
+        handoffSizeRaw: null,
+        tradeCount: 0,
+        volumeRaw: '0',
+        params: {
+          seedFloorRaw: '1000000',
+          seedCapRaw: '5000000',
+          fCapRaw: '10000000',
+          graduationMoneyInThresholdRaw: '0',
+          graduationTollRaw: '100000',
+          inventoryTargetRaw: '20000000',
+          protocolFeeBps: 20,
+          depthFeeBps: 0,
+          tradingWindowSeconds: 3600,
+          minimumTimeOpenSeconds: 0,
+          minimumTickSizeRaw: '1000',
+        },
+        createdAt: 1_900_000_000,
+        tradingEndsAt,
+        graduatedAt: null,
+        resolvedAt: null,
+      },
+      recentTrades: [],
+      resolution: null,
+      settlementEvents: {
+        protocolSweepCompleted: false,
+        protocolSweptRaw: '0',
+      },
+    };
+    mocks.market.isNotFound = false;
+
+    renderScreen();
+    await act(
+      () => new Promise((resolve) => window.setTimeout(resolve, 0)),
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Graduate market' }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Buy YES' })).toBeNull();
+    clock.mockRestore();
   });
 });
