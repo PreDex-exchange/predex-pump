@@ -20,6 +20,12 @@ export interface SignedOrderFillabilityRow {
   takerAmountRaw: string;
 }
 
+export interface PreloadedFillabilityMarketState {
+  id: string;
+  tradingEndsAt: number;
+  resolvedAt: number | null;
+}
+
 export const SIGNED_ORDER_BOOK_SELECT = {
   orderHash: true,
   maker: true,
@@ -90,6 +96,7 @@ export async function fillabilityForOrders(
   prisma: Prisma.TransactionClient,
   orders: readonly SignedOrderFillabilityRow[],
   now: number,
+  preloadedMarketStates?: readonly PreloadedFillabilityMarketState[],
 ): Promise<Map<string, Fillability>> {
   if (orders.length === 0) return new Map();
   for (const order of orders) assertExchangeSide(order.exchangeSide);
@@ -154,14 +161,16 @@ export async function fillabilityForOrders(
         : prisma.collateralBalance.findMany({
             where: { owner: { in: buyMakers } },
           }),
-      prisma.market.findMany({
-        where: { id: { in: marketIds } },
-        select: {
-          id: true,
-          tradingEndsAt: true,
-          resolution: { select: { marketId: true } },
-        },
-      }),
+      preloadedMarketStates === undefined
+        ? prisma.market.findMany({
+            where: { id: { in: marketIds } },
+            select: {
+              id: true,
+              tradingEndsAt: true,
+              resolution: { select: { marketId: true } },
+            },
+          })
+        : Promise.resolve([]),
       migrationMarketIds.length === 0
         ? Promise.resolve([])
         : prisma.bookMigration.findMany({
@@ -202,7 +211,27 @@ export async function fillabilityForOrders(
   const collateralBalanceByOwner = new Map(
     collateralBalances.map((balance) => [balance.owner, BigInt(balance.balanceRaw)]),
   );
-  const marketById = new Map(markets.map((market) => [market.id, market]));
+  const marketById = new Map<
+    string,
+    { tradingEndsAt: number; resolved: boolean }
+  >();
+  if (preloadedMarketStates === undefined) {
+    for (const market of markets) {
+      marketById.set(market.id, {
+        tradingEndsAt: market.tradingEndsAt,
+        resolved: market.resolution !== null,
+      });
+    }
+  } else {
+    // Never supplement a caller-owned snapshot with a later database read.
+    // Any candidate absent from this map takes INDEXED_STATE_UNAVAILABLE below.
+    for (const market of preloadedMarketStates) {
+      marketById.set(market.id, {
+        tradingEndsAt: market.tradingEndsAt,
+        resolved: market.resolvedAt !== null,
+      });
+    }
+  }
   const migrationByMarket = new Map(
     migrations.map((migration) => [migration.marketId, migration]),
   );
@@ -222,7 +251,7 @@ export async function fillabilityForOrders(
           { fillable: false, reason: 'INDEXED_STATE_UNAVAILABLE' },
         ];
       }
-      if (market.resolution !== null) {
+      if (market.resolved) {
         return [order.orderHash, { fillable: false, reason: 'MARKET_RESOLVED' }];
       }
       if (now >= market.tradingEndsAt) {

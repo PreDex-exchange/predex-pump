@@ -230,6 +230,64 @@ describe('hybrid off-chain book', () => {
     expect(indexerRead).not.toHaveBeenCalled();
   });
 
+  it('reuses the outer bounded-book market snapshot without delegate rereads', async () => {
+    await ingestBuy(700_000n, 500_000n, 110n);
+    await ingestSell(640_000n, 200_000n, 111n);
+    const marketRead = vi.spyOn(testPrisma.market, 'findMany');
+    const resolutionRead = vi.spyOn(testPrisma.resolution, 'findMany');
+
+    const book = await getMarketBook(testPrisma, '1', BOOK_NOW, 1);
+
+    expect(book?.yes.offchainOrders).toHaveLength(2);
+    expect(marketRead).not.toHaveBeenCalled();
+    expect(resolutionRead).not.toHaveBeenCalled();
+  });
+
+  it('uses only covered preloaded market state for terminal fillability reasons', async () => {
+    const created = await ingestBuy(700_000n, 500_000n, 112n);
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+    const marketRead = vi.spyOn(testPrisma.market, 'findMany');
+
+    const resolved = await fillabilityForOrders(
+      testPrisma,
+      [row],
+      BOOK_NOW,
+      [{ id: '1', tradingEndsAt: BOOK_NOW, resolvedAt: BOOK_NOW - 1 }],
+    );
+    const ended = await fillabilityForOrders(
+      testPrisma,
+      [row],
+      BOOK_NOW,
+      [{ id: '1', tradingEndsAt: BOOK_NOW, resolvedAt: null }],
+    );
+    const uncovered = await fillabilityForOrders(
+      testPrisma,
+      [row],
+      BOOK_NOW,
+      [],
+    );
+
+    expect(resolved.get(row.orderHash)).toEqual({
+      fillable: false,
+      reason: 'MARKET_RESOLVED',
+    });
+    expect(ended.get(row.orderHash)).toEqual({
+      fillable: false,
+      reason: 'TRADING_ENDED',
+    });
+    expect(uncovered.get(row.orderHash)).toEqual({
+      fillable: false,
+      reason: 'INDEXED_STATE_UNAVAILABLE',
+    });
+    expect(marketRead).not.toHaveBeenCalled();
+
+    const generic = await fillabilityForOrders(testPrisma, [row], BOOK_NOW);
+    expect(generic.get(row.orderHash)).toEqual({ fillable: true, reason: null });
+    expect(marketRead).toHaveBeenCalledTimes(1);
+  });
+
   it('walks past unfillable Hybrid candidates to build a bounded top-of-book', async () => {
     const lowerBid = await ingestBuy(650_000n, 500_000n, 201n);
     const bestBid = await ingestBuy(700_000n, 500_000n, 202n);

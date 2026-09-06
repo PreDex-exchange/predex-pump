@@ -37,6 +37,7 @@ import {
   fillabilityForOrders,
   findActiveSignedOrderBookRows,
   findFillableSignedOrders,
+  type PreloadedFillabilityMarketState,
   type SignedOrderBookRow,
 } from '../orderbook/fillability.js';
 import { toOffchainOrderDto } from '../orderbook/order.js';
@@ -421,6 +422,7 @@ async function boundedFillableSignedRows(
   rows: readonly SignedOrderBookRow[],
   orderLimitPerSide: number,
   now: number,
+  preloadedMarketStates: readonly PreloadedFillabilityMarketState[],
 ): Promise<BoundedBookRows<SignedOrderBookRow>> {
   const groups = sortedPriceTimeGroups(
     rows,
@@ -446,6 +448,7 @@ async function boundedFillableSignedRows(
       prisma,
       batches.flatMap(({ candidates }) => candidates),
       now,
+      preloadedMarketStates,
     );
     for (const { state, candidates } of batches) {
       for (const candidate of candidates) {
@@ -698,6 +701,13 @@ async function getMarketBookSnapshot(
     liveVenue === 'MINICLOB' && !tradingOpen
       ? undefined
       : orderLimitPerSide;
+  const fillabilityMarketStates = [
+    {
+      id: market.id,
+      tradingEndsAt: market.tradingEndsAt,
+      resolvedAt: market.resolvedAt,
+    },
+  ];
   let miniLevelRows: readonly LevelOrder[] = [];
   let miniWireRows: OrderDtoRow[] = [];
   let truncatedMiniTokenIds: ReadonlySet<string> = new Set();
@@ -719,6 +729,7 @@ async function getMarketBookSnapshot(
         candidates,
         orderLimitPerSide,
         now,
+        fillabilityMarketStates,
       );
       signedLevelRows = window.visible;
       truncatedSignedTokenIds = window.truncatedTokenIds;
@@ -839,6 +850,13 @@ async function getOrderBookSnapshot(
     now < market.tradingEndsAt;
   const hybrid = market.bookMigration?.status === 'MIGRATED';
   const transitioning = market.bookMigration !== null && !hybrid;
+  const fillabilityMarketStates = [
+    {
+      id: market.id,
+      tradingEndsAt: market.tradingEndsAt,
+      resolvedAt: market.resolvedAt,
+    },
+  ];
   let miniLevelRows: readonly LevelOrder[] = [];
   let miniWireRows: OrderDtoRow[] = [];
   let truncatedMiniTokenIds: ReadonlySet<string> = new Set();
@@ -886,6 +904,7 @@ async function getOrderBookSnapshot(
         candidates,
         orderLimitPerSide,
         now,
+        fillabilityMarketStates,
       );
       signedLevelRows = window.visible;
       truncatedSignedTokenIds = window.truncatedTokenIds;
