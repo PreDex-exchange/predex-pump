@@ -665,6 +665,115 @@ describe('WebSocket-driven indexer', () => {
     }
   });
 
+  it('keeps background safety retries read-only until the main loop commits the sweep', async () => {
+    let head = 99n;
+    let failNextSafetyCoreRead = false;
+    let safetyCoreAttempts = 0;
+    let safetyIsBlocked = false;
+    let releaseSafety!: () => void;
+    const safetyRelease = new Promise<void>((resolve) => {
+      releaseSafety = resolve;
+    });
+    const transport = new FakeSubscriptionTransport();
+    const onEvents = vi.fn(async () => undefined);
+    const client = asClient({
+      getBlockNumber: async () => head,
+      getLogs: async ({ address, fromBlock }) => {
+        if (!Array.isArray(address) || fromBlock !== 100n) return [];
+        safetyCoreAttempts += 1;
+        if (failNextSafetyCoreRead) {
+          failNextSafetyCoreRead = false;
+          throw Object.assign(new Error('safety RPC connection reset'), {
+            code: 'ECONNRESET',
+          });
+        }
+        safetyIsBlocked = true;
+        await safetyRelease;
+        return [registeredMarketTypeLog(100)];
+      },
+      getBlock: async () => ({ timestamp: 1_700_000_100n }),
+    });
+    start(
+      testConfig({ pollMs: 25, webSocketStallMs: 5_000 }),
+      client,
+      () => transport,
+      onEvents,
+    );
+
+    try {
+      await waitUntil(
+        async () =>
+          (await testPrisma.indexerSubscriptionState.findUnique({
+            where: { id: 1 },
+          }))?.status === 'connected',
+        'the subscription to become trusted',
+      );
+      const beforeSafety = await testPrisma.indexerState.findUniqueOrThrow({
+        where: { id: 1 },
+        select: {
+          lastBlock: true,
+          headBlock: true,
+          consecutiveRpcFailures: true,
+          lastSuccessfulPollAt: true,
+        },
+      });
+      const beforePollAt = beforeSafety.lastSuccessfulPollAt?.getTime();
+      if (beforePollAt === undefined) {
+        throw new Error('Trusted subscription did not retain its startup poll time');
+      }
+
+      head = 100n;
+      failNextSafetyCoreRead = true;
+      await waitUntil(
+        () => safetyIsBlocked,
+        'the retried safety getLogs request to block',
+        5_000,
+      );
+
+      expect(safetyCoreAttempts).toBe(2);
+      await expect(
+        testPrisma.indexerState.findUniqueOrThrow({
+          where: { id: 1 },
+          select: {
+            lastBlock: true,
+            headBlock: true,
+            consecutiveRpcFailures: true,
+            lastSuccessfulPollAt: true,
+          },
+        }),
+      ).resolves.toEqual(beforeSafety);
+
+      releaseSafety();
+      await waitUntil(
+        async () =>
+          (await testPrisma.activityEvent.count({
+            where: { txHash: `0x${'c'.repeat(64)}` },
+          })) === 1,
+        'the main loop to commit the pending safety sweep',
+      );
+
+      const afterSweep = await testPrisma.indexerState.findUniqueOrThrow({
+        where: { id: 1 },
+      });
+      expect(afterSweep).toMatchObject({
+        lastBlock: 100,
+        headBlock: 100,
+        consecutiveRpcFailures: 0,
+      });
+      expect(afterSweep.lastSuccessfulPollAt?.getTime()).toBeGreaterThan(
+        beforePollAt,
+      );
+      expect(onEvents).toHaveBeenCalledTimes(1);
+      expect(
+        await testPrisma.activityEvent.count({
+          where: { txHash: `0x${'c'.repeat(64)}` },
+        }),
+      ).toBe(1);
+    } finally {
+      releaseSafety();
+    }
+  });
+
   it('backfills the disconnected gap before trusting a replacement subscription', async () => {
     const owner =
       '0x1111111111111111111111111111111111111111' as Address;

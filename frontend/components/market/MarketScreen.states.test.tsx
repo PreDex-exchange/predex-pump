@@ -1,4 +1,7 @@
-import type { MarketDetailResponse } from '@predex-pump/shared/rest';
+import type {
+  MarketBookResponse,
+  MarketDetailResponse,
+} from '@predex-pump/shared/rest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   act,
@@ -18,6 +21,12 @@ const mocks = vi.hoisted(() => ({
     data: null as MarketDetailResponse | null,
     error: null as Error | null,
     isNotFound: true,
+    isLoading: false,
+    refetch: vi.fn(),
+  },
+  book: {
+    data: null as MarketBookResponse | null,
+    error: null as Error | null,
     isLoading: false,
     refetch: vi.fn(),
   },
@@ -47,12 +56,7 @@ vi.mock('@/lib/api/hooks', () => ({
   useAccount: () => ({ data: null }),
   useAccountProfile: () => ({ data: null, error: null, isLoading: false }),
   useMarket: () => mocks.market,
-  useOrderBook: () => ({
-    data: null,
-    error: null,
-    isLoading: false,
-    refetch: vi.fn(),
-  }),
+  useOrderBook: () => mocks.book,
   usePriceHistory: () => ({ data: { points: [] } }),
 }));
 
@@ -81,6 +85,44 @@ vi.mock('./TradePanel', () => ({
   TradePanel: () => <button type="button">Buy YES</button>,
 }));
 
+vi.mock('./OrderBookPanel', () => ({
+  OrderBookPanel: ({ books }: { books: MarketBookResponse }) => (
+    <section
+      aria-label="Historical Hybrid order book"
+      data-trading-open={String(books.tradingOpen)}
+    >
+      Historical Hybrid order book
+    </section>
+  ),
+}));
+
+const TRADING_ENDS_AT = 1_900_003_600;
+
+function closedHybridBook(): MarketBookResponse {
+  const outcomeBook = (outcome: 'YES' | 'NO') => ({
+    marketId: '17',
+    minimumTickSizeRaw: '1000',
+    outcome,
+    tokenId: outcome === 'YES' ? '1701' : '1702',
+    bids: [],
+    asks: [],
+    bestBidRaw: null,
+    bestAskRaw: null,
+    orders: [],
+    offchainOrders: [],
+  });
+  return {
+    marketId: '17',
+    tradingOpen: false,
+    liveVenue: 'HYBRID',
+    orderBookAvailable: true,
+    minimumTickSizeRaw: '1000',
+    minimumTickSizeAppliesTo: 'NEW_ORDERS',
+    yes: outcomeBook('YES'),
+    no: outcomeBook('NO'),
+  };
+}
+
 function renderScreen() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -99,6 +141,10 @@ beforeEach(() => {
   mocks.market.isNotFound = true;
   mocks.market.isLoading = false;
   mocks.market.refetch.mockReset();
+  mocks.book.data = null;
+  mocks.book.error = null;
+  mocks.book.isLoading = false;
+  mocks.book.refetch.mockReset();
 });
 
 afterEach(cleanup);
@@ -147,11 +193,10 @@ describe('MarketScreen money states', () => {
     ).toBe('/');
   });
 
-  it('keeps graduation available after Bootstrap trading ends without reopening trading', async () => {
-    const tradingEndsAt = 1_900_003_600;
+  it('keeps post-deadline lifecycle actions without reopening trading', async () => {
     const clock = vi
       .spyOn(Date, 'now')
-      .mockReturnValue((tradingEndsAt + 60) * 1_000);
+      .mockReturnValue((TRADING_ENDS_AT + 60) * 1_000);
     mocks.market.data = {
       market: {
         id: '17',
@@ -185,7 +230,7 @@ describe('MarketScreen money states', () => {
           minimumTickSizeRaw: '1000',
         },
         createdAt: 1_900_000_000,
-        tradingEndsAt,
+        tradingEndsAt: TRADING_ENDS_AT,
         graduatedAt: null,
         resolvedAt: null,
       },
@@ -196,6 +241,7 @@ describe('MarketScreen money states', () => {
         protocolSweptRaw: '0',
       },
     };
+    const openedDetail = mocks.market.data;
     mocks.market.isNotFound = false;
 
     renderScreen();
@@ -206,7 +252,37 @@ describe('MarketScreen money states', () => {
     expect(
       screen.getByRole('button', { name: 'Graduate market' }),
     ).toBeTruthy();
+    expect(
+      screen.getByText(/Trading has closed, but graduation is still available/u),
+    ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Buy YES' })).toBeNull();
+
+    mocks.market.data = {
+      ...openedDetail,
+      market: {
+        ...openedDetail.market,
+        question: 'Will an expired Hybrid market remain manageable?',
+        phase: 'Graduated',
+        bookAddress: `0x${'78'.repeat(20)}`,
+        frozenYesPriceRaw: '500000',
+        handoffSizeRaw: '20000000',
+        graduatedAt: TRADING_ENDS_AT - 100,
+      },
+    };
+    mocks.book.data = closedHybridBook();
+    cleanup();
+
+    renderScreen();
+
+    const historicalBook = screen.getByRole('region', {
+      name: 'Historical Hybrid order book',
+    });
+    expect(historicalBook.getAttribute('data-trading-open')).toBe('false');
+    expect(screen.getByText('Settlement controls')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Buy YES' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Graduate market' }),
+    ).toBeNull();
     clock.mockRestore();
   });
 });

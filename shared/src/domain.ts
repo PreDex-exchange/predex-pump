@@ -176,6 +176,7 @@ export type OrderUnfillableReason =
   | 'NOT_OPEN'
   | 'WITHDRAWN'
   | 'EXPIRED'
+  | 'TRADING_ENDED'
   | 'MARKET_RESOLVED'
   | 'INSUFFICIENT_BALANCE'
   | 'MISSING_APPROVAL'
@@ -212,7 +213,9 @@ export interface OrderBook {
   asks: BookLevel[]; // sorted best (lowest price) first
   bestBidRaw: Raw | null;
   bestAskRaw: Raw | null;
-  orders: Order[]; // raw open orders backing the ladder (thin book — small)
+  // Raw open MiniCLOB orders. After trading ends they leave the ladder but stay
+  // visible so their makers can recover escrow through cancellation.
+  orders: Order[];
   /** Fillable signed CTFExchange orders included in the same aggregated levels. */
   offchainOrders: OffchainOrder[];
 }

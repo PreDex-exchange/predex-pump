@@ -482,6 +482,7 @@ describe('REST shared contract', () => {
     expect(body.marketId).toBe('1');
     expect(body.liveVenue).toBe('MINICLOB');
     expect(body.orderBookAvailable).toBe(true);
+    expect(body.tradingOpen).toBe(true);
     expect('venueTransition' in body).toBe(false);
     expect(body.minimumTickSizeRaw).toBe('1000');
     expect(body.minimumTickSizeAppliesTo).toBe('NEW_ORDERS');
@@ -520,6 +521,34 @@ describe('REST shared contract', () => {
       asks: [],
       bestBidRaw: null,
       bestAskRaw: null,
+      orders: [],
+      offchainOrders: [],
+    });
+  });
+
+  it('keeps ended MiniCLOB orders on the market book only for cancellation', async () => {
+    await testPrisma.market.update({
+      where: { id: '1' },
+      data: { tradingEndsAt: Math.floor(Date.now() / 1_000) },
+    });
+
+    const [marketResponse, tokenResponse] = await Promise.all([
+      app.inject({ method: 'GET', url: '/markets/1/book' }),
+      app.inject({ method: 'GET', url: '/orderbook/101' }),
+    ]);
+    const marketBook = marketResponse.json<MarketBookResponse>();
+    const tokenBook = tokenResponse.json<OrderBookResponse>();
+
+    expect(marketBook).toMatchObject({
+      orderBookAvailable: true,
+      liveVenue: 'MINICLOB',
+      tradingOpen: false,
+      yes: { bids: [], asks: [], bestBidRaw: null, bestAskRaw: null },
+    });
+    expect(marketBook.yes.orders).toHaveLength(3);
+    expect(tokenBook).toMatchObject({
+      bids: [],
+      asks: [],
       orders: [],
       offchainOrders: [],
     });
@@ -565,6 +594,7 @@ describe('REST shared contract', () => {
       expect(body).toMatchObject({
         liveVenue: expectedVenue,
         orderBookAvailable: expectedBookAvailable,
+        tradingOpen: true,
         minimumTickSizeRaw: '1000',
         minimumTickSizeAppliesTo: 'NEW_ORDERS',
       });
@@ -606,6 +636,7 @@ describe('REST shared contract', () => {
     expect(body).toMatchObject({
       orderBookAvailable: false,
       liveVenue: 'NONE',
+      tradingOpen: true,
       venueTransition: { state: 'PREPARING' },
     });
     expect(body.yes.bids).toEqual([]);
@@ -1084,11 +1115,11 @@ describe('REST shared contract', () => {
       chainId: 5_042_002,
       addresses: {
         usdc: '0x3600000000000000000000000000000000000000',
-        ctf: '0x53222f4e8dc81b02421b33f84a79f12de3bc240d',
-        oracle: '0xf6a765fb79e31e62733ecaebbed7d96d56386877',
-        lmsr: '0x16ec1d8962014e5f488c319c0d7388adca032321',
-        registry: '0x5eb4f6320cb52e3c8bdb146f1e5dd8b148af7f62',
-        miniClob: '0xdf3ddd60f0dc36e9459473c7c9391251bb301d2f',
+        ctf: '0x8d80a47711752fc5665d0bdb6cf4745025bf4b87',
+        oracle: '0xfe6d5ad250f97381b4ec66c81d9b6c215e205424',
+        lmsr: '0xe0d94ee42b038e7db4e9cd7257467395fdc4a9f2',
+        registry: '0xc9a65ebbdecfd2bdcd4a921b2a05061bfc1fe50c',
+        miniClob: '0xcc7a8268f9f95d82f98e396c42b0562db758c7f5',
       },
       marketTypeVersion: 2,
       seedFloorRaw: '1000000',
@@ -1098,7 +1129,7 @@ describe('REST shared contract', () => {
       minTradingWindowSeconds: 3600,
       maxTradingWindowSeconds: 604800,
       committee: {
-        oracle: '0xf6a765fb79e31e62733ecaebbed7d96d56386877',
+        oracle: '0xfe6d5ad250f97381b4ec66c81d9b6c215e205424',
         signers: [SIGNER_ONE, SIGNER_TWO],
         threshold: 2,
       },

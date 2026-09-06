@@ -146,7 +146,7 @@ export async function seedContractData(): Promise<void> {
       tradingWindowSeconds: 86400,
       minimumTimeOpenSeconds: 3600,
       createdAt: 1_700_000_000,
-      tradingEndsAt: 1_700_086_400,
+      tradingEndsAt: 2_000_086_400,
       graduatedAt: 1_700_003_600,
     },
   });

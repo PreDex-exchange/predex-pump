@@ -7,6 +7,8 @@ export const ORDER_REJECTION_MESSAGES = {
     'Your exchange cancellation nonce changed before this order arrived. Refresh the book and create a new signature.',
   EXPIRED:
     'This order expired before it reached the book. Choose a later expiry and sign a fresh order.',
+  TRADING_ENDED:
+    'This market’s trading window has permanently closed. New orders cannot be accepted; manage an existing signed order or use settlement controls instead of retrying.',
   INSUFFICIENT_BALANCE:
     'The maker wallet no longer has enough of the asset offered by this order. Reduce the size or add funds or tokens, then sign again.',
   MISSING_APPROVAL:

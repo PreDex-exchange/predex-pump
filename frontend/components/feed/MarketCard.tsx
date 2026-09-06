@@ -2,6 +2,7 @@
 
 import type { Market, PricePoint } from '@predex-pump/shared/domain';
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 
 import { PhaseBadge } from '@/components/ui/Badge';
 import { NumberDisplay } from '@/components/ui/NumberDisplay';
@@ -62,6 +63,15 @@ export function MarketCard({
   href = `/market/${market.id}`,
   referenceTimestamp,
 }: MarketCardProps) {
+  const [clockSeconds, setClockSeconds] = useState(() =>
+    referenceTimestamp ?? Math.floor(Date.now() / 1_000),
+  );
+  useEffect(() => {
+    if (referenceTimestamp !== undefined) return;
+    const updateClock = () => setClockSeconds(Math.floor(Date.now() / 1_000));
+    const interval = window.setInterval(updateClock, 30_000);
+    return () => window.clearInterval(interval);
+  }, [referenceTimestamp]);
   const { data: priceHistory } = usePriceHistory(market.id, {
     limit: FEED_SPARKLINE_POINT_LIMIT,
   });
@@ -71,6 +81,8 @@ export function MarketCard({
   const winner = resolvedOutcome(market);
   const yesPriceRaw = marketPriceRaw(market, 'YES');
   const noPriceRaw = marketPriceRaw(market, 'NO');
+  const tradingOpen =
+    (referenceTimestamp ?? clockSeconds) < market.tradingEndsAt;
 
   const card = (
     <article className={styles.card} data-phase={phaseDataValue(market)}>
@@ -127,9 +139,9 @@ export function MarketCard({
             </div>
           )}
           {market.phase === 'Graduated' && !isSettled && (
-            <span className={styles.bookLive}>
-              <span aria-hidden="true" />
-              Order book live
+            <span className={tradingOpen ? styles.bookLive : styles.resolvedTag}>
+              <span aria-hidden="true">{tradingOpen ? '' : '■'}</span>
+              {tradingOpen ? 'Order book live' : 'Trading ended'}
             </span>
           )}
           {isSettled && (

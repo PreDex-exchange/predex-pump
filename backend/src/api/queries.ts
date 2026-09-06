@@ -358,8 +358,19 @@ function buildOrderBook(
   tokenId: string,
   rows: readonly OrderDtoRow[],
   signedRows: readonly import('@prisma/client').SignedOrder[],
+  managementRows: readonly OrderDtoRow[] = rows,
 ): OrderBook {
-  const orders = rows
+  const activeOrders = rows
+    .filter((row) => row.tokenId === tokenId)
+    .sort((left, right) => {
+      if (left.side !== right.side) return left.side === 'BID' ? -1 : 1;
+      const priceOrder = compareRaw(left.priceRaw, right.priceRaw);
+      if (priceOrder !== 0) {
+        return left.side === 'BID' ? -priceOrder : priceOrder;
+      }
+      return left.createdAt - right.createdAt || left.orderId.localeCompare(right.orderId);
+    });
+  const orders = managementRows
     .filter((row) => row.tokenId === tokenId)
     .sort((left, right) => {
       if (left.side !== right.side) return left.side === 'BID' ? -1 : 1;
@@ -379,8 +390,8 @@ function buildOrderBook(
       }
       return left.createdAt - right.createdAt || left.orderHash.localeCompare(right.orderHash);
     });
-  const bids = buildLevels([...orders, ...offchainOrders], 'BID');
-  const asks = buildLevels([...orders, ...offchainOrders], 'ASK');
+  const bids = buildLevels([...activeOrders, ...offchainOrders], 'BID');
+  const asks = buildLevels([...activeOrders, ...offchainOrders], 'ASK');
   return {
     marketId,
     minimumTickSizeRaw,
@@ -400,6 +411,7 @@ function buildOrderBook(
 export async function getMarketBook(
   prisma: PrismaClient,
   marketId: string,
+  now = Math.floor(Date.now() / 1_000),
 ): Promise<MarketBookResponse | null> {
   const market = await prisma.market.findUnique({
     where: { id: marketId },
@@ -411,11 +423,16 @@ export async function getMarketBook(
       bookAddress: true,
       graduatedAt: true,
       resolvedAt: true,
+      tradingEndsAt: true,
       minimumTickSizeRaw: true,
       bookMigration: { select: { status: true, lastFailureCode: true } },
     },
   });
   if (market === null) return null;
+  const tradingOpen =
+    (market.phase === 'Opened' || market.phase === 'Graduated') &&
+    market.resolvedAt === null &&
+    now < market.tradingEndsAt;
 
   const hasLiveGraduatedBook =
     market.phase === 'Graduated' &&
@@ -424,9 +441,10 @@ export async function getMarketBook(
     market.graduatedAt !== null;
   if (!hasLiveGraduatedBook) {
     const liveVenue =
-      market.phase === 'Opened' && market.resolvedAt === null ? 'LMSR' : 'NONE';
+      market.phase === 'Opened' && tradingOpen ? 'LMSR' : 'NONE';
     return {
       marketId,
+      tradingOpen,
       minimumTickSizeRaw: market.minimumTickSizeRaw,
       minimumTickSizeAppliesTo: 'NEW_ORDERS',
       orderBookAvailable: false,
@@ -456,6 +474,7 @@ export async function getMarketBook(
   ) {
     return {
       marketId,
+      tradingOpen,
       minimumTickSizeRaw: market.minimumTickSizeRaw,
       minimumTickSizeAppliesTo: 'NEW_ORDERS',
       orderBookAvailable: false,
@@ -492,11 +511,13 @@ export async function getMarketBook(
     liveVenue === 'HYBRID'
       ? [
           [],
-          await findFillableSignedOrders(
-            prisma,
-            { marketId },
-            Math.floor(Date.now() / 1_000),
-          ),
+          tradingOpen
+            ? await findFillableSignedOrders(
+                prisma,
+                { marketId },
+                now,
+              )
+            : [],
         ]
       : [
           await prisma.order.findMany({
@@ -505,8 +526,10 @@ export async function getMarketBook(
           }),
           [],
         ];
+  const activeMiniClobOrders = tradingOpen ? liveMiniClobOrders : [];
   return {
     marketId,
+    tradingOpen,
     minimumTickSizeRaw: market.minimumTickSizeRaw,
     minimumTickSizeAppliesTo: 'NEW_ORDERS',
     orderBookAvailable: true,
@@ -516,16 +539,18 @@ export async function getMarketBook(
       market.minimumTickSizeRaw,
       'YES',
       market.yesTokenId ?? '',
-      liveMiniClobOrders,
+      activeMiniClobOrders,
       liveSignedOrders,
+      liveVenue === 'MINICLOB' ? liveMiniClobOrders : activeMiniClobOrders,
     ),
     no: buildOrderBook(
       marketId,
       market.minimumTickSizeRaw,
       'NO',
       market.noTokenId ?? '',
-      liveMiniClobOrders,
+      activeMiniClobOrders,
       liveSignedOrders,
+      liveVenue === 'MINICLOB' ? liveMiniClobOrders : activeMiniClobOrders,
     ),
   };
 }
@@ -533,6 +558,7 @@ export async function getMarketBook(
 export async function getOrderBook(
   prisma: PrismaClient,
   tokenId: string,
+  now = Math.floor(Date.now() / 1_000),
 ): Promise<OrderBookResponse | null> {
   const market = await prisma.market.findFirst({
     where: { OR: [{ yesTokenId: tokenId }, { noTokenId: tokenId }] },
@@ -541,25 +567,32 @@ export async function getOrderBook(
       yesTokenId: true,
       noTokenId: true,
       minimumTickSizeRaw: true,
+      phase: true,
+      tradingEndsAt: true,
+      resolvedAt: true,
       bookMigration: { select: { status: true } },
     },
   });
   if (market === null) return null;
   const outcome = market.yesTokenId === tokenId ? 'YES' : 'NO';
+  const tradingOpen =
+    (market.phase === 'Opened' || market.phase === 'Graduated') &&
+    market.resolvedAt === null &&
+    now < market.tradingEndsAt;
   const hybrid = market.bookMigration?.status === 'MIGRATED';
   const transitioning = market.bookMigration !== null && !hybrid;
   const orders =
-    hybrid || transitioning
+    !tradingOpen || hybrid || transitioning
       ? []
       : await prisma.order.findMany({
           where: { tokenId, open: true },
           select: ORDER_SELECT,
         });
-  const signedOrders = hybrid
+  const signedOrders = hybrid && tradingOpen
     ? await findFillableSignedOrders(
         prisma,
         { tokenId },
-        Math.floor(Date.now() / 1_000),
+        now,
       )
     : [];
   return buildOrderBook(

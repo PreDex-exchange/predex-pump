@@ -58,6 +58,8 @@ export interface MarketDetailResponse {
 
 interface MarketBookResponseBase {
   marketId: string;
+  /** False at and after the market's immutable global trading deadline. */
+  tradingOpen: boolean;
   /** Price quantum enforced for newly accepted orders, not existing resting orders. */
   minimumTickSizeRaw: Raw;
   /** Existing executable orders retain their exact prices when the tick changes. */
@@ -74,7 +76,7 @@ export type VenueTransition =
 export type MarketBookResponse = MarketBookResponseBase &
   (
     | {
-        /** A MiniCLOB or Hybrid order book is currently actionable. */
+        /** A MiniCLOB or Hybrid book exists; tradingOpen controls execution. */
         orderBookAvailable: true;
         liveVenue: Extract<MarketLiveVenue, 'MINICLOB' | 'HYBRID'>;
       }
@@ -98,6 +100,7 @@ export type OrderIngestRejectionCode =
   | 'UNSUPPORTED_SIGNATURE_TYPE'
   | 'WRONG_NONCE'
   | 'EXPIRED'
+  | 'TRADING_ENDED'
   | 'INVALID_SIZE'
   | 'INVALID_PRICE'
   | 'PRICE_NOT_ON_TICK'

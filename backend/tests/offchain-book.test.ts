@@ -3,8 +3,9 @@ import { Side, ctfExchangeAbi, hashCtfExchangeOrder } from '@predex-pump/shared/
 import { decodeFunctionData } from 'viem';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { getMarketBook } from '../src/api/queries.js';
+import { getMarketBook, getOrderBook } from '../src/api/queries.js';
 import { ServerEventBus } from '../src/events/bus.js';
+import { fillabilityForOrders } from '../src/orderbook/fillability.js';
 import { OffchainOrderService } from '../src/orderbook/service.js';
 import { resetDatabase, testPrisma } from './database.js';
 import { seedContractData } from './fixtures.js';
@@ -128,6 +129,74 @@ describe('hybrid off-chain book', () => {
     expect(book?.yes.offchainOrders[0]).toMatchObject({
       filledRaw: '250000',
       remainingRaw: '750000',
+    });
+  });
+
+  it('keeps ended Hybrid orders manageable but removes them from public ladders', async () => {
+    const created = await ingestSell(640_000n, 200_000n, 1061n);
+    await testPrisma.market.update({
+      where: { id: '1' },
+      data: { tradingEndsAt: BOOK_NOW },
+    });
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+
+    const [marketBook, tokenBook, fillability] = await Promise.all([
+      getMarketBook(testPrisma, '1', BOOK_NOW),
+      getOrderBook(testPrisma, '101', BOOK_NOW),
+      fillabilityForOrders(testPrisma, [row], BOOK_NOW),
+    ]);
+
+    expect(marketBook).toMatchObject({
+      orderBookAvailable: true,
+      liveVenue: 'HYBRID',
+      tradingOpen: false,
+      yes: { bids: [], asks: [], offchainOrders: [] },
+      no: { bids: [], asks: [], offchainOrders: [] },
+    });
+    expect(tokenBook).toMatchObject({ bids: [], asks: [], offchainOrders: [] });
+    expect(fillability.get(row.orderHash)).toEqual({
+      fillable: false,
+      reason: 'TRADING_ENDED',
+    });
+    await expect(
+      testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: row.orderHash },
+      }),
+    ).resolves.toMatchObject({ status: 'OPEN', withdrawnAt: null });
+  });
+
+  it('retains ended MiniCLOB orders for cancellation without exposing a live ladder', async () => {
+    await testPrisma.bookMigration.delete({ where: { marketId: '1' } });
+    await testPrisma.market.update({
+      where: { id: '1' },
+      data: { tradingEndsAt: BOOK_NOW },
+    });
+
+    const [marketBook, tokenBook] = await Promise.all([
+      getMarketBook(testPrisma, '1', BOOK_NOW),
+      getOrderBook(testPrisma, '101', BOOK_NOW),
+    ]);
+
+    expect(marketBook).toMatchObject({
+      orderBookAvailable: true,
+      liveVenue: 'MINICLOB',
+      tradingOpen: false,
+      yes: {
+        bids: [],
+        asks: [],
+        bestBidRaw: null,
+        bestAskRaw: null,
+      },
+    });
+    expect(marketBook?.yes.orders.length).toBeGreaterThan(0);
+    expect(marketBook?.yes.orders.every(({ open }) => open)).toBe(true);
+    expect(tokenBook).toMatchObject({
+      bids: [],
+      asks: [],
+      orders: [],
+      offchainOrders: [],
     });
   });
 

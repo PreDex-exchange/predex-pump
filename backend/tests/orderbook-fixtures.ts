@@ -92,6 +92,7 @@ export function validChainState(
     makerNonce: 7n,
     complementTokenId: 102n,
     registeredConditionId: MARKET_ONE_CONDITION as Hex,
+    registeredTradingEndsAt: 2_000_086_400n,
     payoutDenominator: 0n,
     makerAssetBalance: 10_000_000n,
     approvalKind: 'CTF_APPROVAL_FOR_ALL',

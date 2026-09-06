@@ -70,6 +70,7 @@ import {
   validateOrderPriceInput,
 } from '@/lib/order-input';
 import { isConnectedWalletMaker } from '@/lib/order-ownership';
+import { useEffectiveTradingOpen } from '@/lib/useEffectiveTradingOpen';
 
 import styles from './HybridOrderBookPanel.module.css';
 
@@ -122,7 +123,7 @@ export function defaultOrderExpiryTimestamp(
   tradingEndsAt: number,
   nowSeconds = Math.floor(Date.now() / 1_000),
 ): number {
-  return Math.max(tradingEndsAt, nowSeconds + DEFAULT_ORDER_EXPIRY_SECONDS);
+  return Math.min(tradingEndsAt, nowSeconds + DEFAULT_ORDER_EXPIRY_SECONDS);
 }
 
 export function formatUtcExpiry(timestamp: number): string {
@@ -178,9 +179,11 @@ function approvalStateWithConfirmed(
 
 function HybridLadder({
   book,
+  tradingOpen,
   side,
 }: {
   book: OrderBook;
+  tradingOpen: boolean;
   side: 'asks' | 'bids';
 }) {
   const levels = book[side];
@@ -188,7 +191,7 @@ function HybridLadder({
   if (levels.length === 0) {
     return (
       <div className={styles.emptyBook}>
-        No fillable signed {side} on the Hybrid exchange.
+        {`No ${tradingOpen ? 'fillable' : 'historical'} signed ${side} on the Hybrid exchange.`}
       </div>
     );
   }
@@ -308,6 +311,10 @@ export function HybridOrderBookPanel({
     return () => window.clearInterval(interval);
   }, []);
 
+  const tradingOpen = useEffectiveTradingOpen(
+    books.tradingOpen,
+    market.tradingEndsAt,
+  );
   const wrongNetwork = isConnected && chainId !== arcTestnet.id;
   const sourceBook = outcome === 'YES' ? books.yes : books.no;
   const book = useMemo(
@@ -332,7 +339,8 @@ export function HybridOrderBookPanel({
   const expiration = parseUtcInput(expiry);
   const validExpiration =
     expiration !== null &&
-    expiration >= nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS;
+    expiration >= nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS &&
+    expiration <= market.tradingEndsAt;
   const commitment = (() => {
     if (
       priceRaw === null ||
@@ -416,6 +424,7 @@ export function HybridOrderBookPanel({
       : null;
   const makerApprovalReady = makerRequirement?.ready === true;
   const canReview =
+    tradingOpen &&
     isConnected &&
     Boolean(address) &&
     !wrongNetwork &&
@@ -480,7 +489,7 @@ export function HybridOrderBookPanel({
   }, [address, cancelled, myOrders.data, withdrawn]);
 
   async function approveCollateral(amountRaw: bigint) {
-    if (!address || !effectiveApprovals || wrongNetwork) return;
+    if (!tradingOpen || !address || !effectiveApprovals || wrongNetwork) return;
     if (BigInt(effectiveApprovals.collateralAllowanceRaw) >= amountRaw) return;
     approvalTx.reset();
     const result = await approvalTx.execute((report) =>
@@ -506,7 +515,7 @@ export function HybridOrderBookPanel({
   }
 
   async function approveTokens() {
-    if (!address || !effectiveApprovals || wrongNetwork) return;
+    if (!tradingOpen || !address || !effectiveApprovals || wrongNetwork) return;
     if (effectiveApprovals.ctfApprovedForAll) return;
     approvalTx.reset();
     const result = await approvalTx.execute((report) =>
@@ -523,6 +532,7 @@ export function HybridOrderBookPanel({
 
   async function signAndPost() {
     if (
+      !tradingOpen ||
       !address ||
       !commitment ||
       !makerApprovalReady ||
@@ -569,7 +579,7 @@ export function HybridOrderBookPanel({
   }
 
   function openFill(order: OffchainOrder) {
-    if (isConnectedWalletMaker(order.maker, address)) return;
+    if (!tradingOpen || isConnectedWalletMaker(order.maker, address)) return;
     actionTx.reset();
     approvalTx.reset();
     setCompletion(null);
@@ -579,6 +589,7 @@ export function HybridOrderBookPanel({
 
   async function fillOrder() {
     if (
+      !tradingOpen ||
       !address ||
       !fillTarget ||
       !validFill ||
@@ -708,7 +719,7 @@ export function HybridOrderBookPanel({
                   : approvals.error
                     ? 'Approval state unavailable'
                     : !validExpiration
-                      ? 'Choose a future expiry'
+                      ? 'Choose an expiry within the trading window'
                       : !commitment
                         ? 'This order cannot be prepared'
                         : !makerApprovalReady
@@ -723,9 +734,13 @@ export function HybridOrderBookPanel({
         <header className={styles.header}>
           <div>
             <h2>Hybrid exchange order book</h2>
-            <p>Fillable signed orders · prices in USDC per token</p>
+            <p>
+              {tradingOpen
+                ? 'Fillable signed orders · prices in USDC per token'
+                : 'Historical signed orders · prices in USDC per token'}
+            </p>
             <span className={styles.venueLabel}>
-              Live venue · Hybrid CTF exchange
+              {tradingOpen ? 'Live' : 'Historical'} venue · Hybrid CTF exchange
             </span>
           </div>
           <Tabs
@@ -754,8 +769,20 @@ export function HybridOrderBookPanel({
           />
         </header>
 
+        {!tradingOpen && (
+          <p className={styles.withdrawWarning} role="status">
+            Trading closed. This Hybrid book is historical. New orders, fills,
+            and trading approvals are disabled. Makers can still withdraw or
+            cancel open signatures.
+          </p>
+        )}
+
         <div className={styles.workspace}>
-          <section className={styles.book} aria-label="Hybrid exchange ladder">
+          <section
+            aria-label="Hybrid exchange ladder"
+            className={styles.book}
+            style={tradingOpen ? undefined : { gridColumn: '1 / -1' }}
+          >
             <div className={styles.columns}>
               <span>Price</span>
               <span>Size</span>
@@ -764,7 +791,11 @@ export function HybridOrderBookPanel({
             </div>
             <div className={styles.bookSection}>
               <span className={styles.sectionLabel}>Asks · sell {outcome}</span>
-              <HybridLadder book={book} side="asks" />
+              <HybridLadder
+                book={book}
+                side="asks"
+                tradingOpen={tradingOpen}
+              />
             </div>
             <div className={styles.spread}>
               <span>Spread</span>
@@ -781,11 +812,19 @@ export function HybridOrderBookPanel({
             </div>
             <div className={styles.bookSection}>
               <span className={styles.sectionLabel}>Bids · buy {outcome}</span>
-              <HybridLadder book={book} side="bids" />
+              <HybridLadder
+                book={book}
+                side="bids"
+                tradingOpen={tradingOpen}
+              />
             </div>
           </section>
 
-          <section className={styles.ticket} aria-label="Signed order form">
+          <section
+            aria-label="Signed order form"
+            className={styles.ticket}
+            hidden={!tradingOpen}
+          >
             <div className={styles.ticketHeader}>
               <h3>Sign an order</h3>
               <span
@@ -909,12 +948,14 @@ export function HybridOrderBookPanel({
                   min={utcInputValue(
                     nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS,
                   )}
+                  max={utcInputValue(market.tradingEndsAt)}
                   onChange={(event) => setExpiry(event.target.value)}
                   onBlur={() => {
                     const parsed = parseUtcInput(expiry);
                     if (
                       parsed === null ||
-                      parsed < nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS
+                      parsed < nowSeconds + MINIMUM_ORDER_EXPIRY_SECONDS ||
+                      parsed > market.tradingEndsAt
                     ) {
                       setExpiry(
                         utcInputValue(
@@ -1020,7 +1061,11 @@ export function HybridOrderBookPanel({
                       orderSide === 'ASK' && (
                       <Button
                         disabled={
-                          approvalTx.isBusy || wrongNetwork || !fundingReady
+                          !tradingOpen ||
+                          !validExpiration ||
+                          approvalTx.isBusy ||
+                          wrongNetwork ||
+                          !fundingReady
                         }
                         onClick={() => void approveTokens()}
                         size="small"
@@ -1058,7 +1103,11 @@ export function HybridOrderBookPanel({
                       orderSide === 'BID' && (
                         <Button
                           disabled={
-                            approvalTx.isBusy || wrongNetwork || !fundingReady
+                            !tradingOpen ||
+                            !validExpiration ||
+                            approvalTx.isBusy ||
+                            wrongNetwork ||
+                            !fundingReady
                           }
                           onClick={() =>
                             void approveCollateral(commitment.collateralRaw)
@@ -1105,10 +1154,19 @@ export function HybridOrderBookPanel({
         <section className={styles.resting}>
           <div className={styles.sectionHeader}>
             <div>
-              <h3>Fill a signed {outcome} order</h3>
-              <p>Only orders from the labelled Hybrid venue are shown.</p>
+              <h3>
+                {tradingOpen ? 'Fill' : 'Historical'} signed {outcome} orders
+              </h3>
+              <p>
+                {tradingOpen
+                  ? 'Only orders from the labelled Hybrid venue are shown.'
+                  : 'Public signed orders are not fillable after the global trading deadline.'}
+              </p>
             </div>
-            <span className="numeric">{book.offchainOrders.length} fillable</span>
+            <span className="numeric">
+              {book.offchainOrders.length}{' '}
+              {tradingOpen ? 'fillable' : 'historical'}
+            </span>
           </div>
           <div className={styles.orderTable}>
             <div className={`${styles.orderRow} ${styles.orderHead}`}>
@@ -1122,7 +1180,9 @@ export function HybridOrderBookPanel({
             </div>
             {book.offchainOrders.length === 0 ? (
               <div className={styles.orderEmpty}>
-                No fillable signed {outcome} orders are live on this venue.
+                {tradingOpen
+                  ? `No fillable signed ${outcome} orders are live on this venue.`
+                  : `No historical signed ${outcome} orders remain on this venue.`}
               </div>
             ) : (
               book.offchainOrders.map((order) => {
@@ -1152,6 +1212,7 @@ export function HybridOrderBookPanel({
                       className={styles.rowAction}
                       disabled={
                         ownOrder ||
+                        !tradingOpen ||
                         !isConnected ||
                         wrongNetwork ||
                         actionTx.isBusy
@@ -1159,7 +1220,11 @@ export function HybridOrderBookPanel({
                       onClick={() => openFill(order)}
                       type="button"
                     >
-                      {ownOrder ? 'Your order' : 'Fill'}
+                      {ownOrder
+                        ? 'Your order'
+                        : tradingOpen
+                          ? 'Fill'
+                          : 'Trading closed'}
                     </button>
                   </div>
                 );
@@ -1192,13 +1257,15 @@ export function HybridOrderBookPanel({
             <div className={styles.privateState}>
               <div>
                 <p>
-                  Sign in to view and manage orders created by this wallet. Public
-                  orders and wallet-only trading remain available without signing in.
+                  {tradingOpen
+                    ? 'Sign in to view and manage orders created by this wallet. Public orders and wallet-only trading remain available without signing in.'
+                    : 'Trading has ended. Sign in only to view, withdraw, or cancel existing orders created by this wallet.'}
                 </p>
                 {(makerSessionAttemptFailed || authError) && (
                   <p className={styles.inlineError} role="alert">
-                    Sign-in was not completed. Try again when ready; public order
-                    placement and fills remain available.
+                    {tradingOpen
+                      ? 'Sign-in was not completed. Try again when ready; public order placement and fills remain available.'
+                      : 'Sign-in was not completed. Sign in only when you need to manage or cancel an existing order.'}
                   </p>
                 )}
               </div>
@@ -1368,6 +1435,7 @@ export function HybridOrderBookPanel({
         closeDisabled={actionTx.isBusy}
         closeOnConfirm={false}
         confirmDisabled={
+          !tradingOpen ||
           !validFill ||
           fillIsOwnOrder ||
           fillRequirement?.ready !== true ||
@@ -1438,6 +1506,7 @@ export function HybridOrderBookPanel({
                 {fillRequirement.kind === 'COLLATERAL' ? (
                   <Button
                     disabled={
+                      !tradingOpen ||
                       approvalTx.isBusy ||
                       approvalTx.state.phase === 'submission-unknown' ||
                       wrongNetwork
@@ -1457,6 +1526,7 @@ export function HybridOrderBookPanel({
                 ) : (
                   <Button
                     disabled={
+                      !tradingOpen ||
                       approvalTx.isBusy ||
                       approvalTx.state.phase === 'submission-unknown' ||
                       wrongNetwork

@@ -55,6 +55,7 @@ export type TruthSignalReader = (
 
 export interface PlaceOrderAction {
   marketId: string;
+  tradingEndsAt: number;
   conditionId: `0x${string}`;
   tokenId: string;
   outcome: 'YES' | 'NO';
@@ -66,6 +67,7 @@ export interface PlaceOrderAction {
 
 export interface FillOrderAction {
   marketId: string;
+  tradingEndsAt: number;
   conditionId: `0x${string}`;
   tokenId: string;
   outcome: 'YES' | 'NO';
@@ -675,6 +677,7 @@ export class TraderAgent {
           order.venue === 'MINICLOB'
             ? await this.options.executor?.fillOrder({
                 marketId: snapshot.market.id,
+                tradingEndsAt: snapshot.market.tradingEndsAt,
                 conditionId: snapshot.market.conditionId as `0x${string}`,
                 tokenId: snapshot.market.yesTokenId,
                 outcome: 'YES',
@@ -685,6 +688,7 @@ export class TraderAgent {
               })
             : await this.options.hybridExecutor?.fillOrder({
                 marketId: snapshot.market.id,
+                tradingEndsAt: snapshot.market.tradingEndsAt,
                 conditionId: snapshot.market.conditionId as `0x${string}`,
                 tokenId: snapshot.market.yesTokenId,
                 complementTokenId: snapshot.market.noTokenId,
@@ -877,6 +881,7 @@ export class TraderAgent {
         if (snapshot.book.liveVenue === 'MINICLOB') {
           const result = await this.options.executor?.placeOrder({
             marketId: snapshot.market.id,
+            tradingEndsAt: snapshot.market.tradingEndsAt,
             conditionId: snapshot.market.conditionId as `0x${string}`,
             tokenId: snapshot.market.yesTokenId,
             outcome: 'YES',
@@ -909,6 +914,7 @@ export class TraderAgent {
         } else {
           const result = await this.options.hybridExecutor?.placeOrder({
             marketId: snapshot.market.id,
+            tradingEndsAt: snapshot.market.tradingEndsAt,
             conditionId: snapshot.market.conditionId as `0x${string}`,
             tokenId: snapshot.market.yesTokenId,
             complementTokenId: snapshot.market.noTokenId,
@@ -1073,6 +1079,7 @@ export class TraderAgent {
             .filter(
               (order) =>
                 isActiveHybridOrder(order) &&
+                order.fillable &&
                 sameAddress(order.maker, this.options.traderAddress),
             )
             .map(hybridDecisionOrder);
@@ -1133,6 +1140,16 @@ export class TraderAgent {
         continue;
       }
       const { book } = snapshot;
+      const now = this.options.nowSeconds?.() ?? Math.floor(Date.now() / 1_000);
+      if (!book.tradingOpen || now >= market.tradingEndsAt) {
+        this.refuse(
+          market.id,
+          'HOLD',
+          `global trading deadline reached at ${market.tradingEndsAt}; placement and fills are disabled`,
+          { venue: book.liveVenue },
+        );
+        continue;
+      }
 
       const currentYesRaw = BigInt(
         account.positions.find(

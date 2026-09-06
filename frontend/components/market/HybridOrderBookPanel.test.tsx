@@ -20,6 +20,7 @@ import {
   QueryClientProvider,
 } from '@tanstack/react-query';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -265,6 +266,7 @@ const miniOnlyOrder: Order = {
 
 function books(order: OffchainOrder): MarketBookResponse {
   return {
+    tradingOpen: true,
     marketId: '1',
     liveVenue: 'HYBRID',
     orderBookAvailable: true,
@@ -323,13 +325,18 @@ function renderPanel(
 function renderLivePanel(
   bookResponse: MarketBookResponse,
   positions: Position[] = [],
+  marketSnapshot: Market = market,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <OrderBookPanel books={bookResponse} market={market} positions={positions} />
+      <OrderBookPanel
+        books={bookResponse}
+        market={marketSnapshot}
+        positions={positions}
+      />
     </QueryClientProvider>,
   );
 }
@@ -398,6 +405,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -461,32 +469,189 @@ describe('Hybrid human trading surface', () => {
     );
   });
 
-  it('defaults and clamps expiry into the future after the trading window ended', () => {
-    const nowSeconds = 1_786_406_400;
-    vi.spyOn(Date, 'now').mockReturnValue(nowSeconds * 1_000);
-    renderPanel(
-      books(offchainOrder(OTHER_MAKER, 'a1')),
-      {
-        ...market,
-        tradingEndsAt: nowSeconds - 86_400,
-      },
+  it('describes closed-market sign-in as existing-order management only', async () => {
+    mocks.authenticated = false;
+    const response = books(offchainOrder(OTHER_MAKER, 'b2'));
+    response.tradingOpen = false;
+    renderPanel(response);
+
+    expect(
+      screen.getByText(
+        'Trading has ended. Sign in only to view, withdraw, or cancel existing orders created by this wallet.',
+      ),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toContain('wallet-only trading');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Sign in to manage orders' }),
     );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'Sign-in was not completed. Sign in only when you need to manage or cancel an existing order.',
+        ),
+      ).toBeTruthy(),
+    );
+    expect(document.body.textContent).not.toContain(
+      'public order placement and fills remain available',
+    );
+  });
+
+  it('caps a short-window signed-order expiry at the global trading deadline', () => {
+    const nowSeconds = 1_786_406_400;
+    const tradingEndsAt = nowSeconds + 3_600;
+    vi.spyOn(Date, 'now').mockReturnValue(nowSeconds * 1_000);
+    mocks.approvals.data = {
+      ...mocks.approvals.data,
+      collateralAllowanceRaw: '0',
+    };
+    renderPanel(books(offchainOrder(OTHER_MAKER, 'a4')), {
+      ...market,
+      tradingEndsAt,
+    });
 
     const expiry = screen.getByLabelText(/Expiry \(UTC\)/u) as HTMLInputElement;
-    expect(Date.parse(`${expiry.value}:00Z`) / 1_000).toBeGreaterThan(
-      nowSeconds,
-    );
+    const deadlineInput = new Date(tradingEndsAt * 1_000)
+      .toISOString()
+      .slice(0, 16);
+    expect(expiry.value).toBe(deadlineInput);
+    expect(expiry.max).toBe(deadlineInput);
     expect(expiry.getAttribute('aria-invalid')).toBe('false');
-    expect(screen.getByRole('button', { name: 'Review binding order' })).toBeTruthy();
+    const approval = screen.getByRole('button', {
+      name: 'Approve exactly 0.120000 USDC',
+    });
+    expect(approval.hasAttribute('disabled')).toBe(false);
 
-    fireEvent.change(expiry, { target: { value: '2020-01-01T00:00' } });
+    fireEvent.change(expiry, {
+      target: {
+        value: new Date((tradingEndsAt + 3_600) * 1_000)
+          .toISOString()
+          .slice(0, 16),
+      },
+    });
     expect(expiry.getAttribute('aria-invalid')).toBe('true');
-    fireEvent.blur(expiry);
+    expect(
+      screen
+        .getByRole('button', {
+          name: 'Choose an expiry within the trading window',
+        })
+        .hasAttribute('disabled'),
+    ).toBe(true);
+    expect(approval.hasAttribute('disabled')).toBe(true);
 
-    expect(Date.parse(`${expiry.value}:00Z`) / 1_000).toBeGreaterThan(
-      nowSeconds,
-    );
+    fireEvent.blur(expiry);
+    expect(expiry.value).toBe(deadlineInput);
     expect(expiry.getAttribute('aria-invalid')).toBe('false');
+    expect(approval.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('closes Hybrid actions at the exact local deadline without a new book response', () => {
+    vi.useFakeTimers();
+    const nowSeconds = 1_786_406_400;
+    const tradingEndsAt = nowSeconds + 120;
+    vi.setSystemTime(nowSeconds * 1_000);
+    mocks.myOrders.data = {
+      ...mocks.myOrders.data,
+      orders: [offchainOrder(mocks.address, 'b3')],
+    };
+    const response = books(offchainOrder(OTHER_MAKER, 'b4'));
+    renderPanel(response, { ...market, tradingEndsAt });
+
+    expect(screen.getByText('Live venue · Hybrid CTF exchange')).toBeTruthy();
+    expect(
+      screen
+        .getByRole('button', { name: 'Review binding order' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+    expect(
+      screen.getByRole('button', { name: 'Fill' }).hasAttribute('disabled'),
+    ).toBe(false);
+
+    act(() => vi.advanceTimersByTime(119_999));
+    expect(screen.getByText('Live venue · Hybrid CTF exchange')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Fill' })).toBeTruthy();
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(response.tradingOpen).toBe(true);
+    expect(screen.getByText('Historical venue · Hybrid CTF exchange')).toBeTruthy();
+    expect(
+      screen.queryByRole('region', { name: 'Signed order form' }),
+    ).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Fill' })).toBeNull();
+    expect(
+      screen
+        .getByRole('button', { name: 'Trading closed' })
+        .hasAttribute('disabled'),
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole('button', { name: 'Cancel on-chain · gas' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+  });
+
+  it('renders an expired Hybrid market as historical with trading actions closed', () => {
+    const nowSeconds = 1_786_406_400;
+    mocks.myOrders.data = {
+      ...mocks.myOrders.data,
+      orders: [offchainOrder(mocks.address, 'a2')],
+    };
+    const response = books(offchainOrder(OTHER_MAKER, 'a1'));
+    response.tradingOpen = false;
+    const expiredMarket = {
+      ...market,
+      tradingEndsAt: nowSeconds - 86_400,
+    };
+    const rendered = renderPanel(response, expiredMarket);
+    expect(screen.getByText('Historical venue · Hybrid CTF exchange')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Trading closed. This Hybrid book is historical. New orders, fills, and trading approvals are disabled. Makers can still withdraw or cancel open signatures.',
+      ),
+    ).toBeTruthy();
+    const closedActions = screen.getAllByRole('button', {
+      name: 'Trading closed',
+    });
+    expect(closedActions).toHaveLength(1);
+    expect(
+      closedActions.every((button) => button.hasAttribute('disabled')),
+    ).toBe(true);
+    expect(
+      screen.queryByRole('region', { name: 'Signed order form' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /Approve exactly/u }),
+    ).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Fill' })).toBeNull();
+    expect(
+      screen
+        .getByRole('button', { name: 'Withdraw · free' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+    expect(
+      screen
+        .getByRole('button', { name: 'Cancel on-chain · gas' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+
+    const emptyResponse = {
+      ...response,
+      yes: { ...response.yes, offchainOrders: [] },
+    };
+    rendered.rerender(
+      <HybridOrderBookPanel
+        books={emptyResponse}
+        market={expiredMarket}
+        positions={[]}
+      />,
+    );
+    expect(
+      screen.getByText('No historical signed asks on the Hybrid exchange.'),
+    ).toBeTruthy();
+    expect(
+      screen.getByText('No historical signed YES orders remain on this venue.'),
+    ).toBeTruthy();
   });
 
   it('renders zero as good-till-cancelled and real expiry as a UTC date', () => {
@@ -545,6 +710,102 @@ describe('Hybrid human trading surface', () => {
     expect(screen.getByText('Live venue · On-chain MiniCLOB')).toBeTruthy();
     expect(screen.getAllByText('0.910000').length).toBeGreaterThan(0);
     expect(screen.queryByText('Live venue · Hybrid CTF exchange')).toBeNull();
+  });
+
+  it('closes expired MiniCLOB trading while preserving maker cancellation', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'a4'));
+    response.liveVenue = 'MINICLOB';
+    response.yes.orders = [
+      miniOnlyOrder,
+      {
+        ...miniOnlyOrder,
+        orderId: '100',
+        maker: mocks.address,
+      },
+    ];
+    response.tradingOpen = false;
+
+    renderLivePanel(response);
+
+    expect(screen.getByText('Historical venue · On-chain MiniCLOB')).toBeTruthy();
+    expect(screen.getByText('Historical escrow YES orders')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Open escrow records retained only for maker cancellation',
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText('Raw orders backing the aggregated ladder'),
+    ).toBeNull();
+    expect(
+      screen.getByText(
+        'Trading closed. This MiniCLOB book is historical. New orders and fills are disabled; makers may still cancel their own escrowed orders.',
+      ),
+    ).toBeTruthy();
+    const closedActions = screen.getAllByRole('button', {
+      name: 'Trading closed',
+    });
+    expect(closedActions).toHaveLength(1);
+    expect(
+      closedActions.every((button) => button.hasAttribute('disabled')),
+    ).toBe(true);
+    expect(
+      screen.queryByRole('heading', { name: 'Place order' }),
+    ).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Fill' })).toBeNull();
+
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(cancel.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(cancel);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(
+      screen
+        .getByRole('button', { name: 'Cancel & refund' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+    expect(mocks.miniFillOrder).not.toHaveBeenCalled();
+  });
+
+  it('closes MiniCLOB actions at the exact local deadline without a new book response', () => {
+    vi.useFakeTimers();
+    const nowSeconds = 1_786_406_400;
+    const tradingEndsAt = nowSeconds + 120;
+    vi.setSystemTime(nowSeconds * 1_000);
+    const response = books(offchainOrder(OTHER_MAKER, 'b5'));
+    response.liveVenue = 'MINICLOB';
+    response.yes.orders = [
+      miniOnlyOrder,
+      {
+        ...miniOnlyOrder,
+        orderId: '100',
+        maker: mocks.address,
+      },
+    ];
+    renderLivePanel(response, [], { ...market, tradingEndsAt });
+
+    expect(screen.getByText('Live venue · On-chain MiniCLOB')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Preview YES BID' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Fill' })).toBeTruthy();
+
+    act(() => vi.advanceTimersByTime(119_999));
+    expect(screen.getByText('Live venue · On-chain MiniCLOB')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Fill' })).toBeTruthy();
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(response.tradingOpen).toBe(true);
+    expect(screen.getByText('Historical venue · On-chain MiniCLOB')).toBeTruthy();
+    expect(
+      screen.queryByRole('heading', { name: 'Place order' }),
+    ).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Fill' })).toBeNull();
+    expect(
+      screen
+        .getByRole('button', { name: 'Trading closed' })
+        .hasAttribute('disabled'),
+    ).toBe(true);
+    expect(
+      screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled'),
+    ).toBe(false);
   });
 
   it('renders an explicit LMSR/no-book state without routing it to MiniCLOB', () => {

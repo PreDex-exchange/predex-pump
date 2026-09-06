@@ -150,6 +150,33 @@ describe('PredexRestClient Hybrid order methods', () => {
       message: 'makerNonce changed',
     });
   });
+
+  it('decodes TRADING_ENDED as a typed ingest rejection', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 'TRADING_ENDED',
+            message: 'global trading deadline reached',
+          },
+        }),
+        {
+          status: 422,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    const client = createRestClient({ fetch: fetchMock });
+
+    const error = await client.postOrder(request).catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(OrderIngestRejectedError);
+    expect(error).toMatchObject({
+      status: 422,
+      code: 'TRADING_ENDED',
+      message: 'global trading deadline reached',
+    });
+  });
 });
 
 describe('PredexRestClient SIWE methods', () => {

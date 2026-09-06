@@ -882,6 +882,11 @@
         "name": "conditionId",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "tradingEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -907,6 +912,11 @@
         "name": "conditionId",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "tradingEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1282,6 +1292,17 @@
   },
   {
     "type": "error",
+    "name": "Exchange__InvalidTradingDeadline",
+    "inputs": [
+      {
+        "name": "tradingEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "Exchange__MarketResolved",
     "inputs": [
       {
@@ -1353,6 +1374,22 @@
     "inputs": [
       {
         "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Exchange__TradingEnded",
+    "inputs": [
+      {
+        "name": "conditionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "tradingEndsAt",
         "type": "uint256",
         "internalType": "uint256"
       }

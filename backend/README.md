@@ -64,7 +64,7 @@ admin roles.
 
 `DATABASE_URL` selects Postgres. `ARC_RPC_URL` selects the preferred Arc endpoint and defaults to
 `ARC.rpcUrls[0]`; the other RPC URL from `shared` is an automatic read-only failover. The indexer
-starts at shared `DEPLOY_BLOCK` (`60387670`), resumes at `IndexerState.lastBlock + 1`, and follows
+starts at shared `DEPLOY_BLOCK` (`60710296`), resumes at `IndexerState.lastBlock + 1`, and follows
 the head. `SIGINT`/`SIGTERM` stop it after the current transactional range.
 
 The Prisma pool is explicitly bounded by `DATABASE_POOL_SIZE` (default 32) with
@@ -143,7 +143,7 @@ For an explicit idempotency audit, replay an already indexed range without rewin
 cursor:
 
 ```sh
-pnpm indexer --once --replay-from=60387670
+pnpm indexer --once --replay-from=60710296
 ```
 
 ## Correctness model

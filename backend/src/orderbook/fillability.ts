@@ -42,7 +42,7 @@ export async function fillabilityForOrders(
     ctfApprovals,
     collateralApprovals,
     collateralBalances,
-    resolutions,
+    markets,
     migrations,
     indexerState,
   ] =
@@ -69,9 +69,13 @@ export async function fillabilityForOrders(
         where: { owner: { in: makers } },
       }),
       prisma.collateralBalance.findMany({ where: { owner: { in: makers } } }),
-      prisma.resolution.findMany({
-        where: { marketId: { in: marketIds } },
-        select: { marketId: true },
+      prisma.market.findMany({
+        where: { id: { in: marketIds } },
+        select: {
+          id: true,
+          tradingEndsAt: true,
+          resolution: { select: { marketId: true } },
+        },
       }),
       prisma.bookMigration.findMany({
         where: { marketId: { in: marketIds }, status: 'MIGRATED' },
@@ -106,7 +110,7 @@ export async function fillabilityForOrders(
   const collateralBalanceByOwner = new Map(
     collateralBalances.map((balance) => [balance.owner, BigInt(balance.balanceRaw)]),
   );
-  const resolvedMarkets = new Set(resolutions.map((resolution) => resolution.marketId));
+  const marketById = new Map(markets.map((market) => [market.id, market]));
   const migrationByMarket = new Map(
     migrations.map((migration) => [migration.marketId, migration]),
   );
@@ -119,11 +123,21 @@ export async function fillabilityForOrders(
       if (order.withdrawnAt !== null) {
         return [order.orderHash, { fillable: false, reason: 'WITHDRAWN' }];
       }
+      const market = marketById.get(order.marketId);
+      if (market === undefined) {
+        return [
+          order.orderHash,
+          { fillable: false, reason: 'INDEXED_STATE_UNAVAILABLE' },
+        ];
+      }
+      if (market.resolution !== null) {
+        return [order.orderHash, { fillable: false, reason: 'MARKET_RESOLVED' }];
+      }
+      if (now >= market.tradingEndsAt) {
+        return [order.orderHash, { fillable: false, reason: 'TRADING_ENDED' }];
+      }
       if (order.expiration !== 0 && order.expiration <= now) {
         return [order.orderHash, { fillable: false, reason: 'EXPIRED' }];
-      }
-      if (resolvedMarkets.has(order.marketId)) {
-        return [order.orderHash, { fillable: false, reason: 'MARKET_RESOLVED' }];
       }
       if (BigInt(order.remainingRaw) <= 0n) {
         return [order.orderHash, { fillable: false, reason: 'NOT_OPEN' }];

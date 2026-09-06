@@ -42,6 +42,7 @@ import {
 const CONDITION = `0x${'12'.repeat(32)}` as Hex;
 const YES_TOKEN = 101n;
 const NO_TOKEN = 102n;
+const TRADING_ENDS_AT = 2_000_000_000n;
 const TX_HASH = `0x${'34'.repeat(32)}` as Hex;
 const SESSION_COOKIE = 'predex_session=test-session';
 
@@ -49,6 +50,7 @@ const ALL_REJECTIONS = [
   'BAD_SIGNATURE',
   'WRONG_NONCE',
   'EXPIRED',
+  'TRADING_ENDED',
   'INSUFFICIENT_BALANCE',
   'MISSING_APPROVAL',
   'ORDER_ALREADY_WITHDRAWN',
@@ -97,7 +99,7 @@ function chainClient(options: ChainOptions = {}): HybridChainClient & {
           return value ?? 7n;
         }
         case 'registry':
-          return [NO_TOKEN, CONDITION] as const;
+          return [NO_TOKEN, CONDITION, TRADING_ENDS_AT] as const;
         case 'payoutDenominator':
           return 0n;
         case 'cancelledOrders':
@@ -192,6 +194,7 @@ function restClient(
 function placeAction(overrides: Partial<HybridPlaceOrderAction> = {}): HybridPlaceOrderAction {
   return {
     marketId: '1',
+    tradingEndsAt: Number(TRADING_ENDS_AT),
     conditionId: CONDITION,
     tokenId: YES_TOKEN.toString(),
     complementTokenId: NO_TOKEN.toString(),
@@ -330,6 +333,25 @@ describe('Hybrid ingest rejection policy', () => {
 });
 
 describe('Hybrid order construction and approvals', () => {
+  it('refuses placement at the exact registered deadline before approval or signing', async () => {
+    const signer = account();
+    const signTypedData = vi.spyOn(signer, 'signTypedData');
+    const postOrder = vi.fn<HybridRestClient['postOrder']>();
+    const setup = executor(
+      signer,
+      chainClient({ blockTimestamp: TRADING_ENDS_AT, allowance: 0n }),
+      writeClient(),
+      restClient({ postOrder }),
+    );
+
+    await expect(setup.executor.placeOrder(placeAction())).rejects.toThrow(
+      /global trading deadline has ended/u,
+    );
+    expect(signTypedData).not.toHaveBeenCalled();
+    expect(setup.writes.send).not.toHaveBeenCalled();
+    expect(postOrder).not.toHaveBeenCalled();
+  });
+
   it('uses an exactly representable amount ratio in the signed wire order', async () => {
     const signer = account();
     const posted: IngestOrderRequest[] = [];
@@ -405,7 +427,7 @@ describe('Hybrid order construction and approvals', () => {
         case 'makerNonce':
           return 7n;
         case 'registry':
-          return [NO_TOKEN, CONDITION] as const;
+          return [NO_TOKEN, CONDITION, TRADING_ENDS_AT] as const;
         case 'payoutDenominator':
           return 0n;
         case 'balanceOf':
@@ -436,7 +458,7 @@ describe('Hybrid order construction and approvals', () => {
         case 'makerNonce':
           return 7n;
         case 'registry':
-          return [NO_TOKEN, CONDITION] as const;
+          return [NO_TOKEN, CONDITION, TRADING_ENDS_AT] as const;
         case 'payoutDenominator':
           return 0n;
         case 'balanceOf':
@@ -460,6 +482,36 @@ describe('Hybrid order construction and approvals', () => {
 });
 
 describe('Hybrid fill, withdraw, cancel, and session handling', () => {
+  it('refuses fill at the exact registered deadline before approval or send', async () => {
+    const taker = account();
+    const signTypedData = vi.spyOn(taker, 'signTypedData');
+    const maker = account();
+    const resting = await signedOrder(maker, Side.SELL);
+    const setup = executor(
+      taker,
+      chainClient({ blockTimestamp: TRADING_ENDS_AT, allowance: 0n }),
+      writeClient(),
+    );
+    const action: HybridFillOrderAction = {
+      marketId: '1',
+      tradingEndsAt: Number(TRADING_ENDS_AT),
+      conditionId: CONDITION,
+      tokenId: YES_TOKEN.toString(),
+      complementTokenId: NO_TOKEN.toString(),
+      outcome: 'YES',
+      restingSide: 'ASK',
+      order: resting,
+      expectedPriceRaw: 500_000n,
+      fillSizeRaw: 100_000n,
+    };
+
+    await expect(setup.executor.fillOrder(action)).rejects.toThrow(
+      /global trading deadline has ended/u,
+    );
+    expect(signTypedData).not.toHaveBeenCalled();
+    expect(setup.writes.send).not.toHaveBeenCalled();
+  });
+
   it('keeps free withdrawal distinct from authoritative per-order cancel calldata', async () => {
     const signer = account();
     const ownOrder = await signedOrder(signer);
@@ -516,6 +568,7 @@ describe('Hybrid fill, withdraw, cancel, and session handling', () => {
     const setup = executor(taker);
     const action: HybridFillOrderAction = {
       marketId: '1',
+      tradingEndsAt: Number(TRADING_ENDS_AT),
       conditionId: CONDITION,
       tokenId: YES_TOKEN.toString(),
       complementTokenId: NO_TOKEN.toString(),
@@ -554,7 +607,7 @@ describe('Hybrid fill, withdraw, cancel, and session handling', () => {
         case 'makerNonce':
           return 7n;
         case 'registry':
-          return [NO_TOKEN, CONDITION] as const;
+          return [NO_TOKEN, CONDITION, TRADING_ENDS_AT] as const;
         case 'payoutDenominator':
           return 0n;
         case 'cancelledOrders':
@@ -575,6 +628,7 @@ describe('Hybrid fill, withdraw, cancel, and session handling', () => {
     const setup = executor(taker, chain, writeClient());
     const action: HybridFillOrderAction = {
       marketId: '1',
+      tradingEndsAt: Number(TRADING_ENDS_AT),
       conditionId: CONDITION,
       tokenId: YES_TOKEN.toString(),
       complementTokenId: NO_TOKEN.toString(),

@@ -49,6 +49,7 @@ import {
   validateOrderPriceInput,
 } from '@/lib/order-input';
 import { isConnectedWalletMaker } from '@/lib/order-ownership';
+import { useEffectiveTradingOpen } from '@/lib/useEffectiveTradingOpen';
 
 import { HybridOrderBookPanel } from './HybridOrderBookPanel';
 import styles from './OrderBookPanel.module.css';
@@ -239,6 +240,10 @@ function MiniClobOrderBookPanel({
   market,
   positions = [],
 }: OrderBookPanelProps) {
+  const tradingOpen = useEffectiveTradingOpen(
+    books.tradingOpen,
+    market.tradingEndsAt,
+  );
   const minimumTickSizeRaw = BigInt(books.minimumTickSizeRaw);
   const [outcome, setOutcome] = useState<Outcome>('YES');
   const [orderSide, setOrderSide] = useState<'BID' | 'ASK'>('BID');
@@ -319,6 +324,7 @@ function MiniClobOrderBookPanel({
       ? collateralBalance.data !== undefined
       : placeEscrowRaw <= outcomeBalanceRaw);
   const canPlace =
+    tradingOpen &&
     isConnected &&
     Boolean(address) &&
     !wrongNetwork &&
@@ -380,6 +386,7 @@ function MiniClobOrderBookPanel({
   }
 
   function openAction(nextAction: BookAction) {
+    if (!tradingOpen && nextAction.kind !== 'cancel') return;
     if (
       nextAction.kind === 'fill' &&
       isConnectedWalletMaker(nextAction.order.maker, address)
@@ -434,6 +441,7 @@ function MiniClobOrderBookPanel({
 
     if (action.kind === 'fill') {
       if (
+        !tradingOpen ||
         !conditionUnresolved ||
         !validFill ||
         fillSizeRaw === null ||
@@ -516,7 +524,11 @@ function MiniClobOrderBookPanel({
     tx.state.phase === 'confirmed' ||
     (action?.kind === 'place' && !canPlace) ||
     (action?.kind === 'fill' &&
-      (!validFill || fillIsOwnOrder || !conditionUnresolved || wrongNetwork)) ||
+      (!tradingOpen ||
+        !validFill ||
+        fillIsOwnOrder ||
+        !conditionUnresolved ||
+        wrongNetwork)) ||
     (action?.kind === 'cancel' &&
       (wrongNetwork ||
         !address ||
@@ -539,9 +551,11 @@ function MiniClobOrderBookPanel({
         <div className={styles.header}>
           <div>
             <h2>MiniCLOB order book</h2>
-            <p>Live indexed orders · prices in USDC per token</p>
+            <p>
+              {`${tradingOpen ? 'Live' : 'Historical'} indexed orders · prices in USDC per token`}
+            </p>
             <span className={styles.venueLabel}>
-              Live venue · On-chain MiniCLOB
+              {tradingOpen ? 'Live' : 'Historical'} venue · On-chain MiniCLOB
             </span>
           </div>
           <Tabs
@@ -557,7 +571,10 @@ function MiniClobOrderBookPanel({
         </div>
 
         <div className={styles.workspace}>
-          <div className={styles.book}>
+          <div
+            className={styles.book}
+            style={tradingOpen ? undefined : { gridColumn: '1 / -1' }}
+          >
             <div className={styles.columns}>
               <span>Price</span>
               <span>Size</span>
@@ -588,7 +605,7 @@ function MiniClobOrderBookPanel({
             </div>
           </div>
 
-          <section className={styles.ticket}>
+          <section className={styles.ticket} hidden={!tradingOpen}>
             <div className={styles.ticketHeader}>
               <h3>Place order</h3>
               <span
@@ -760,11 +777,24 @@ function MiniClobOrderBookPanel({
         <section className={styles.resting}>
           <div className={styles.restingHeader}>
             <div>
-              <h3>Resting {outcome} orders</h3>
-              <p>Raw orders backing the aggregated ladder</p>
+              <h3>
+                {tradingOpen ? 'Resting' : 'Historical escrow'} {outcome} orders
+              </h3>
+              <p>
+                {tradingOpen
+                  ? 'Raw orders backing the aggregated ladder'
+                  : 'Open escrow records retained only for maker cancellation'}
+              </p>
             </div>
             <span className="numeric">{restingOrders.length} open</span>
           </div>
+          {!tradingOpen && (
+            <p className={styles.resolvedNotice} role="status">
+              Trading closed. This MiniCLOB book is historical. New orders and
+              fills are disabled; makers may still cancel their own escrowed
+              orders.
+            </p>
+          )}
           {!conditionUnresolved && !settlement.isLoading && !settlement.error && (
             <p className={styles.resolvedNotice}>
               Conditional Tokens is resolved. New orders and fills are disabled;
@@ -831,6 +861,7 @@ function MiniClobOrderBookPanel({
                         className={styles.rowAction}
                         disabled={
                           ownOrder ||
+                          !tradingOpen ||
                           !isConnected ||
                           wrongNetwork ||
                           !conditionUnresolved ||
@@ -839,7 +870,11 @@ function MiniClobOrderBookPanel({
                         onClick={() => openAction({ kind: 'fill', order })}
                         type="button"
                       >
-                        {ownOrder ? 'Your order' : 'Fill'}
+                        {ownOrder
+                          ? 'Your order'
+                          : tradingOpen
+                            ? 'Fill'
+                            : 'Trading closed'}
                       </button>
                       {ownOrder && (
                         <button

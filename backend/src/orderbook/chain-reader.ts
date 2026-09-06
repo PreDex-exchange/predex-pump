@@ -38,6 +38,7 @@ export interface FreshOrderChainState {
   makerNonce: bigint;
   complementTokenId: bigint;
   registeredConditionId: Hex;
+  registeredTradingEndsAt: bigint;
   payoutDenominator: bigint;
   makerAssetBalance: bigint;
   approvalKind: 'COLLATERAL_ALLOWANCE' | 'CTF_APPROVAL_FOR_ALL';
@@ -84,11 +85,14 @@ export interface BookMigrationChainState {
   yesRegistration: {
     complementTokenId: bigint;
     conditionId: Hex;
+    tradingEndsAt: bigint;
   };
   noRegistration: {
     complementTokenId: bigint;
     conditionId: Hex;
+    tradingEndsAt: bigint;
   };
+  registryTradingEndsAt: bigint;
   registryLifecycle: {
     creator: Hex;
     marketTypeVersion: number;
@@ -138,21 +142,27 @@ function safeBlockNumber(blockNumber: bigint): number {
   return value;
 }
 
-function registryTuple(value: unknown): readonly [bigint, Hex] {
+function registryTuple(value: unknown): readonly [bigint, Hex, bigint] {
   if (
     Array.isArray(value) &&
     typeof value[0] === 'bigint' &&
-    typeof value[1] === 'string'
+    typeof value[1] === 'string' &&
+    typeof value[2] === 'bigint'
   ) {
-    return [value[0], value[1] as Hex];
+    return [value[0], value[1] as Hex, value[2]];
   }
   if (typeof value === 'object' && value !== null) {
     const record = value as Record<string, unknown>;
     if (
       typeof record.complement === 'bigint' &&
-      typeof record.conditionId === 'string'
+      typeof record.conditionId === 'string' &&
+      typeof record.tradingEndsAt === 'bigint'
     ) {
-      return [record.complement, record.conditionId as Hex];
+      return [
+        record.complement,
+        record.conditionId as Hex,
+        record.tradingEndsAt,
+      ];
     }
   }
   throw new Error('CTFExchange registry returned an unexpected value');
@@ -366,7 +376,11 @@ export class ViemOrderChainReader
     ) {
       throw new Error('Arc returned an unexpected order validation value');
     }
-    const [complementTokenId, registeredConditionId] = registryTuple(results[1]);
+    const [
+      complementTokenId,
+      registeredConditionId,
+      registeredTradingEndsAt,
+    ] = registryTuple(results[1]);
 
     return {
       blockNumber: safeBlockNumber(block.number),
@@ -374,6 +388,7 @@ export class ViemOrderChainReader
       makerNonce,
       complementTokenId,
       registeredConditionId,
+      registeredTradingEndsAt,
       payoutDenominator,
       makerAssetBalance,
       approvalKind:
@@ -525,6 +540,12 @@ export class ViemOrderChainReader
           functionName: 'graduationSeedOrderIds',
           args: [input.conditionId],
         },
+        {
+          address: ADDRESSES.registry,
+          abi: registryAbi,
+          functionName: 'marketTradingEndsAt',
+          args: [input.marketId],
+        },
       ],
     });
     const offset = zeroHandoff ? 0 : 2;
@@ -543,6 +564,7 @@ export class ViemOrderChainReader
     const graduationSeedOrderIds = graduationSeedOrderIdsTuple(
       results[offset + 14],
     );
+    const registryTradingEndsAt = results[offset + 15];
     if (
       typeof makerNonce !== 'bigint' ||
       typeof approved !== 'boolean' ||
@@ -553,14 +575,15 @@ export class ViemOrderChainReader
       typeof exchangeCtfAddress !== 'string' ||
       typeof exchangeCollateralAddress !== 'string' ||
       typeof registrationAuthorized !== 'boolean' ||
-      typeof conditionStale !== 'boolean'
+      typeof conditionStale !== 'boolean' ||
+      typeof registryTradingEndsAt !== 'bigint'
     ) {
       throw new Error('Arc returned unexpected migration validation state');
     }
-    const [yesComplementTokenId, yesConditionId] = registryTuple(
+    const [yesComplementTokenId, yesConditionId, yesTradingEndsAt] = registryTuple(
       results[offset + 4],
     );
-    const [noComplementTokenId, noConditionId] = registryTuple(
+    const [noComplementTokenId, noConditionId, noTradingEndsAt] = registryTuple(
       results[offset + 5],
     );
     return {
@@ -580,11 +603,14 @@ export class ViemOrderChainReader
       yesRegistration: {
         complementTokenId: yesComplementTokenId,
         conditionId: yesConditionId,
+        tradingEndsAt: yesTradingEndsAt,
       },
       noRegistration: {
         complementTokenId: noComplementTokenId,
         conditionId: noConditionId,
+        tradingEndsAt: noTradingEndsAt,
       },
+      registryTradingEndsAt,
       registryLifecycle,
       registryBinding,
       yesOrder: zeroHandoff

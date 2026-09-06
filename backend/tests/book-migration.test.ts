@@ -43,6 +43,7 @@ const YES_SEED_ID = 20n;
 const NO_SEED_ID = 21n;
 const YES_TOKEN_ID = 101n;
 const NO_TOKEN_ID = 102n;
+const TRADING_ENDS_AT = 2_000_086_400n;
 
 interface SeedOverrides {
   sizeRaw?: bigint;
@@ -101,6 +102,9 @@ class FakeMigrationReader
       makerNonce: this.state.makerNonce,
       complementTokenId: yes ? NO_TOKEN_ID : YES_TOKEN_ID,
       registeredConditionId: MARKET_ONE_CONDITION as Hex,
+      registeredTradingEndsAt: yes
+        ? this.state.yesRegistration.tradingEndsAt
+        : this.state.noRegistration.tradingEndsAt,
       payoutDenominator: this.state.payoutDenominator,
       makerAssetBalance: yes
         ? this.state.yesBalanceRaw
@@ -119,6 +123,7 @@ type SubmittedAction =
       tokenId: bigint;
       complement: bigint;
       conditionId: Hex;
+      tradingEndsAt: bigint;
     }
   | { type: 'CUTOVER'; conditionId: Hex };
 
@@ -212,12 +217,13 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
         abi: ctfExchangeAbi,
         data: transaction.data,
       });
-      const [tokenId, complement, conditionId] = decoded.args ?? [];
+      const [tokenId, complement, conditionId, tradingEndsAt] = decoded.args ?? [];
       if (
         decoded.functionName !== 'registerToken' ||
         typeof tokenId !== 'bigint' ||
         typeof complement !== 'bigint' ||
-        typeof conditionId !== 'string'
+        typeof conditionId !== 'string' ||
+        typeof tradingEndsAt !== 'bigint'
       ) {
         throw new Error('unexpected CTFExchange migration transaction');
       }
@@ -226,6 +232,7 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
         tokenId,
         complement,
         conditionId: conditionId as Hex,
+        tradingEndsAt,
       };
     }
     const decoded = decodeFunctionData({
@@ -250,10 +257,12 @@ class FakeMigrationSubmitter implements OperatorTransactionSubmitter {
       this.state.yesRegistration = {
         complementTokenId: action.complement,
         conditionId: action.conditionId,
+        tradingEndsAt: action.tradingEndsAt,
       };
       this.state.noRegistration = {
         complementTokenId: action.tokenId,
         conditionId: action.conditionId,
+        tradingEndsAt: action.tradingEndsAt,
       };
       if (this.resolveOnRegistration) this.state.payoutDenominator = 1n;
       return;
@@ -324,14 +333,17 @@ async function createHarness(input: {
   const absentRegistration = {
     complementTokenId: 0n,
     conditionId: zeroHash,
+    tradingEndsAt: 0n,
   } as const;
   const registeredYes = {
     complementTokenId: NO_TOKEN_ID,
     conditionId: MARKET_ONE_CONDITION as Hex,
+    tradingEndsAt: TRADING_ENDS_AT,
   } as const;
   const registeredNo = {
     complementTokenId: YES_TOKEN_ID,
     conditionId: MARKET_ONE_CONDITION as Hex,
+    tradingEndsAt: TRADING_ENDS_AT,
   } as const;
   const registration = input.registration ?? 'absent';
   const state: BookMigrationChainState = {
@@ -361,6 +373,7 @@ async function createHarness(input: {
       registration === 'absent' || registration === 'half'
         ? { ...absentRegistration }
         : { ...registeredNo },
+    registryTradingEndsAt: TRADING_ENDS_AT,
     registryLifecycle: {
       creator: DEPLOYER,
       marketTypeVersion: 2,
@@ -506,8 +519,8 @@ describe('graduated book migration', () => {
       true,
       0n,
       0n,
-      [NO_TOKEN_ID, MARKET_ONE_CONDITION],
-      [YES_TOKEN_ID, MARKET_ONE_CONDITION],
+      [NO_TOKEN_ID, MARKET_ONE_CONDITION, TRADING_ENDS_AT],
+      [YES_TOKEN_ID, MARKET_ONE_CONDITION, TRADING_ENDS_AT],
       0n,
       [DEPLOYER, 2n, 3n, false],
       [
@@ -525,6 +538,7 @@ describe('graduated book migration', () => {
       true,
       false,
       [YES_SEED_ID, NO_SEED_ID],
+      TRADING_ENDS_AT,
     ]);
     const reader = new ViemOrderChainReader({
       getChainId,
@@ -553,6 +567,9 @@ describe('graduated book migration', () => {
       registrationAuthorized: true,
       exchangeCtfAddress: ADDRESSES.ctf,
       exchangeCollateralAddress: ADDRESSES.usdc,
+      registryTradingEndsAt: TRADING_ENDS_AT,
+      yesRegistration: { tradingEndsAt: TRADING_ENDS_AT },
+      noRegistration: { tradingEndsAt: TRADING_ENDS_AT },
       registryLifecycle: {
         creator: DEPLOYER,
         marketTypeVersion: 2,
@@ -590,6 +607,7 @@ describe('graduated book migration', () => {
       'hasRole',
       'conditionStale',
       'graduationSeedOrderIds',
+      'marketTradingEndsAt',
     ]);
   });
 
@@ -599,8 +617,8 @@ describe('graduated book migration', () => {
       false,
       0n,
       0n,
-      [0n, zeroHash],
-      [0n, zeroHash],
+      [0n, zeroHash, 0n],
+      [0n, zeroHash, 0n],
       0n,
       [DEPLOYER, 2n, 3n, false],
       [
@@ -618,6 +636,7 @@ describe('graduated book migration', () => {
       true,
       true,
       [0n, 0n],
+      TRADING_ENDS_AT,
     ]);
     const reader = new ViemOrderChainReader({
       getChainId: vi.fn(async () => 5_042_002),
@@ -688,6 +707,10 @@ describe('graduated book migration', () => {
       BigInt(replacements[0]?.priceRaw ?? '0') +
         BigInt(replacements[1]?.priceRaw ?? '0'),
     ).toBe(1_000_000n);
+    expect(replacements.map(({ expiration }) => expiration)).toEqual([
+      Number(TRADING_ENDS_AT),
+      Number(TRADING_ENDS_AT),
+    ]);
     const after = await getMarketBook(testPrisma, '1');
     expect(after?.liveVenue).toBe('HYBRID');
     expect(after?.yes.orders).toEqual([]);
@@ -695,6 +718,110 @@ describe('graduated book migration', () => {
     expect(after?.no.offchainOrders).toHaveLength(1);
     expect(harness.submitter.cutoverSubmissions).toBe(1);
     expect(harness.submitter.registrationSubmissions).toBe(1);
+  });
+
+  it('cuts over, recovers, registers, and migrates without replacements after the deadline', async () => {
+    const harness = await createHarness({ approved: false });
+    harness.state.blockTimestamp = TRADING_ENDS_AT;
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({ status: 'CANCELLED' });
+
+    await runToStatus(harness, 'MIGRATED');
+
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    expect(harness.submitter.approvalSubmissions).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(await testPrisma.signedOrder.count()).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'MIGRATED',
+      registrationStatus: 'CONFIRMED',
+      yesReplacementOrderHash: null,
+      noReplacementOrderHash: null,
+      yesReplacementSizeRaw: '0',
+      noReplacementSizeRaw: '0',
+      yesRecoveredRaw: '5000000',
+      noRecoveredRaw: '5000000',
+      yesUnquotedRemainderRaw: '5000000',
+      noUnquotedRemainderRaw: '5000000',
+      yesRealizedPriceRaw: null,
+      noRealizedPriceRaw: null,
+    });
+  });
+
+  it('recovers an ended market before waiting for disabled registration', async () => {
+    const harness = await createHarness({
+      approved: false,
+      registrationEnabled: false,
+    });
+    harness.state.blockTimestamp = TRADING_ENDS_AT;
+
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    expect(harness.submitter.cutoverSubmissions).toBe(1);
+    await expect(harness.operator.processOnce()).resolves.toEqual({
+      outcome: 'PROGRESSED',
+      marketId: '1',
+    });
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'REGISTRATION_DISABLED',
+    });
+
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'STAGED',
+      yesRecoveredRaw: '5000000',
+      noRecoveredRaw: '5000000',
+      yesReplacementOrderHash: null,
+      noReplacementOrderHash: null,
+      lastFailureCode: 'REGISTRATION_DISABLED',
+      migratedAt: null,
+    });
+  });
+
+  it('expires staged replacements if the deadline arrives before publication', async () => {
+    const harness = await createHarness({ approved: false });
+    await runToStatus(harness, 'STAGED');
+    expect(
+      await testPrisma.signedOrder.count({ where: { status: 'STAGED' } }),
+    ).toBe(2);
+
+    harness.state.blockTimestamp = TRADING_ENDS_AT;
+    await runToStatus(harness, 'MIGRATED');
+
+    expect(harness.submitter.approvalSubmissions).toBe(0);
+    expect(harness.submitter.registrationSubmissions).toBe(1);
+    expect(
+      await testPrisma.signedOrder.findMany({
+        select: { status: true },
+        orderBy: { outcome: 'asc' },
+      }),
+    ).toEqual([{ status: 'EXPIRED' }, { status: 'EXPIRED' }]);
+    await expect(
+      testPrisma.bookMigration.findUniqueOrThrow({ where: { marketId: '1' } }),
+    ).resolves.toMatchObject({
+      status: 'MIGRATED',
+      yesReplacementOrderHash: null,
+      noReplacementOrderHash: null,
+      yesReplacementSizeRaw: '0',
+      noReplacementSizeRaw: '0',
+      yesUnquotedRemainderRaw: '5000000',
+      noUnquotedRemainderRaw: '5000000',
+    });
   });
 
   it('floors awkward partial-fill remainders to the representable size quantum', async () => {
@@ -899,10 +1026,12 @@ describe('graduated book migration', () => {
     expect(harness.state.yesRegistration).toEqual({
       complementTokenId: NO_TOKEN_ID,
       conditionId: MARKET_ONE_CONDITION,
+      tradingEndsAt: TRADING_ENDS_AT,
     });
     expect(harness.state.noRegistration).toEqual({
       complementTokenId: YES_TOKEN_ID,
       conditionId: MARKET_ONE_CONDITION,
+      tradingEndsAt: TRADING_ENDS_AT,
     });
 
     await runToStatus(harness, 'MIGRATED');
@@ -916,10 +1045,12 @@ describe('graduated book migration', () => {
     harness.state.yesRegistration = {
       complementTokenId: 0n,
       conditionId: zeroHash,
+      tradingEndsAt: 0n,
     };
     harness.state.noRegistration = {
       complementTokenId: 0n,
       conditionId: zeroHash,
+      tradingEndsAt: 0n,
     };
     await testPrisma.bookMigration.update({
       where: { marketId: '1' },
@@ -1081,6 +1212,29 @@ describe('graduated book migration', () => {
     expect(harness.submitter.cancelSubmissions).toBe(0);
   });
 
+  it('fails closed when the fresh Registry deadline differs from the indexed market', async () => {
+    const harness = await createHarness({ registration: 'absent' });
+    harness.state.registryTradingEndsAt += 1n;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'REGISTRY_BINDING_MISMATCH',
+    });
+    expect(harness.submitter.registrationSubmissions).toBe(0);
+    expect(harness.submitter.cutoverSubmissions).toBe(0);
+  });
+
+  it('fails closed when the Exchange registration deadline differs from Registry', async () => {
+    const harness = await createHarness({ registration: 'registered' });
+    harness.state.yesRegistration.tradingEndsAt += 1n;
+
+    await expect(harness.operator.processOnce()).resolves.toMatchObject({
+      outcome: 'FAILED',
+      failureCode: 'TOKEN_REGISTRATION_MISMATCH',
+    });
+    expect(harness.submitter.cancelSubmissions).toBe(0);
+  });
+
   it('fails closed when indexed seed ids differ from MiniCLOB graduation state', async () => {
     const harness = await createHarness();
     harness.state.graduationSeedOrderIds.noOrderId += 1n;
@@ -1145,10 +1299,12 @@ describe('graduated book migration', () => {
     harness.state.yesRegistration = {
       complementTokenId: NO_TOKEN_ID,
       conditionId: MARKET_ONE_CONDITION as Hex,
+      tradingEndsAt: TRADING_ENDS_AT,
     };
     harness.state.noRegistration = {
       complementTokenId: YES_TOKEN_ID,
       conditionId: MARKET_ONE_CONDITION as Hex,
+      tradingEndsAt: TRADING_ENDS_AT,
     };
 
     const restarted = new BookMigrationOperator(
@@ -1207,10 +1363,12 @@ describe('graduated book migration', () => {
     harness.state.yesRegistration = {
       complementTokenId: NO_TOKEN_ID,
       conditionId: MARKET_ONE_CONDITION as Hex,
+      tradingEndsAt: TRADING_ENDS_AT,
     };
     harness.state.noRegistration = {
       complementTokenId: YES_TOKEN_ID,
       conditionId: MARKET_ONE_CONDITION as Hex,
+      tradingEndsAt: TRADING_ENDS_AT,
     };
     harness.clock.value += 61;
     const restarted = new BookMigrationOperator(

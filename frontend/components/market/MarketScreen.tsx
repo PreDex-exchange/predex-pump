@@ -314,7 +314,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
               points={priceHistory?.points ?? []}
               resolution={resolution}
             />
-            <GraduationPanel market={market} />
+            <GraduationPanel market={market} tradingClosed />
             <RecentTrades trades={recentTrades} />
           </div>
           <SettlementPanel

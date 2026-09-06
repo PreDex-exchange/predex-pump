@@ -92,6 +92,10 @@ export const ORDER_INGEST_REJECTION_POLICY = {
     classification: 'permanent',
     reason: 'the signed order had already expired when validated',
   },
+  TRADING_ENDED: {
+    classification: 'permanent',
+    reason: 'the market reached its global trading deadline',
+  },
   INSUFFICIENT_BALANCE: {
     classification: 'permanent',
     reason: 'the maker did not own enough of the offered asset for this order',
@@ -246,21 +250,27 @@ function isActiveOrderStatus(status: OffchainOrder['status']): boolean {
   return status === 'OPEN' || status === 'PARTIALLY_FILLED';
 }
 
-function registryTuple(value: unknown): readonly [bigint, Hex] {
+function registryTuple(value: unknown): readonly [bigint, Hex, bigint] {
   if (
     Array.isArray(value) &&
     typeof value[0] === 'bigint' &&
-    typeof value[1] === 'string'
+    typeof value[1] === 'string' &&
+    typeof value[2] === 'bigint'
   ) {
-    return [value[0], value[1] as Hex];
+    return [value[0], value[1] as Hex, value[2]];
   }
   if (typeof value === 'object' && value !== null) {
     const record = value as Record<string, unknown>;
     if (
       typeof record.complement === 'bigint' &&
-      typeof record.conditionId === 'string'
+      typeof record.conditionId === 'string' &&
+      typeof record.tradingEndsAt === 'bigint'
     ) {
-      return [record.complement, record.conditionId as Hex];
+      return [
+        record.complement,
+        record.conditionId as Hex,
+        record.tradingEndsAt,
+      ];
     }
   }
   throw new Error('CTFExchange registry returned an unexpected value.');
@@ -354,6 +364,7 @@ interface FreshPlaceState {
   blockNumber: bigint;
   blockTimestamp: bigint;
   makerNonce: bigint;
+  registeredTradingEndsAt: bigint;
 }
 
 interface FreshFillState {
@@ -473,8 +484,15 @@ export class ArcHybridTraderExecutor implements HybridTraderExecutor {
     ) {
       throw new Error('Arc returned unexpected Hybrid placement state.');
     }
-    const [registeredComplement, registeredCondition] =
+    const [
+      registeredComplement,
+      registeredCondition,
+      registeredTradingEndsAt,
+    ] =
       registryTuple(registryValue);
+    if (payoutDenominatorValue !== 0n) {
+      throw new Error('Fresh Arc condition is resolved; placement is forbidden.');
+    }
     if (
       registeredComplement === 0n ||
       sameHex(registeredCondition, zeroHash) ||
@@ -485,13 +503,19 @@ export class ArcHybridTraderExecutor implements HybridTraderExecutor {
         'Fresh CTFExchange token registration differs from the indexed market.',
       );
     }
-    if (payoutDenominatorValue !== 0n) {
-      throw new Error('Fresh Arc condition is resolved; placement is forbidden.');
+    if (registeredTradingEndsAt !== BigInt(action.tradingEndsAt)) {
+      throw new Error(
+        'Fresh CTFExchange trading deadline differs from the indexed market.',
+      );
+    }
+    if (block.timestamp >= registeredTradingEndsAt) {
+      throw new Error('Fresh Arc state says the global trading deadline has ended.');
     }
     return {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       makerNonce: makerNonceValue,
+      registeredTradingEndsAt,
     };
   }
 
@@ -581,16 +605,20 @@ export class ArcHybridTraderExecutor implements HybridTraderExecutor {
     }
     for (let approvalPass = 0; approvalPass < 2; approvalPass += 1) {
       const fresh = await this.readPlaceState(action);
+      const requestedExpiration = orderExpirationFromTimestamp(
+        fresh.blockTimestamp,
+        this.options.orderLifetimeSeconds,
+      );
       const unsigned = buildCtfExchangeOrder({
         maker: this.account.address,
         tokenId: requireUnsigned(action.tokenId, 'tokenId'),
         side: action.side === 'BID' ? Side.BUY : Side.SELL,
         priceRaw: action.priceRaw,
         sizeRaw: action.sizeRaw,
-        expiration: orderExpirationFromTimestamp(
-          fresh.blockTimestamp,
-          this.options.orderLifetimeSeconds,
-        ),
+        expiration:
+          requestedExpiration < fresh.registeredTradingEndsAt
+            ? requestedExpiration
+            : fresh.registeredTradingEndsAt,
         nonce: fresh.makerNonce,
       });
       if (!(await this.ensurePlacementAsset(unsigned, fresh.blockNumber))) {
@@ -610,6 +638,7 @@ export class ArcHybridTraderExecutor implements HybridTraderExecutor {
   private placementFingerprint(action: HybridPlaceOrderAction): string {
     return [
       action.marketId,
+      action.tradingEndsAt,
       action.conditionId.toLowerCase(),
       action.tokenId,
       action.outcome,
@@ -861,16 +890,28 @@ export class ArcHybridTraderExecutor implements HybridTraderExecutor {
     ) {
       throw new Error('Arc returned unexpected Hybrid fill state.');
     }
-    const [registeredComplement, registeredCondition] =
+    const [
+      registeredComplement,
+      registeredCondition,
+      registeredTradingEndsAt,
+    ] =
       registryTuple(registryValue);
+    if (payoutDenominatorValue !== 0n) {
+      throw new Error('Fresh Arc condition is resolved; fill is forbidden.');
+    }
     if (
       registeredComplement !== complementTokenId ||
       !sameHex(registeredCondition, action.conditionId)
     ) {
       throw new Error('Fresh exchange token binding differs from the decision input.');
     }
-    if (payoutDenominatorValue !== 0n) {
-      throw new Error('Fresh Arc condition is resolved; fill is forbidden.');
+    if (registeredTradingEndsAt !== BigInt(action.tradingEndsAt)) {
+      throw new Error(
+        'Fresh CTFExchange trading deadline differs from the indexed market.',
+      );
+    }
+    if (block.timestamp >= registeredTradingEndsAt) {
+      throw new Error('Fresh Arc state says the global trading deadline has ended.');
     }
     if (makerNonceValue !== order.nonce) {
       throw new Error('Fresh makerNonce invalidates the resting Hybrid order.');

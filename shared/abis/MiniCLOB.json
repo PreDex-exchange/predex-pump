@@ -130,6 +130,25 @@
   },
   {
     "type": "function",
+    "name": "conditionTradingEndsAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "ctf",
     "inputs": [],
     "outputs": [
@@ -614,6 +633,11 @@
         "name": "sizeRaw",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "tradingEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -1030,6 +1054,17 @@
   },
   {
     "type": "error",
+    "name": "MiniCLOB__InvalidTradingDeadline",
+    "inputs": [
+      {
+        "name": "tradingEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "MiniCLOB__NotMaker",
     "inputs": [
       {
@@ -1096,6 +1131,22 @@
     "type": "error",
     "name": "MiniCLOB__RegistryAlreadyBound",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MiniCLOB__TradingEnded",
+    "inputs": [
+      {
+        "name": "conditionId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "tradingEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

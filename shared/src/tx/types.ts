@@ -89,6 +89,7 @@ export interface CtfExchangeRegisterTokenTxInput {
   tokenId: bigint;
   complement: bigint;
   conditionId: Hex;
+  tradingEndsAt: bigint;
 }
 
 export interface CtfExchangeFillOrderTxInput {

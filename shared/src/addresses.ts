@@ -30,20 +30,20 @@ export const ARC = {
   usdcErc20Decimals: 6,
 } as const;
 
-// Redeployed 2026-09-04 with coordinated MiniCLOB -> Hybrid cutover.
+// Redeployed 2026-09-06 with an authoritative global trading deadline.
 export const ADDRESSES = {
   usdc: '0x3600000000000000000000000000000000000000',
-  ctf: '0x53222F4e8Dc81B02421B33F84A79f12de3bc240D',
-  oracle: '0xf6a765fB79e31e62733EcAEbbED7d96d56386877',
-  lmsr: '0x16Ec1d8962014e5F488C319C0d7388aDCa032321',
-  registry: '0x5eb4f6320Cb52E3C8BdB146f1E5DD8B148af7f62',
-  miniClob: '0xDf3DDD60f0dC36e9459473C7c9391251bB301d2f',
-  ctfExchange: '0xd0f12fa586911163fB29bE06Ab15DD076Cc5650D',
+  ctf: '0x8D80a47711752fc5665d0bDB6cf4745025Bf4B87',
+  oracle: '0xfE6D5ad250f97381b4Ec66C81D9B6c215E205424',
+  lmsr: '0xe0D94eE42B038e7db4E9CD7257467395fDC4a9F2',
+  registry: '0xc9A65eBBdECfd2BDcD4a921B2a05061BFc1FE50c',
+  miniClob: '0xCC7a8268f9F95d82f98e396C42b0562db758c7F5',
+  ctfExchange: '0xF39198eBd60C8fd02b192ceE599478488e424b79',
   ctfExchangeOperator: '0xfE4cc0643199d15a0e284E61088d4c9495D506aF',
 } as const;
 
 // First block to index from (the registry/stack deployment block). From the broadcast
 // receipt; the indexer replays from here forward.
-export const DEPLOY_BLOCK = 60387670;
+export const DEPLOY_BLOCK = 60710296;
 
 export type Address = `0x${string}`;
