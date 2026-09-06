@@ -115,12 +115,37 @@ const openMiniClobOrder: Order = {
   updatedAt: 1_900_004_200,
 };
 
+const firstPosition: Position = {
+  account: ADDRESS,
+  marketId: market.id,
+  outcome: 'YES',
+  qtyRaw: '1000000',
+  costBasisRaw: '500000',
+  costBasisEstimated: true,
+  realizedPnlRaw: '0',
+  unrealizedPnlRaw: '44000',
+  updatedAt: 1_900_004_300,
+};
+
+const secondPosition: Position = {
+  ...firstPosition,
+  marketId: '8',
+  outcome: 'NO',
+  qtyRaw: '2000000',
+  updatedAt: 1_900_004_200,
+};
+
 const mocks = vi.hoisted(() => ({
   address: `0x${'12'.repeat(20)}` as const,
   accountRefetch: vi.fn(),
   account: null as AccountResponse | null,
   accountError: null as Error | null,
+  accountHasNextPage: false,
+  accountLoadMore: vi.fn(),
+  accountLoadMoreError: null as Error | null,
   accountLoading: false,
+  accountLoadingMore: false,
+  usePaginatedAccount: vi.fn(),
   authenticated: true,
   authError: null as Error | null,
   activity: { items: [], nextCursor: null } as ActivityResponse,
@@ -200,12 +225,19 @@ vi.mock('@/components/providers/AuthProvider', () => ({
 }));
 
 vi.mock('@/lib/api/hooks', () => ({
-  useAccount: () => ({
-    data: mocks.account,
-    isLoading: mocks.accountLoading,
-    error: mocks.accountError,
-    refetch: mocks.accountRefetch,
-  }),
+  usePaginatedAccount: (address: string | undefined, query: unknown) => {
+    mocks.usePaginatedAccount(address, query);
+    return {
+      data: mocks.account,
+      isLoading: mocks.accountLoading,
+      error: mocks.accountError,
+      refetch: mocks.accountRefetch,
+      isLoadingMore: mocks.accountLoadingMore,
+      loadMoreError: mocks.accountLoadMoreError,
+      hasNextPage: mocks.accountHasNextPage,
+      loadMore: mocks.accountLoadMore,
+    };
+  },
   useActivity: () => ({
     data: mocks.activity,
     isLoading: mocks.activityLoading,
@@ -232,7 +264,12 @@ vi.mock('@/lib/api/hooks', () => ({
 beforeEach(() => {
   mocks.accountRefetch.mockReset();
   mocks.accountError = null;
+  mocks.accountHasNextPage = false;
+  mocks.accountLoadMore.mockReset();
+  mocks.accountLoadMoreError = null;
   mocks.accountLoading = false;
+  mocks.accountLoadingMore = false;
+  mocks.usePaginatedAccount.mockReset();
   mocks.authenticated = true;
   mocks.authError = null;
   mocks.activityError = null;
@@ -286,6 +323,9 @@ describe('Portfolio open orders', () => {
   it('lists Hybrid and MiniCLOB maker orders even when the wallet holds no positions', () => {
     render(<PortfolioScreen />);
 
+    expect(mocks.usePaginatedAccount).toHaveBeenCalledWith(ADDRESS, {
+      positionsLimit: 100,
+    });
     expect(mocks.useMyOrders).toHaveBeenCalledWith(ADDRESS, true);
     const section = screen.getByRole('region', { name: 'Open orders' });
     expect(
@@ -543,6 +583,79 @@ describe('Portfolio open orders', () => {
 });
 
 describe('Portfolio money states', () => {
+  it('appends an explicit next positions page and removes the control at the end', () => {
+    if (!mocks.account) throw new Error('account fixture missing');
+    const firstPage = { ...mocks.account, positions: [firstPosition] };
+    mocks.account = firstPage;
+    mocks.accountHasNextPage = true;
+
+    const rendered = render(<PortfolioScreen />);
+
+    expect(
+      within(
+        screen.getByRole('table', {
+          name: /Indexed outcome-token positions/u,
+        }),
+      ).getByText(market.question),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more positions' }));
+    expect(mocks.accountLoadMore).toHaveBeenCalledOnce();
+
+    mocks.account = {
+      ...firstPage,
+      positions: [firstPosition, secondPosition],
+    };
+    mocks.accountHasNextPage = false;
+    rendered.rerender(<PortfolioScreen />);
+
+    expect(screen.getByText('Market #8')).toBeTruthy();
+    expect(
+      within(
+        screen.getByRole('table', {
+          name: /Indexed outcome-token positions/u,
+        }),
+      ).getAllByRole('row'),
+    ).toHaveLength(3);
+    expect(
+      screen.queryByRole('button', { name: 'Load more positions' }),
+    ).toBeNull();
+  });
+
+  it('keeps loaded positions visible through next-page error and retry loading', () => {
+    if (!mocks.account) throw new Error('account fixture missing');
+    mocks.account = { ...mocks.account, positions: [firstPosition] };
+    mocks.accountHasNextPage = true;
+    mocks.accountLoadMoreError = new Error('next page unavailable');
+
+    const rendered = render(<PortfolioScreen />);
+    const positionsSection = screen
+      .getByRole('heading', { name: 'Positions' })
+      .closest('section');
+    if (!positionsSection) throw new Error('positions section missing');
+
+    expect(within(positionsSection).getByText(market.question)).toBeTruthy();
+    expect(within(positionsSection).getByRole('alert').textContent).toContain(
+      'Positions already shown remain available',
+    );
+    fireEvent.click(
+      within(positionsSection).getByRole('button', {
+        name: 'Try loading more positions',
+      }),
+    );
+    expect(mocks.accountLoadMore).toHaveBeenCalledOnce();
+
+    mocks.accountLoadMoreError = null;
+    mocks.accountLoadingMore = true;
+    rendered.rerender(<PortfolioScreen />);
+
+    expect(within(positionsSection).getByText(market.question)).toBeTruthy();
+    expect(
+      within(positionsSection)
+        .getByRole('button', { name: 'Loading more positions…' })
+        .hasAttribute('disabled'),
+    ).toBe(true);
+  });
+
   it('renders an activity failure as an alert with retry, never as empty history', () => {
     mocks.activity = { items: [], nextCursor: null };
     mocks.activityError = new Error('activity unavailable');

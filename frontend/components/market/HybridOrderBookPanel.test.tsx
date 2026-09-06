@@ -712,6 +712,45 @@ describe('Hybrid human trading surface', () => {
     expect(screen.queryByText('Live venue · Hybrid CTF exchange')).toBeNull();
   });
 
+  it('discloses a truncated Hybrid window without claiming a total count', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'c1'));
+    response.yes.orderWindow = {
+      limitPerSide: 20,
+      orders: { returned: 0, truncated: false },
+      offchainOrders: { returned: 1, truncated: true },
+    };
+
+    renderPanel(response);
+
+    expect(
+      screen.getByText(
+        'Showing the best 20 signed orders per side. Deeper Hybrid liquidity exists beyond this ladder and list.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('1 shown')).toBeTruthy();
+    expect(screen.queryByText('1 fillable')).toBeNull();
+  });
+
+  it('discloses a truncated MiniCLOB window without claiming a total count', () => {
+    const response = books(offchainOrder(OTHER_MAKER, 'c2'));
+    response.liveVenue = 'MINICLOB';
+    response.yes.orderWindow = {
+      limitPerSide: 20,
+      orders: { returned: 1, truncated: true },
+      offchainOrders: { returned: 0, truncated: false },
+    };
+
+    renderLivePanel(response);
+
+    expect(
+      screen.getByText(
+        'Showing the best 20 on-chain orders per side. Deeper MiniCLOB liquidity exists beyond this ladder and list.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('1 shown')).toBeTruthy();
+    expect(screen.queryByText('1 open')).toBeNull();
+  });
+
   it('closes expired MiniCLOB trading while preserving maker cancellation', () => {
     const response = books(offchainOrder(OTHER_MAKER, 'a4'));
     response.liveVenue = 'MINICLOB';
@@ -723,6 +762,11 @@ describe('Hybrid human trading surface', () => {
         maker: mocks.address,
       },
     ];
+    response.yes.orderWindow = {
+      limitPerSide: 20,
+      orders: { returned: 2, truncated: true },
+      offchainOrders: { returned: 0, truncated: false },
+    };
     response.tradingOpen = false;
 
     renderLivePanel(response);
@@ -753,6 +797,10 @@ describe('Hybrid human trading surface', () => {
       screen.queryByRole('heading', { name: 'Place order' }),
     ).toBeNull();
     expect(screen.queryByRole('button', { name: 'Fill' })).toBeNull();
+    expect(screen.getByText('2 open')).toBeTruthy();
+    expect(
+      screen.queryByText(/Deeper MiniCLOB liquidity exists/u),
+    ).toBeNull();
 
     const cancel = screen.getByRole('button', { name: 'Cancel' });
     expect(cancel.hasAttribute('disabled')).toBe(false);

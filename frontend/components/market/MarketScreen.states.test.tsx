@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
     isLoading: false,
     refetch: vi.fn(),
   },
+  useAccount: vi.fn(),
 }));
 
 vi.mock('wagmi', async (importOriginal) => {
@@ -53,7 +54,10 @@ vi.mock('@/components/providers/AuthProvider', () => ({
 }));
 
 vi.mock('@/lib/api/hooks', () => ({
-  useAccount: () => ({ data: null }),
+  useAccount: (address: string | undefined, query: unknown) => {
+    mocks.useAccount(address, query);
+    return { data: null };
+  },
   useAccountProfile: () => ({ data: null, error: null, isLoading: false }),
   useMarket: () => mocks.market,
   useOrderBook: () => mocks.book,
@@ -145,6 +149,7 @@ beforeEach(() => {
   mocks.book.error = null;
   mocks.book.isLoading = false;
   mocks.book.refetch.mockReset();
+  mocks.useAccount.mockReset();
 });
 
 afterEach(cleanup);
@@ -256,6 +261,10 @@ describe('MarketScreen money states', () => {
       screen.getByText(/Trading has closed, but graduation is still available/u),
     ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Buy YES' })).toBeNull();
+    expect(mocks.useAccount).toHaveBeenCalledWith(
+      `0x${'12'.repeat(20)}`,
+      { marketId: '17' },
+    );
 
     mocks.market.data = {
       ...openedDetail,

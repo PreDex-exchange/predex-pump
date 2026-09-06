@@ -1,4 +1,5 @@
 import type {
+  AccountResponse,
   MakerOrdersResponse,
   MarketBookResponse,
 } from '@predex-pump/shared/rest';
@@ -25,11 +26,13 @@ import {
 
 import {
   orderBookRefreshIntervalMs,
+  useAccount,
   useDedupCheck,
   useMarket,
   useMarkets,
   useMyOrders,
   useOrderBook,
+  usePaginatedAccount,
 } from './hooks';
 
 type ConnectionStatus = 'idle' | 'connecting' | 'live' | 'reconnecting';
@@ -41,6 +44,7 @@ const mocks = vi.hoisted(() => ({
     canonicalMarketId: null,
     candidates: [],
   })),
+  getAccount: vi.fn(),
   getMarket: vi.fn(async () => null),
   getMyOrders: vi.fn(),
   getOrderBook: vi.fn(async () => ({})),
@@ -55,6 +59,7 @@ vi.mock('./rest-client', () => ({
   REST_READ_TIMEOUT_MS: 5_000,
   backendRestClient: {
     dedupCheck: mocks.dedupCheck,
+    getAccount: mocks.getAccount,
     getMarket: mocks.getMarket,
     getMyOrders: mocks.getMyOrders,
     getOrderBook: mocks.getOrderBook,
@@ -83,6 +88,7 @@ beforeEach(() => {
     },
   );
   mocks.getOrderBook.mockReset().mockResolvedValue({});
+  mocks.getAccount.mockReset();
   mocks.getMyOrders.mockReset().mockResolvedValue({
     orders: [],
     onchainOrders: [],
@@ -97,6 +103,7 @@ afterEach(() => {
   vi.useRealTimers();
   mocks.dedupCheck.mockClear();
   mocks.getMarket.mockClear();
+  mocks.getAccount.mockClear();
   mocks.getMyOrders.mockClear();
   mocks.getOrderBook.mockClear();
   mocks.listMarkets.mockReset();
@@ -160,6 +167,15 @@ describe('order-book REST fallback', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(mocks.getOrderBook).toHaveBeenCalledOnce();
+    expect(mocks.getOrderBook).toHaveBeenLastCalledWith('17', {
+      orderLimitPerSide: 20,
+    });
+    expect(
+      queryClient.getQueryCache().find({
+        exact: true,
+        queryKey: ['order-book', '17', 20],
+      }),
+    ).toBeTruthy();
     expect(mocks.subscribe).toHaveBeenCalledWith(
       'book:17',
       expect.any(Function),
@@ -261,6 +277,168 @@ describe('order-book REST fallback', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(mocks.getOrderBook).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('account query filters and position pages', () => {
+  const address = `0x${'AB'.repeat(20)}`;
+  const normalizedAddress = address.toLowerCase();
+  const accountPage = (
+    positions: AccountResponse['positions'],
+    positionsNextCursor: string | null,
+    tradeCount = 7,
+  ): AccountResponse => ({
+    account: {
+      address: normalizedAddress as `0x${string}`,
+      firstSeenAt: 1,
+      marketsCreated: 2,
+      tradeCount,
+    },
+    positions,
+    recentTrades: [],
+    pnl: { realizedRaw: '123', unrealizedRaw: '456' },
+    positionsNextCursor,
+  });
+
+  it('isolates market-filtered account queries in the cache', async () => {
+    mocks.getAccount.mockResolvedValue(accountPage([], null));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+
+    renderHook(
+      () => {
+        useAccount(address, { marketId: '1' });
+        useAccount(address, { marketId: '2' });
+      },
+      { wrapper },
+    );
+
+    await waitFor(() => expect(mocks.getAccount).toHaveBeenCalledTimes(2));
+    expect(mocks.getAccount.mock.calls).toEqual(
+      expect.arrayContaining([
+        [normalizedAddress, { marketId: '1' }],
+        [normalizedAddress, { marketId: '2' }],
+      ]),
+    );
+    expect(
+      queryClient.getQueryCache().find({
+        exact: true,
+        queryKey: ['account', normalizedAddress, 'single', '1', null, null],
+      }),
+    ).toBeTruthy();
+    expect(
+      queryClient.getQueryCache().find({
+        exact: true,
+        queryKey: ['account', normalizedAddress, 'single', '2', null, null],
+      }),
+    ).toBeTruthy();
+  });
+
+  it('appends position pages without duplicates and retains first-page totals', async () => {
+    const yesPosition = {
+      account: normalizedAddress as `0x${string}`,
+      marketId: '1',
+      outcome: 'YES' as const,
+      qtyRaw: '1',
+      costBasisRaw: '1',
+      costBasisEstimated: true as const,
+      realizedPnlRaw: '0',
+      unrealizedPnlRaw: '0',
+      updatedAt: 3,
+    };
+    const noPosition = {
+      ...yesPosition,
+      marketId: '2',
+      outcome: 'NO' as const,
+      updatedAt: 2,
+    };
+    mocks.getAccount
+      .mockResolvedValueOnce(accountPage([yesPosition], 'next'))
+      .mockResolvedValueOnce({
+        ...accountPage([yesPosition, noPosition], null, 999),
+        pnl: { realizedRaw: '999', unrealizedRaw: '999' },
+      });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => usePaginatedAccount(address, { positionsLimit: 1 }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.data?.positions).toHaveLength(1));
+    act(() => result.current.loadMore());
+    await waitFor(() => expect(result.current.data?.positions).toHaveLength(2));
+
+    expect(mocks.getAccount).toHaveBeenNthCalledWith(1, normalizedAddress, {
+      positionsLimit: 1,
+    });
+    expect(mocks.getAccount).toHaveBeenNthCalledWith(2, normalizedAddress, {
+      positionsLimit: 1,
+      positionsCursor: 'next',
+    });
+    expect(result.current.data?.positions.map((position) => position.marketId)).toEqual([
+      '1',
+      '2',
+    ]);
+    expect(result.current.data?.account.tradeCount).toBe(7);
+    expect(result.current.data?.pnl).toEqual({
+      realizedRaw: '123',
+      unrealizedRaw: '456',
+    });
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it('retains loaded account data when the next positions page fails', async () => {
+    const position = {
+      account: normalizedAddress as `0x${string}`,
+      marketId: '1',
+      outcome: 'YES' as const,
+      qtyRaw: '1',
+      costBasisRaw: '1',
+      costBasisEstimated: true as const,
+      realizedPnlRaw: '0',
+      unrealizedPnlRaw: '0',
+      updatedAt: 3,
+    };
+    mocks.getAccount
+      .mockResolvedValueOnce(accountPage([position], 'next'))
+      .mockRejectedValueOnce(new Error('next page unavailable'));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => usePaginatedAccount(address, { positionsLimit: 1 }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.data?.positions).toHaveLength(1));
+    act(() => result.current.loadMore());
+    await waitFor(() =>
+      expect(result.current.loadMoreError?.message).toBe(
+        'next page unavailable',
+      ),
+    );
+
+    expect(result.current.data?.positions).toEqual([position]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.hasNextPage).toBe(true);
   });
 });
 
