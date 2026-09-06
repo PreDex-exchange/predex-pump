@@ -252,6 +252,9 @@ describe('MarketScreen money states', () => {
     expect(
       screen.getByRole('button', { name: 'Graduate market' }),
     ).toBeTruthy();
+    expect(
+      screen.getByText(/Trading has closed, but graduation is still available/u),
+    ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Buy YES' })).toBeNull();
 
     mocks.market.data = {

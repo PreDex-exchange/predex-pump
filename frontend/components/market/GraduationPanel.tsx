@@ -21,7 +21,13 @@ import {
 
 import styles from './GraduationPanel.module.css';
 
-export function GraduationPanel({ market }: { market: Market }) {
+export function GraduationPanel({
+  market,
+  tradingClosed = false,
+}: {
+  market: Market;
+  tradingClosed?: boolean;
+}) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const { address, chainId, isConnected } = useAccount();
   const tx = useTxFlow();
@@ -79,8 +85,10 @@ export function GraduationPanel({ market }: { market: Market }) {
         <div className={styles.body}>
           <h2>Bootstrap market</h2>
           <p>
-            It trades on a bonding curve now. Once the live activity and time gates pass, a
-            one-time{' '}
+            {tradingClosed
+              ? 'Trading has closed, but graduation is still available.'
+              : 'It trades on a bonding curve now.'}{' '}
+            Once the live activity and time gates pass, a one-time{' '}
             <strong className="numeric">
               {formatUsdc(market.params.graduationTollRaw)} USDC
             </strong>{' '}
