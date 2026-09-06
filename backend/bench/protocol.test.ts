@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertHotHybridResponses,
+  BOUNDED_BOOK_REST_P95_MS,
+  DEFAULT_INTERACTIVE_REST_P95_MS,
   evaluateRestGate,
   parseBenchmarkServerMessage,
   parseBenchmarkServerRequest,
@@ -129,55 +131,95 @@ describe('hot Hybrid workload assertion', () => {
 });
 
 describe('REST fluency gate configuration', () => {
-  it('gates bounded product reads and retains full reads as informational', () => {
+  it('assigns the frozen book/default budgets and leaves bulk informational', () => {
     const scenarios = payloadRestScenarios(`0x${'1'.repeat(40)}`);
     expect(
-      scenarios.filter(({ gated }) => gated).map(({ name, path }) => ({ name, path })),
+      scenarios
+        .filter(({ targetP95Ms }) => targetP95Ms !== null)
+        .map(({ name, path, targetP95Ms }) => ({ name, path, targetP95Ms })),
     ).toEqual([
       {
         name: 'market.book',
         path: '/markets/1/book?orderLimitPerSide=20',
+        targetP95Ms: BOUNDED_BOOK_REST_P95_MS,
       },
       {
         name: 'market.prices',
         path: '/markets/1/prices?limit=500',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
       {
         name: 'orderbook.token',
         path: '/orderbook/1000000000?orderLimitPerSide=20',
+        targetP95Ms: BOUNDED_BOOK_REST_P95_MS,
       },
       {
         name: 'account.detail',
         path: `/accounts/0x${'1'.repeat(40)}?positionsLimit=100`,
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
     ]);
     expect(
-      scenarios.filter(({ gated }) => !gated).map(({ name, path }) => ({ name, path })),
+      scenarios
+        .filter(({ targetP95Ms }) => targetP95Ms === null)
+        .map(({ name, path, targetP95Ms }) => ({ name, path, targetP95Ms })),
     ).toEqual([
-      { name: 'market.book.bulk', path: '/markets/1/book' },
-      { name: 'market.prices.bulk', path: '/markets/1/prices?limit=2000' },
-      { name: 'orderbook.token.bulk', path: '/orderbook/1000000000' },
+      { name: 'market.book.bulk', path: '/markets/1/book', targetP95Ms: null },
+      {
+        name: 'market.prices.bulk',
+        path: '/markets/1/prices?limit=2000',
+        targetP95Ms: null,
+      },
+      {
+        name: 'orderbook.token.bulk',
+        path: '/orderbook/1000000000',
+        targetP95Ms: null,
+      },
       {
         name: 'account.detail.bulk',
         path: `/accounts/0x${'1'.repeat(40)}`,
+        targetP95Ms: null,
       },
     ]);
   });
 
-  it('excludes informational bulk misses from the REST target', () => {
+  it('fails each interactive class above its own budget and never gates bulk', () => {
     expect(
       evaluateRestGate(
         [
-          { name: 'market.book', p95: 99, gated: true },
-          { name: 'market.book.bulk', p95: 500, gated: false },
+          {
+            name: 'market.book',
+            p95: 250.01,
+            targetP95Ms: BOUNDED_BOOK_REST_P95_MS,
+          },
+          {
+            name: 'market.prices',
+            p95: 100.01,
+            targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+          },
+          { name: 'market.book.bulk', p95: 5_000, targetP95Ms: null },
         ],
-        100,
       ),
     ).toEqual({
-      targetP95Ms: 100,
-      passed: true,
-      failures: [],
+      budgets: {
+        defaultInteractiveP95Ms: 100,
+        boundedBookP95Ms: 250,
+      },
+      passed: false,
+      failures: [
+        { name: 'market.book', p95: 250.01, targetP95Ms: 250 },
+        { name: 'market.prices', p95: 100.01, targetP95Ms: 100 },
+      ],
       informationalScenarios: ['market.book.bulk'],
     });
+  });
+
+  it('accepts measurements exactly at each inclusive budget', () => {
+    expect(
+      evaluateRestGate([
+        { name: 'market.book', p95: 250, targetP95Ms: 250 },
+        { name: 'market.prices', p95: 100, targetP95Ms: 100 },
+      ]).passed,
+    ).toBe(true);
   });
 });

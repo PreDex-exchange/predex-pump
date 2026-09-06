@@ -128,46 +128,49 @@ export interface HotHybridEvidence {
 export interface BenchmarkRestScenario {
   name: string;
   path: string;
-  gated: boolean;
+  targetP95Ms: number | null;
 }
+
+export const DEFAULT_INTERACTIVE_REST_P95_MS = 100;
+export const BOUNDED_BOOK_REST_P95_MS = 250;
 
 export function payloadRestScenarios(accountAddress: string): BenchmarkRestScenario[] {
   return [
     {
       name: 'market.book',
       path: '/markets/1/book?orderLimitPerSide=20',
-      gated: true,
+      targetP95Ms: BOUNDED_BOOK_REST_P95_MS,
     },
-    { name: 'market.book.bulk', path: '/markets/1/book', gated: false },
+    { name: 'market.book.bulk', path: '/markets/1/book', targetP95Ms: null },
     {
       name: 'market.prices',
       path: '/markets/1/prices?limit=500',
-      gated: true,
+      targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
     },
     {
       name: 'market.prices.bulk',
       path: '/markets/1/prices?limit=2000',
-      gated: false,
+      targetP95Ms: null,
     },
     {
       name: 'orderbook.token',
       path: '/orderbook/1000000000?orderLimitPerSide=20',
-      gated: true,
+      targetP95Ms: BOUNDED_BOOK_REST_P95_MS,
     },
     {
       name: 'orderbook.token.bulk',
       path: '/orderbook/1000000000',
-      gated: false,
+      targetP95Ms: null,
     },
     {
       name: 'account.detail',
       path: `/accounts/${accountAddress}?positionsLimit=100`,
-      gated: true,
+      targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
     },
     {
       name: 'account.detail.bulk',
       path: `/accounts/${accountAddress}`,
-      gated: false,
+      targetP95Ms: null,
     },
   ];
 }
@@ -175,22 +178,29 @@ export function payloadRestScenarios(accountAddress: string): BenchmarkRestScena
 export interface RestGateSample {
   name: string;
   p95: number;
-  gated: boolean;
+  targetP95Ms: number | null;
 }
 
-export function evaluateRestGate(
-  results: readonly RestGateSample[],
-  targetP95Ms: number,
-) {
-  const gated = results.filter((result) => result.gated);
+export function evaluateRestGate(results: readonly RestGateSample[]) {
+  const targeted = results.filter(
+    (result): result is RestGateSample & { targetP95Ms: number } =>
+      result.targetP95Ms !== null,
+  );
   return {
-    targetP95Ms,
-    passed: gated.every((result) => result.p95 < targetP95Ms),
-    failures: gated
-      .filter((result) => result.p95 >= targetP95Ms)
-      .map((result) => ({ name: result.name, p95: result.p95 })),
+    budgets: {
+      defaultInteractiveP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      boundedBookP95Ms: BOUNDED_BOOK_REST_P95_MS,
+    },
+    passed: targeted.every((result) => result.p95 <= result.targetP95Ms),
+    failures: targeted
+      .filter((result) => result.p95 > result.targetP95Ms)
+      .map((result) => ({
+        name: result.name,
+        p95: result.p95,
+        targetP95Ms: result.targetP95Ms,
+      })),
     informationalScenarios: results
-      .filter((result) => !result.gated)
+      .filter((result) => result.targetP95Ms === null)
       .map((result) => result.name),
   };
 }

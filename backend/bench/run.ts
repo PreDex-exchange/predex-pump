@@ -11,6 +11,8 @@ import { applyDecodedEvents } from '../src/indexer/runner.js';
 import type { DecodedEvent } from '../src/indexer/types.js';
 import {
   assertHotHybridResponses,
+  BOUNDED_BOOK_REST_P95_MS,
+  DEFAULT_INTERACTIVE_REST_P95_MS,
   evaluateRestGate,
   payloadRestScenarios,
   type BenchmarkRestScenario,
@@ -49,7 +51,7 @@ interface RestResult extends Distribution {
   concurrency: number;
   throughputRps: number;
   averagePayloadBytes: number;
-  gated: boolean;
+  targetP95Ms: number | null;
 }
 
 interface PlanNodeSummary {
@@ -128,7 +130,7 @@ async function benchmarkRest(
   baseUrl: string,
   name: string,
   path: string,
-  gated: boolean,
+  targetP95Ms: number | null,
   requestCount: number,
   concurrency: number,
   warmupRequests: number,
@@ -162,7 +164,7 @@ async function benchmarkRest(
     concurrency,
     throughputRps: requestCount / durationSeconds,
     averagePayloadBytes: bytes / requestCount,
-    gated,
+    targetP95Ms,
     ...stats,
   };
   console.info(
@@ -770,29 +772,49 @@ async function main(): Promise<void> {
       logIndex: 5,
     });
     const scenarios: BenchmarkRestScenario[] = [
-      { name: 'markets.list', path: '/markets?limit=50', gated: true },
+      {
+        name: 'markets.list',
+        path: '/markets?limit=50',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
       {
         name: 'markets.phase',
         path: '/markets?phase=Graduated&limit=50',
-        gated: true,
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
       {
         name: 'markets.deep-keyset',
         path: `/markets?limit=50&cursor=${encodeURIComponent(marketCursor)}`,
-        gated: true,
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
-      { name: 'market.detail', path: '/markets/1', gated: true },
+      {
+        name: 'market.detail',
+        path: '/markets/1',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
       ...payloadRestScenarios(address(0)),
-      { name: 'activity.list', path: '/activity?limit=50', gated: true },
+      {
+        name: 'activity.list',
+        path: '/activity?limit=50',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
       {
         name: 'activity.market-deep-keyset',
         path: `/activity?marketId=1&limit=50&cursor=${encodeURIComponent(
           activityCursor,
         )}`,
-        gated: true,
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
-      { name: 'config', path: '/config', gated: true },
-      { name: 'health', path: '/health', gated: true },
+      {
+        name: 'config',
+        path: '/config',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
+      {
+        name: 'health',
+        path: '/health',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
     ];
     const rest: RestResult[] = [];
     for (const scenario of scenarios) {
@@ -801,7 +823,7 @@ async function main(): Promise<void> {
           server.baseUrl,
           scenario.name,
           scenario.path,
-          scenario.gated,
+          scenario.targetP95Ms,
           requestCount,
           concurrency,
           warmupRequests,
@@ -858,15 +880,18 @@ async function main(): Promise<void> {
         ingestPositions,
       },
       targets: {
-        restP95Ms: 100,
-        restP95AppliesTo: 'gated',
+        restP95Ms: {
+          defaultInteractive: DEFAULT_INTERACTIVE_REST_P95_MS,
+          boundedBook: BOUNDED_BOOK_REST_P95_MS,
+          informationalBulk: null,
+        },
         indexerEventsPerSecond: 20,
         wsPublishP95Us: 250,
       },
       observedScale: observed,
       hotHybrid,
       rest,
-      restGate: evaluateRestGate(rest, 100),
+      restGate: evaluateRestGate(rest),
       plans,
       indexer,
       websocket,

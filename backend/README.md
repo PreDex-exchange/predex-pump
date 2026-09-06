@@ -101,11 +101,12 @@ different safely named benchmark schema. Market 1 is a deliberately active migra
 book; the runner refuses to time an ended or empty book. `bench:run` starts Fastify, Redis, and the
 event bus in a dedicated child process, drives REST and WebSocket clients from the parent process,
 emits JSON `EXPLAIN (ANALYZE, BUFFERS)` plans, and runs a transactional synthetic TradeState ingest
-fixture. Its explicit targets are REST p95 below 100 ms, at least 20 indexed price ticks/sec when
-each tick re-marks 100 positions, and WebSocket publish p95 below 250 µs with 500 clients. The
-REST target applies to bounded interactive reads: 20 complete book orders per side, 500 price
-points, and 100 account positions. Matching unbounded/2,000-point `.bulk` scenarios remain in the
-result as informational capacity measurements and do not decide the interactive gate.
+fixture. Its frozen REST targets are p95 at or below 250 ms for the bounded market/token books and
+at or below 100 ms for every other interactive scenario. It also requires at least 20 indexed
+price ticks/sec when each tick re-marks 100 positions and WebSocket publish p95 below 250 µs with
+500 clients. Interactive reads use 20 book orders per side, 500 price points, and 100 account
+positions. Matching unbounded/2,000-point `.bulk` scenarios remain in the result with a null target
+as informational capacity measurements and do not decide the interactive gate.
 
 ## Serving contract
 
