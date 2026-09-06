@@ -857,11 +857,21 @@ describe('WebSocket-driven indexer', () => {
     releaseReconnectGap();
 
     await waitUntil(
-      async () =>
-        (await testPrisma.registeredMarketType.findUnique({
-          where: { version: 7 },
-        })) !== null,
-      'the reconnect gap-fill event',
+      async () => {
+        const [registeredMarketType, subscriptionState] = await Promise.all([
+          testPrisma.registeredMarketType.findUnique({
+            where: { version: 7 },
+          }),
+          testPrisma.indexerSubscriptionState.findUnique({
+            where: { id: 1 },
+          }),
+        ]);
+        return (
+          registeredMarketType !== null &&
+          subscriptionState?.status === 'connected'
+        );
+      },
+      'the reconnect gap-fill event and trusted subscription',
     );
     expect(transports.length).toBeGreaterThanOrEqual(2);
     expect(transports[0]?.close).toHaveBeenCalledTimes(1);
