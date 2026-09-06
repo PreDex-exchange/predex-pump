@@ -49,13 +49,14 @@ function positionKey(
   return `${order.maker}:${order.marketId}:${order.outcome}`;
 }
 
-function makerAmountForRemaining(order: SignedOrderFillabilityRow): bigint {
-  if (
-    order.exchangeSide !== Side.BUY &&
-    order.exchangeSide !== Side.SELL
-  ) {
+function assertExchangeSide(value: number): asserts value is Side {
+  if (value !== Side.BUY && value !== Side.SELL) {
     throw new Error('Order side must be Side.BUY or Side.SELL.');
   }
+}
+
+function makerAmountForRemaining(order: SignedOrderFillabilityRow): bigint {
+  assertExchangeSide(order.exchangeSide);
   const makerAmount = BigInt(order.makerAmountRaw);
   const takerAmount = BigInt(order.takerAmountRaw);
   const remaining = BigInt(order.remainingRaw);
@@ -91,9 +92,31 @@ export async function fillabilityForOrders(
   now: number,
 ): Promise<Map<string, Fillability>> {
   if (orders.length === 0) return new Map();
-  const makers = [...new Set(orders.map((order) => order.maker))];
+  for (const order of orders) assertExchangeSide(order.exchangeSide);
   const marketIds = [...new Set(orders.map((order) => order.marketId))];
   const sellOrders = orders.filter((order) => order.exchangeSide === Side.SELL);
+  const buyOrders = orders.filter((order) => order.exchangeSide === Side.BUY);
+  const sellMakers = [...new Set(sellOrders.map((order) => order.maker))];
+  const buyMakers = [...new Set(buyOrders.map((order) => order.maker))];
+  const positionTargets = [
+    ...new Map(
+      sellOrders.map((order) => [
+        positionKey(order),
+        {
+          account: order.maker,
+          marketId: order.marketId,
+          outcome: order.outcome,
+        },
+      ] as const),
+    ).values(),
+  ];
+  const migrationMarketIds = [
+    ...new Set(
+      sellOrders
+        .filter((order) => order.origin === 'BOOK_MIGRATION')
+        .map((order) => order.marketId),
+    ),
+  ];
 
   const [
     positions,
@@ -105,16 +128,10 @@ export async function fillabilityForOrders(
     indexerState,
   ] =
     await Promise.all([
-      sellOrders.length === 0
+      positionTargets.length === 0
         ? Promise.resolve([])
         : prisma.position.findMany({
-            where: {
-              OR: sellOrders.map((order) => ({
-                account: order.maker,
-                marketId: order.marketId,
-                outcome: order.outcome,
-              })),
-            },
+            where: { OR: positionTargets },
             select: {
               account: true,
               marketId: true,
@@ -122,11 +139,21 @@ export async function fillabilityForOrders(
               qtyRaw: true,
             },
           }),
-      prisma.ctfExchangeApproval.findMany({ where: { owner: { in: makers } } }),
-      prisma.collateralExchangeApproval.findMany({
-        where: { owner: { in: makers } },
-      }),
-      prisma.collateralBalance.findMany({ where: { owner: { in: makers } } }),
+      sellMakers.length === 0
+        ? Promise.resolve([])
+        : prisma.ctfExchangeApproval.findMany({
+            where: { owner: { in: sellMakers } },
+          }),
+      buyMakers.length === 0
+        ? Promise.resolve([])
+        : prisma.collateralExchangeApproval.findMany({
+            where: { owner: { in: buyMakers } },
+          }),
+      buyMakers.length === 0
+        ? Promise.resolve([])
+        : prisma.collateralBalance.findMany({
+            where: { owner: { in: buyMakers } },
+          }),
       prisma.market.findMany({
         where: { id: { in: marketIds } },
         select: {
@@ -135,19 +162,26 @@ export async function fillabilityForOrders(
           resolution: { select: { marketId: true } },
         },
       }),
-      prisma.bookMigration.findMany({
-        where: { marketId: { in: marketIds }, status: 'MIGRATED' },
-        select: {
-          marketId: true,
-          recoveryBlockNumber: true,
-          yesBalanceRaw: true,
-          noBalanceRaw: true,
-        },
-      }),
-      prisma.indexerState.findUnique({
-        where: { id: 1 },
-        select: { lastBlock: true },
-      }),
+      migrationMarketIds.length === 0
+        ? Promise.resolve([])
+        : prisma.bookMigration.findMany({
+            where: {
+              marketId: { in: migrationMarketIds },
+              status: 'MIGRATED',
+            },
+            select: {
+              marketId: true,
+              recoveryBlockNumber: true,
+              yesBalanceRaw: true,
+              noBalanceRaw: true,
+            },
+          }),
+      migrationMarketIds.length === 0
+        ? Promise.resolve(null)
+        : prisma.indexerState.findUnique({
+            where: { id: 1 },
+            select: { lastBlock: true },
+          }),
     ]);
 
   const positionByKey = new Map(

@@ -1,7 +1,7 @@
 import { ADDRESSES, OFFCHAIN_WITHDRAWAL_WARNING } from '@predex-pump/shared';
 import { Side, ctfExchangeAbi, hashCtfExchangeOrder } from '@predex-pump/shared/tx';
 import { decodeFunctionData } from 'viem';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getMarketBook, getOrderBook } from '../src/api/queries.js';
 import { ServerEventBus } from '../src/events/bus.js';
@@ -40,6 +40,10 @@ describe('hybrid off-chain book', () => {
       },
     });
     reader.state = validChainState();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   async function ingestSell(priceRaw: bigint, sizeRaw: bigint, salt: bigint) {
@@ -145,6 +149,85 @@ describe('hybrid off-chain book', () => {
         BOOK_NOW,
       ),
     ).rejects.toThrow('Order side must be Side.BUY or Side.SELL.');
+  });
+
+  it('deduplicates SELL position keys and skips inapplicable USER-order readers', async () => {
+    const created = await ingestSell(640_000n, 200_000n, 108n);
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+    const positionRead = vi.spyOn(testPrisma.position, 'findMany');
+    const ctfRead = vi.spyOn(testPrisma.ctfExchangeApproval, 'findMany');
+    const collateralApprovalRead = vi.spyOn(
+      testPrisma.collateralExchangeApproval,
+      'findMany',
+    );
+    const collateralBalanceRead = vi.spyOn(
+      testPrisma.collateralBalance,
+      'findMany',
+    );
+    const migrationRead = vi.spyOn(testPrisma.bookMigration, 'findMany');
+    const indexerRead = vi.spyOn(testPrisma.indexerState, 'findUnique');
+
+    const result = await fillabilityForOrders(
+      testPrisma,
+      [row, row, row],
+      BOOK_NOW,
+    );
+
+    expect(result.get(row.orderHash)).toEqual({ fillable: true, reason: null });
+    expect(positionRead).toHaveBeenCalledTimes(1);
+    expect(positionRead.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        OR: [
+          {
+            account: row.maker,
+            marketId: row.marketId,
+            outcome: row.outcome,
+          },
+        ],
+      },
+    });
+    expect(ctfRead).toHaveBeenCalledWith({
+      where: { owner: { in: [row.maker] } },
+    });
+    expect(collateralApprovalRead).not.toHaveBeenCalled();
+    expect(collateralBalanceRead).not.toHaveBeenCalled();
+    expect(migrationRead).not.toHaveBeenCalled();
+    expect(indexerRead).not.toHaveBeenCalled();
+  });
+
+  it('queries only collateral asset readers for BUY orders', async () => {
+    const created = await ingestBuy(700_000n, 500_000n, 109n);
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+    const positionRead = vi.spyOn(testPrisma.position, 'findMany');
+    const ctfRead = vi.spyOn(testPrisma.ctfExchangeApproval, 'findMany');
+    const collateralApprovalRead = vi.spyOn(
+      testPrisma.collateralExchangeApproval,
+      'findMany',
+    );
+    const collateralBalanceRead = vi.spyOn(
+      testPrisma.collateralBalance,
+      'findMany',
+    );
+    const migrationRead = vi.spyOn(testPrisma.bookMigration, 'findMany');
+    const indexerRead = vi.spyOn(testPrisma.indexerState, 'findUnique');
+
+    const result = await fillabilityForOrders(testPrisma, [row], BOOK_NOW);
+
+    expect(result.get(row.orderHash)).toEqual({ fillable: true, reason: null });
+    expect(positionRead).not.toHaveBeenCalled();
+    expect(ctfRead).not.toHaveBeenCalled();
+    expect(collateralApprovalRead).toHaveBeenCalledWith({
+      where: { owner: { in: [row.maker] } },
+    });
+    expect(collateralBalanceRead).toHaveBeenCalledWith({
+      where: { owner: { in: [row.maker] } },
+    });
+    expect(migrationRead).not.toHaveBeenCalled();
+    expect(indexerRead).not.toHaveBeenCalled();
   });
 
   it('bounds Hybrid wire orders while preserving complete fillable levels', async () => {
