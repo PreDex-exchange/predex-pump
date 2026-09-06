@@ -1,7 +1,7 @@
 [Unit]
 Description=Predex production Next.js frontend
 PartOf=predex.target
-Requires=predex-api.service
+Wants=predex-api.service
 After=predex-api.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
