@@ -6,7 +6,7 @@ import { prisma } from './db.js';
 import { PrismaMarketCatalog } from './dedup/market-catalog.js';
 import { createDedupRuntime } from './dedup/runtime.js';
 import { publishCommittedIndexedEvents } from './events/committed.js';
-import { createNodeRedisPublicEventPlane } from './events/node-redis.js';
+import { createNodeRedisIndexedEventPublisher } from './events/node-redis.js';
 import { predexPublicEventDeployment } from './events/public-plane.js';
 import { INDEXER_HELP, parseIndexerOptions } from './indexer/cli.js';
 import { runIndexer } from './indexer/runner.js';
@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     url: config.redisUrl,
     keyPrefix: config.redisKeyPrefix,
   });
-  const publicEventPlane = createNodeRedisPublicEventPlane({
+  const publicEventPlane = createNodeRedisIndexedEventPublisher({
     url: config.redisUrl,
     deployment: predexPublicEventDeployment(config.redisKeyPrefix),
   });

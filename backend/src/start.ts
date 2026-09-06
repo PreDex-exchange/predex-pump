@@ -8,8 +8,6 @@ import { PrismaMarketCatalog } from './dedup/market-catalog.js';
 import { createDedupRuntime } from './dedup/runtime.js';
 import { ServerEventBus } from './events/bus.js';
 import { publishCommittedIndexedEvents } from './events/committed.js';
-import { createNodeRedisPublicEventPlane } from './events/node-redis.js';
-import { predexPublicEventDeployment } from './events/public-plane.js';
 import { publishIndexedEvents } from './events/projector.js';
 import { terminateOnFatal } from './fatal.js';
 import { parseServerOptions, SERVER_HELP } from './indexer/cli.js';
@@ -34,14 +32,6 @@ async function main(): Promise<void> {
     url: config.redisUrl,
     keyPrefix: config.redisKeyPrefix,
   });
-  const publicEventPlane = createNodeRedisPublicEventPlane({
-    url: config.redisUrl,
-    deployment: predexPublicEventDeployment(config.redisKeyPrefix),
-    handlers: {
-      onIndexedBatch: (events) => publishIndexedEvents(prisma, eventBus, events),
-      onServerEvent: (event, ts) => eventBus.publish(event, ts),
-    },
-  });
 
   try {
     const app = await buildServer({
@@ -51,7 +41,6 @@ async function main(): Promise<void> {
       dedupIndexHealthReader: dedup.indexHealth,
       indexerStallMs: config.indexerStallMs,
       publicReadCache,
-      publicEventPlane,
       marketListCacheTtlSeconds: config.marketsCacheTtlSeconds,
       ...(truthPaymentGate === undefined ? {} : { truthPaymentGate }),
     });
@@ -74,7 +63,6 @@ async function main(): Promise<void> {
         onEvents: async (events) => {
           await publishCommittedIndexedEvents(events, {
             publicReadCache,
-            publicEvents: publicEventPlane,
             publishLocal: (committed) =>
               publishIndexedEvents(prisma, eventBus, committed),
           });
@@ -85,7 +73,6 @@ async function main(): Promise<void> {
       await app.close();
     }
   } finally {
-    await publicEventPlane.close();
     await publicReadCache.close();
     await prisma.$disconnect();
   }

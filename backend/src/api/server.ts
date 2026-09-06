@@ -8,7 +8,7 @@ import type { PublicJsonReadCache } from '../cache/public-json.js';
 import { unavailableDedupResponse } from '../dedup/service.js';
 import type { DedupChecker, DedupIndexHealthReader } from '../dedup/types.js';
 import type { ServerEventBus } from '../events/bus.js';
-import type { PublicEventPlane } from '../events/public-plane.js';
+import type { PublicEventHealthReader } from '../events/public-plane.js';
 import type { TruthPaymentGate } from '../truth-payment/types.js';
 import {
   ViemOrderChainReader,
@@ -39,7 +39,7 @@ export interface BuildServerOptions {
   orderNow?: () => number;
   publicReadCache?: PublicJsonReadCache;
   marketListCacheTtlSeconds?: number;
-  publicEventPlane?: PublicEventPlane;
+  publicEventsHealthReader?: PublicEventHealthReader;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -67,7 +67,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     options.dedupIndexHealthReader,
     options.publicReadCache,
     options.marketListCacheTtlSeconds,
-    options.publicEventPlane,
+    options.publicEventsHealthReader,
   );
   registerOrderRoutes(
     app,
@@ -76,7 +76,6 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       options.orderChainReader ?? new ViemOrderChainReader(),
       options.eventBus,
       options.orderNow,
-      options.publicEventPlane,
     ),
     accountService,
   );

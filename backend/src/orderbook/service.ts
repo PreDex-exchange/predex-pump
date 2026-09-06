@@ -30,7 +30,6 @@ import {
 
 import { toOrderDto } from '../api/dto.js';
 import type { ServerEventBus } from '../events/bus.js';
-import type { PublicEventPublisher } from '../events/public-plane.js';
 import { fillabilityForOrders, findSignedOrdersWithFillability } from './fillability.js';
 import { OrderIngestError } from './input.js';
 import {
@@ -171,7 +170,6 @@ export class OffchainOrderService {
     private readonly chainReader: OrderChainReader,
     private readonly eventBus: ServerEventBus,
     private readonly now: () => number = unixNow,
-    private readonly publicEvents?: PublicEventPublisher,
   ) {}
 
   async ingest(request: IngestOrderRequest): Promise<IngestOrderResponse> {
@@ -397,13 +395,14 @@ export class OffchainOrderService {
       (await fillabilityForOrders(this.prisma, [stored], now)).get(stored.orderHash) ??
       { fillable: true, reason: null };
     const dto = toOffchainOrderDto(stored, fillability);
-    const event = {
-      channel: `book:${stored.marketId}`,
-      event: 'offchain.order.placed',
-      data: dto,
-    } as const;
-    this.eventBus.publish(event, now);
-    await this.publicEvents?.publishServerEvent(event, now).catch(() => undefined);
+    this.eventBus.publish(
+      {
+        channel: `book:${stored.marketId}`,
+        event: 'offchain.order.placed',
+        data: dto,
+      },
+      now,
+    );
     return { order: dto };
   }
 
@@ -468,13 +467,14 @@ export class OffchainOrderService {
     const cancelTx = buildCtfExchangeCancelOrderTx({
       order: signedOrderFromRow(order),
     });
-    const event = {
-      channel: `book:${order.marketId}`,
-      event: 'offchain.order.withdrawn',
-      data: dto,
-    } as const;
-    this.eventBus.publish(event, now);
-    await this.publicEvents?.publishServerEvent(event, now).catch(() => undefined);
+    this.eventBus.publish(
+      {
+        channel: `book:${order.marketId}`,
+        event: 'offchain.order.withdrawn',
+        data: dto,
+      },
+      now,
+    );
     return {
       order: dto,
       offchainWithdrawalIsOnchainCancellation: false,

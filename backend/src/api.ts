@@ -8,10 +8,10 @@ import { prisma } from './db.js';
 import { PrismaMarketCatalog } from './dedup/market-catalog.js';
 import { createDedupRuntime } from './dedup/runtime.js';
 import { ServerEventBus } from './events/bus.js';
-import { createNodeRedisPublicEventPlane } from './events/node-redis.js';
+import { createNodeRedisIndexedEventSubscriber } from './events/node-redis.js';
 import {
   predexPublicEventDeployment,
-  type PublicEventPlane,
+  type IndexedEventSubscriber,
 } from './events/public-plane.js';
 import { publishIndexedEvents } from './events/projector.js';
 import { terminateOnFatal } from './fatal.js';
@@ -30,7 +30,7 @@ async function main(): Promise<void> {
     url: config.redisUrl,
     keyPrefix: config.redisKeyPrefix,
   });
-  let publicEventPlane: PublicEventPlane | undefined;
+  let publicEventPlane: IndexedEventSubscriber | undefined;
   let app: Awaited<ReturnType<typeof buildServer>> | undefined;
   const controller = new AbortController();
   const stop = (): void => controller.abort();
@@ -38,13 +38,10 @@ async function main(): Promise<void> {
   process.once('SIGTERM', stop);
 
   try {
-    publicEventPlane = createNodeRedisPublicEventPlane({
+    publicEventPlane = createNodeRedisIndexedEventSubscriber({
       url: config.redisUrl,
       deployment: predexPublicEventDeployment(config.redisKeyPrefix),
-      handlers: {
-        onIndexedBatch: (events) => publishIndexedEvents(prisma, eventBus, events),
-        onServerEvent: (event, ts) => eventBus.publish(event, ts),
-      },
+      onIndexedBatch: (events) => publishIndexedEvents(prisma, eventBus, events),
     });
     app = await buildServer({
       prisma,
@@ -53,7 +50,7 @@ async function main(): Promise<void> {
       dedupIndexHealthReader: dedup.indexHealth,
       indexerStallMs: config.indexerStallMs,
       publicReadCache,
-      publicEventPlane,
+      publicEventsHealthReader: publicEventPlane,
       marketListCacheTtlSeconds: config.marketsCacheTtlSeconds,
       ...(truthPaymentGate === undefined ? {} : { truthPaymentGate }),
     });

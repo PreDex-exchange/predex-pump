@@ -1,9 +1,8 @@
-import { ADDRESSES, ARC, type ServerEvent } from '@predex-pump/shared';
+import { ADDRESSES, ARC } from '@predex-pump/shared';
 import type { Address, Hex } from 'viem';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { closeApiRuntime } from '../src/api/runtime.js';
-import { ServerEventBus } from '../src/events/bus.js';
 import { publishCommittedIndexedEvents } from '../src/events/committed.js';
 import {
   decodePublicEventEnvelope,
@@ -38,19 +37,10 @@ function indexedEvent(blockNumber = 101): DecodedEvent {
   };
 }
 
-function bookEvent(reason = 'EXCHANGE_EVENT'): ServerEvent {
-  return {
-    channel: 'book:1',
-    event: 'book.updated',
-    data: { marketId: '1', reason: reason as 'EXCHANGE_EVENT' },
-  };
-}
-
 class FakeRedisBroker {
   readonly subscribers = new Map<string, Set<(message: string) => void>>();
   online = true;
   publishCalls = 0;
-  failNextPublish = false;
 
   createTransport(): FakeRedisTransport {
     return new FakeRedisTransport(this);
@@ -62,16 +52,12 @@ class FakeRedisBroker {
 
   async publish(topic: string, message: string): Promise<void> {
     this.publishCalls += 1;
-    if (!this.online || this.failNextPublish) {
-      this.failNextPublish = false;
-      throw new Error('Redis unavailable');
-    }
+    if (!this.online) throw new Error('Redis unavailable');
     this.deliver(topic, message);
   }
 }
 
 class FakeRedisTransport implements PublicEventTransport {
-  readonly errorListeners = new Set<(error: unknown) => void>();
   started = false;
   subscribed = false;
   closed = false;
@@ -79,16 +65,14 @@ class FakeRedisTransport implements PublicEventTransport {
   constructor(private readonly broker: FakeRedisBroker) {}
 
   isPublisherReady(): boolean {
-    return this.started && !this.closed && this.broker.online;
+    return this.started && !this.subscribed && !this.closed && this.broker.online;
   }
 
   isSubscriberReady(): boolean {
     return this.subscribed && !this.closed && this.broker.online;
   }
 
-  onError(listener: (error: unknown) => void): void {
-    this.errorListeners.add(listener);
-  }
+  onError(): void {}
 
   start(topic: string, onMessage?: (message: string) => void): void {
     this.started = true;
@@ -109,29 +93,35 @@ class FakeRedisTransport implements PublicEventTransport {
   }
 }
 
-function plane(
-  broker: FakeRedisBroker,
-  producerId: string,
-  handlers?: ConstructorParameters<typeof RedisPublicEventPlane>[0]['handlers'],
-): RedisPublicEventPlane {
+function publisher(broker: FakeRedisBroker): RedisPublicEventPlane {
   const result = new RedisPublicEventPlane({
+    role: 'publisher',
     deployment,
     transport: broker.createTransport(),
-    producerId,
-    createMessageId: () => `${producerId}-message`,
-    ...(handlers === undefined ? {} : { handlers }),
   });
   result.start();
   return result;
 }
 
-describe('Redis public event plane', () => {
+function subscriber(
+  broker: FakeRedisBroker,
+  onIndexedBatch: (events: readonly DecodedEvent[]) => Promise<void>,
+): RedisPublicEventPlane {
+  const result = new RedisPublicEventPlane({
+    role: 'subscriber',
+    deployment,
+    transport: broker.createTransport(),
+    onIndexedBatch,
+  });
+  result.start();
+  return result;
+}
+
+describe('Redis indexed-event plane', () => {
   it('round-trips nested BigInts and rejects malformed or wrong-deployment envelopes', () => {
     const envelope: IndexedBatchEnvelope = {
       schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
       deployment,
-      producerId: 'indexer-1',
-      messageId: 'message-1',
       kind: 'indexed.batch',
       events: [indexedEvent()],
     };
@@ -155,7 +145,7 @@ describe('Redis public event plane', () => {
         JSON.stringify({ ...JSON.parse(encoded), unexpected: true }),
         deployment,
       ),
-    ).toThrow('Malformed public-event envelope');
+    ).toThrow('wrong schema or deployment');
     expect(() =>
       decodePublicEventEnvelope('x'.repeat(MAX_PUBLIC_EVENT_BYTES + 1), deployment),
     ).toThrow('byte limit');
@@ -172,15 +162,12 @@ describe('Redis public event plane', () => {
 
   it('chunks a legitimate oversized indexed batch in order', async () => {
     const broker = new FakeRedisBroker();
-    const publisher = plane(broker, 'indexer-1');
+    const source = publisher(broker);
     const blocks: number[] = [];
     const delivered = new Promise<void>((resolve) => {
-      plane(broker, 'api-1', {
-        onServerEvent: () => undefined,
-        onIndexedBatch: async (events) => {
-          blocks.push(...events.map((event) => event.blockNumber));
-          if (blocks.length === MAX_INDEXED_EVENTS_PER_ENVELOPE + 1) resolve();
-        },
+      subscriber(broker, async (events) => {
+        blocks.push(...events.map((event) => event.blockNumber));
+        if (blocks.length === MAX_INDEXED_EVENTS_PER_ENVELOPE + 1) resolve();
       });
     });
     const events = Array.from(
@@ -188,78 +175,43 @@ describe('Redis public event plane', () => {
       (_, index) => indexedEvent(index + 1),
     );
 
-    await publisher.publishIndexedBatch(events);
+    await source.publishIndexedBatch(events);
     await delivered;
 
     expect(broker.publishCalls).toBe(2);
     expect(blocks).toEqual(events.map((event) => event.blockNumber));
   });
 
-  it('fans an API event to a second local bus once, ignoring its own Redis echo', async () => {
+  it('drops during outage without replay, then delivers only a future batch', async () => {
     const broker = new FakeRedisBroker();
-    const firstBus = new ServerEventBus();
-    const secondBus = new ServerEventBus();
-    const firstDeliveries = vi.fn();
-    const secondDeliveries = vi.fn();
-    firstBus.subscribe('book:1', firstDeliveries);
-    secondBus.subscribe('book:1', secondDeliveries);
-    const first = plane(broker, 'api-1', {
-      onIndexedBatch: async () => undefined,
-      onServerEvent: (event, ts) => firstBus.publish(event, ts),
-    });
-    const secondReceived = new Promise<void>((resolve) => {
-      const second = plane(broker, 'api-2', {
-        onIndexedBatch: async () => undefined,
-        onServerEvent: (event, ts) => {
-          secondBus.publish(event, ts);
-          resolve();
-        },
-      });
-      void second;
-    });
-    const event = bookEvent();
-
-    firstBus.publish(event, 123);
-    await first.publishServerEvent(event, 123);
-    await secondReceived;
-
-    expect(firstDeliveries).toHaveBeenCalledOnce();
-    expect(secondDeliveries).toHaveBeenCalledOnce();
-    expect(broker.publishCalls).toBe(1);
-    expect(first.getHealth()).toMatchObject({ published: 1, received: 0 });
-  });
-
-  it('drops during outage without an offline replay, then delivers only a future event', async () => {
-    const broker = new FakeRedisBroker();
-    const received: string[] = [];
-    const publisher = plane(broker, 'api-1');
+    const source = publisher(broker);
+    const blocks: number[] = [];
     const futureReceived = new Promise<void>((resolve) => {
-      plane(broker, 'api-2', {
-        onIndexedBatch: async () => undefined,
-        onServerEvent: (_event, ts) => {
-          received.push(String(ts));
-          resolve();
-        },
+      subscriber(broker, async (events) => {
+        blocks.push(...events.map((event) => event.blockNumber));
+        resolve();
       });
     });
 
     broker.online = false;
-    await publisher.publishServerEvent(bookEvent(), 1);
+    await source.publishIndexedBatch([indexedEvent(1)]);
     broker.online = true;
-    await publisher.publishServerEvent(bookEvent(), 2);
+    await source.publishIndexedBatch([indexedEvent(2)]);
     await futureReceived;
 
-    expect(received).toEqual(['2']);
-    expect(publisher.getHealth()).toMatchObject({
+    expect(blocks).toEqual([2]);
+    expect(source.getHealth()).toMatchObject({
       status: 'ready',
       published: 1,
       dropped: 1,
+      publisherReady: true,
+      subscriberReady: false,
     });
   });
 
-  it('rejects bad inbound messages and processes indexed batches sequentially', async () => {
+  it('rejects bad inbound messages and processes batches sequentially', async () => {
     const broker = new FakeRedisBroker();
-    const publisher = plane(broker, 'indexer-1');
+    const source = publisher(broker);
     const order: string[] = [];
     let releaseFirst!: () => void;
     let firstStarted!: () => void;
@@ -273,18 +225,15 @@ describe('Redis public event plane', () => {
     const finished = new Promise<void>((resolve) => {
       secondFinished = resolve;
     });
-    const consumer = plane(broker, 'api-1', {
-      onServerEvent: () => undefined,
-      onIndexedBatch: async (events) => {
-        const block = events[0]?.blockNumber;
-        order.push(`start-${block}`);
-        if (block === 101) {
-          firstStarted();
-          await firstGate;
-        }
-        order.push(`end-${block}`);
-        if (block === 102) secondFinished();
-      },
+    const consumer = subscriber(broker, async (events) => {
+      const block = events[0]?.blockNumber;
+      order.push(`start-${block}`);
+      if (block === 101) {
+        firstStarted();
+        await firstGate;
+      }
+      order.push(`end-${block}`);
+      if (block === 102) secondFinished();
     });
     broker.deliver(publicEventTopic(deployment), 'not-json');
     const wrongDeployment: PublicEventDeployment = {
@@ -296,21 +245,24 @@ describe('Redis public event plane', () => {
       encodePublicEventEnvelope({
         schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
         deployment: wrongDeployment,
-        producerId: 'foreign',
-        messageId: 'wrong-deployment',
         kind: 'indexed.batch',
         events: [indexedEvent()],
       }),
     );
-    await publisher.publishIndexedBatch([indexedEvent(101)]);
-    await publisher.publishIndexedBatch([indexedEvent(102)]);
+    await source.publishIndexedBatch([indexedEvent(101)]);
+    await source.publishIndexedBatch([indexedEvent(102)]);
     await started;
     expect(order).toEqual(['start-101']);
     releaseFirst();
     await finished;
 
     expect(order).toEqual(['start-101', 'end-101', 'start-102', 'end-102']);
-    expect(consumer.getHealth()).toMatchObject({ received: 2, rejected: 2 });
+    expect(consumer.getHealth()).toMatchObject({
+      received: 2,
+      rejected: 2,
+      publisherReady: false,
+      subscriberReady: true,
+    });
   });
 
   it('invalidates the cache before local and cross-process post-commit fan-out', async () => {
@@ -338,10 +290,10 @@ describe('Redis public event plane', () => {
     await expect(
       closeApiRuntime({
         app: {
-          close: (async () => {
+          close: async () => {
             calls.push('app');
             throw new Error('socket close failed');
-          }) as Parameters<typeof closeApiRuntime>[0]['app']['close'],
+          },
         },
         publicEventPlane: {
           close: async () => {

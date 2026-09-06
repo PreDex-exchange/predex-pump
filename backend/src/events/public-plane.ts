@@ -1,13 +1,10 @@
-import { randomUUID } from 'node:crypto';
-
 import {
   ADDRESSES,
   ARC,
   type PublicEventsHealth,
-  type ServerEvent,
 } from '@predex-pump/shared';
 
-import type { DecodedEvent, ContractSource } from '../indexer/types.js';
+import type { ContractSource, DecodedEvent } from '../indexer/types.js';
 
 export const PUBLIC_EVENT_SCHEMA_VERSION = 'v1' as const;
 export const MAX_PUBLIC_EVENT_BYTES = 4 * 1024 * 1024;
@@ -76,39 +73,18 @@ interface WireDecodedEvent {
   ts: number;
 }
 
-interface EnvelopeBase {
+export interface IndexedBatchEnvelope {
   schemaVersion: typeof PUBLIC_EVENT_SCHEMA_VERSION;
   deployment: PublicEventDeployment;
-  producerId: string;
-  messageId: string;
-}
-
-export interface IndexedBatchEnvelope extends EnvelopeBase {
   kind: 'indexed.batch';
   events: DecodedEvent[];
 }
 
-export interface ServerEventEnvelope extends EnvelopeBase {
-  kind: 'server.event';
-  event: ServerEvent;
-  ts: number;
-}
-
-export type PublicEventEnvelope = IndexedBatchEnvelope | ServerEventEnvelope;
-
-interface WireIndexedBatchEnvelope extends EnvelopeBase {
-  kind: 'indexed.batch';
+interface WireIndexedBatchEnvelope
+  extends Omit<IndexedBatchEnvelope, 'events'> {
   events: WireDecodedEvent[];
 }
 
-type WirePublicEventEnvelope = WireIndexedBatchEnvelope | ServerEventEnvelope;
-
-export interface PublicEventHandlers {
-  onIndexedBatch(events: readonly DecodedEvent[]): Promise<void>;
-  onServerEvent(event: ServerEvent, ts: number): Promise<void> | void;
-}
-
-/** Narrow transport seam keeps Redis lifecycle separate from codec/fan-out policy. */
 export interface PublicEventTransport {
   isPublisherReady(): boolean;
   isSubscriberReady(): boolean;
@@ -118,30 +94,36 @@ export interface PublicEventTransport {
   close(): Promise<void>;
 }
 
-export interface PublicEventPublisher {
-  publishIndexedBatch(events: readonly DecodedEvent[]): Promise<void>;
-  publishServerEvent(event: ServerEvent, ts: number): Promise<void>;
+export interface PublicEventHealthReader {
+  getHealth(): PublicEventsHealth;
 }
 
-export interface PublicEventPlane extends PublicEventPublisher {
+interface PublicEventLifecycle extends PublicEventHealthReader {
   start(): void;
-  getHealth(): PublicEventsHealth;
   close(): Promise<void>;
 }
 
+export interface IndexedEventPublisher extends PublicEventLifecycle {
+  publishIndexedBatch(events: readonly DecodedEvent[]): Promise<void>;
+}
+
+export type IndexedEventSubscriber = PublicEventLifecycle;
+
 export interface RedisPublicEventPlaneOptions {
+  role: 'publisher' | 'subscriber';
   deployment: PublicEventDeployment;
   transport: PublicEventTransport;
-  handlers?: PublicEventHandlers;
-  producerId?: string;
-  createMessageId?: () => string;
+  onIndexedBatch?: (events: readonly DecodedEvent[]) => Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
   const actual = Object.keys(value).sort();
   return (
     actual.length === expected.length &&
@@ -149,7 +131,9 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
   );
 }
 
-function normalizeDeployment(deployment: PublicEventDeployment): PublicEventDeployment {
+function normalizeDeployment(
+  deployment: PublicEventDeployment,
+): PublicEventDeployment {
   const keyPrefix = deployment.keyPrefix.trim().replace(/:+$/u, '');
   if (!ID_PATTERN.test(keyPrefix)) {
     throw new Error('Public-event Redis key prefix is invalid');
@@ -179,7 +163,10 @@ function deploymentMatches(
   received: unknown,
   expected: PublicEventDeployment,
 ): received is PublicEventDeployment {
-  if (!isRecord(received) || !hasExactKeys(received, ['keyPrefix', 'chainId', 'registry'])) {
+  if (
+    !isRecord(received) ||
+    !hasExactKeys(received, ['keyPrefix', 'chainId', 'registry'])
+  ) {
     return false;
   }
   return (
@@ -207,7 +194,10 @@ function encodeValue(value: unknown, depth = 0): WireValue {
     return { type: 'number', value };
   }
   if (Array.isArray(value)) {
-    return { type: 'array', value: value.map((entry) => encodeValue(entry, depth + 1)) };
+    return {
+      type: 'array',
+      value: value.map((entry) => encodeValue(entry, depth + 1)),
+    };
   }
   if (isRecord(value)) {
     return {
@@ -295,7 +285,10 @@ function encodeDecodedEvent(event: DecodedEvent): WireDecodedEvent {
     source: event.source,
     address: event.address,
     eventName: event.eventName,
-    args: Object.entries(event.args).map(([key, value]) => [key, encodeValue(value)]),
+    args: Object.entries(event.args).map(([key, value]) => [
+      key,
+      encodeValue(value),
+    ]),
     txHash: event.txHash,
     logIndex: event.logIndex,
     blockNumber: event.blockNumber,
@@ -349,94 +342,16 @@ function decodeDecodedEvent(value: unknown): DecodedEvent {
   };
 }
 
-function isJsonValue(value: unknown, depth = 0): boolean {
-  if (depth > 32) return false;
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean'
-  ) {
-    return true;
-  }
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every((entry) => isJsonValue(entry, depth + 1));
-  return (
-    isRecord(value) &&
-    Object.values(value).every((entry) => isJsonValue(entry, depth + 1))
-  );
-}
-
-function validServerEventPair(channel: string, event: string): boolean {
-  if (channel === 'markets') {
-    return ['market.created', 'market.updated', 'market.graduated'].includes(event);
-  }
-  if (channel === 'activity') return event === 'activity';
-  if (/^market:[0-9]+$/u.test(channel)) {
-    return ['price.tick', 'trade', 'graduated', 'resolution'].includes(event);
-  }
-  if (/^book:[0-9]+$/u.test(channel)) {
-    return [
-      'order.placed',
-      'order.filled',
-      'order.cancelled',
-      'book.seeded',
-      'offchain.order.placed',
-      'offchain.order.withdrawn',
-      'book.updated',
-    ].includes(event);
-  }
-  if (/^account:0x[0-9a-fA-F]{40}$/u.test(channel)) {
-    return event === 'position.updated' || event === 'trade';
-  }
-  return false;
-}
-
-function decodeServerEvent(value: unknown): ServerEvent {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ['channel', 'event', 'data']) ||
-    typeof value.channel !== 'string' ||
-    typeof value.event !== 'string' ||
-    !validServerEventPair(value.channel, value.event) ||
-    !isRecord(value.data) ||
-    !isJsonValue(value.data)
-  ) {
-    throw new Error('Malformed server event');
-  }
-  return value as unknown as ServerEvent;
-}
-
-function validEnvelopeBase(
-  value: Record<string, unknown>,
-  expected: PublicEventDeployment,
-): boolean {
-  return (
-    value.schemaVersion === PUBLIC_EVENT_SCHEMA_VERSION &&
-    deploymentMatches(value.deployment, expected) &&
-    typeof value.producerId === 'string' &&
-    ID_PATTERN.test(value.producerId) &&
-    typeof value.messageId === 'string' &&
-    ID_PATTERN.test(value.messageId)
-  );
-}
-
-export function encodePublicEventEnvelope(envelope: PublicEventEnvelope): string {
+export function encodePublicEventEnvelope(
+  envelope: IndexedBatchEnvelope,
+): string {
   const deployment = normalizeDeployment(envelope.deployment);
-  if (!ID_PATTERN.test(envelope.producerId) || !ID_PATTERN.test(envelope.messageId)) {
-    throw new Error('Public-event producerId and messageId must be bounded identifiers');
-  }
-  const wire: WirePublicEventEnvelope =
-    envelope.kind === 'indexed.batch'
-      ? {
-          ...envelope,
-          deployment,
-          events: envelope.events.map(encodeDecodedEvent),
-        }
-      : { ...envelope, deployment };
-  if (
-    wire.kind === 'indexed.batch' &&
-    wire.events.length > MAX_INDEXED_EVENTS_PER_ENVELOPE
-  ) {
+  const wire: WireIndexedBatchEnvelope = {
+    ...envelope,
+    deployment,
+    events: envelope.events.map(encodeDecodedEvent),
+  };
+  if (wire.events.length > MAX_INDEXED_EVENTS_PER_ENVELOPE) {
     throw new Error('Indexed public-event batch exceeds the event-count limit');
   }
   const serialized = JSON.stringify(wire);
@@ -449,7 +364,7 @@ export function encodePublicEventEnvelope(envelope: PublicEventEnvelope): string
 export function decodePublicEventEnvelope(
   serialized: string,
   expectedDeployment: PublicEventDeployment,
-): PublicEventEnvelope {
+): IndexedBatchEnvelope {
   const expected = normalizeDeployment(expectedDeployment);
   if (Buffer.byteLength(serialized, 'utf8') > MAX_PUBLIC_EVENT_BYTES) {
     throw new Error('Public-event envelope exceeds the byte limit');
@@ -460,55 +375,27 @@ export function decodePublicEventEnvelope(
   } catch {
     throw new Error('Public-event envelope is not valid JSON');
   }
-  if (!isRecord(value) || !validEnvelopeBase(value, expected)) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['schemaVersion', 'deployment', 'kind', 'events']) ||
+    value.schemaVersion !== PUBLIC_EVENT_SCHEMA_VERSION ||
+    !deploymentMatches(value.deployment, expected)
+  ) {
     throw new Error('Public-event envelope has the wrong schema or deployment');
   }
   if (
-    value.kind === 'indexed.batch' &&
-    hasExactKeys(value, [
-      'schemaVersion',
-      'deployment',
-      'producerId',
-      'messageId',
-      'kind',
-      'events',
-    ]) &&
-    Array.isArray(value.events) &&
-    value.events.length <= MAX_INDEXED_EVENTS_PER_ENVELOPE
+    value.kind !== 'indexed.batch' ||
+    !Array.isArray(value.events) ||
+    value.events.length > MAX_INDEXED_EVENTS_PER_ENVELOPE
   ) {
-    return {
-      schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
-      deployment: expected,
-      producerId: value.producerId as string,
-      messageId: value.messageId as string,
-      kind: 'indexed.batch',
-      events: value.events.map(decodeDecodedEvent),
-    };
+    throw new Error('Malformed public-event envelope');
   }
-  if (
-    value.kind === 'server.event' &&
-    hasExactKeys(value, [
-      'schemaVersion',
-      'deployment',
-      'producerId',
-      'messageId',
-      'kind',
-      'event',
-      'ts',
-    ]) &&
-    safeNonNegativeInteger(value.ts)
-  ) {
-    return {
-      schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
-      deployment: expected,
-      producerId: value.producerId as string,
-      messageId: value.messageId as string,
-      kind: 'server.event',
-      event: decodeServerEvent(value.event),
-      ts: value.ts,
-    };
-  }
-  throw new Error('Malformed public-event envelope');
+  return {
+    schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
+    deployment: expected,
+    kind: 'indexed.batch',
+    events: value.events.map(decodeDecodedEvent),
+  };
 }
 
 function timeoutAfter(milliseconds: number): {
@@ -529,11 +416,9 @@ function timeoutAfter(milliseconds: number): {
   };
 }
 
-export class RedisPublicEventPlane implements PublicEventPlane {
+export class RedisPublicEventPlane implements IndexedEventPublisher {
   readonly #deployment: PublicEventDeployment;
   readonly #topic: string;
-  readonly #producerId: string;
-  readonly #createMessageId: () => string;
   readonly #health: PublicEventsHealth = {
     status: 'connecting',
     publisherReady: false,
@@ -551,10 +436,11 @@ export class RedisPublicEventPlane implements PublicEventPlane {
   constructor(private readonly options: RedisPublicEventPlaneOptions) {
     this.#deployment = normalizeDeployment(options.deployment);
     this.#topic = publicEventTopic(this.#deployment);
-    this.#producerId = options.producerId ?? randomUUID();
-    this.#createMessageId = options.createMessageId ?? randomUUID;
-    if (!ID_PATTERN.test(this.#producerId)) {
-      throw new Error('Public-event producerId must be a bounded identifier');
+    if (
+      (options.role === 'subscriber') !==
+      (options.onIndexedBatch !== undefined)
+    ) {
+      throw new Error('Subscriber role requires exactly one indexed-batch handler');
     }
     options.transport.onError(() => {
       if (!this.#closing) this.recordError();
@@ -567,9 +453,9 @@ export class RedisPublicEventPlane implements PublicEventPlane {
     try {
       this.options.transport.start(
         this.#topic,
-        this.options.handlers === undefined
-          ? undefined
-          : (message) => this.enqueueMessage(message),
+        this.options.role === 'subscriber'
+          ? (message) => this.enqueueMessage(message)
+          : undefined,
       );
     } catch {
       this.recordError();
@@ -577,10 +463,13 @@ export class RedisPublicEventPlane implements PublicEventPlane {
   }
 
   getHealth(): PublicEventsHealth {
-    const publisherReady = this.options.transport.isPublisherReady();
+    const publisherReady =
+      this.options.role === 'publisher' &&
+      this.options.transport.isPublisherReady();
     const subscriberReady =
-      this.options.handlers === undefined || this.options.transport.isSubscriberReady();
-    const ready = publisherReady && subscriberReady;
+      this.options.role === 'subscriber' &&
+      this.options.transport.isSubscriberReady();
+    const ready = publisherReady || subscriberReady;
     return {
       ...this.#health,
       status: ready
@@ -589,34 +478,45 @@ export class RedisPublicEventPlane implements PublicEventPlane {
           ? 'degraded'
           : 'connecting',
       publisherReady,
-      subscriberReady:
-        this.options.handlers === undefined
-          ? false
-          : this.options.transport.isSubscriberReady(),
+      subscriberReady,
     };
   }
 
   async publishIndexedBatch(events: readonly DecodedEvent[]): Promise<void> {
     if (events.length === 0) return;
-    for (let offset = 0; offset < events.length; offset += MAX_INDEXED_EVENTS_PER_ENVELOPE) {
+    if (this.options.role !== 'publisher') {
+      this.#health.dropped += 1;
+      return;
+    }
+    for (
+      let offset = 0;
+      offset < events.length;
+      offset += MAX_INDEXED_EVENTS_PER_ENVELOPE
+    ) {
       await this.publishIndexedChunk(
         events.slice(offset, offset + MAX_INDEXED_EVENTS_PER_ENVELOPE),
       );
     }
   }
 
-  private async publishIndexedChunk(events: readonly DecodedEvent[]): Promise<void> {
-    const envelope: IndexedBatchEnvelope = {
-      schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
-      deployment: this.#deployment,
-      producerId: this.#producerId,
-      messageId: this.#createMessageId(),
-      kind: 'indexed.batch',
-      events: [...events],
-    };
+  async close(): Promise<void> {
+    if (this.#closing) return;
+    this.#closing = true;
+    await this.#dispatchTail.catch(() => undefined);
+    await this.options.transport.close().catch(() => undefined);
+  }
+
+  private async publishIndexedChunk(
+    events: readonly DecodedEvent[],
+  ): Promise<void> {
     let serialized: string;
     try {
-      serialized = encodePublicEventEnvelope(envelope);
+      serialized = encodePublicEventEnvelope({
+        schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
+        deployment: this.#deployment,
+        kind: 'indexed.batch',
+        events: [...events],
+      });
     } catch {
       if (events.length > 1) {
         const midpoint = Math.ceil(events.length / 2);
@@ -628,49 +528,6 @@ export class RedisPublicEventPlane implements PublicEventPlane {
       this.#health.dropped += 1;
       return;
     }
-    await this.publishSerialized(serialized);
-  }
-
-  async publishServerEvent(event: ServerEvent, ts: number): Promise<void> {
-    await this.publish({
-      schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
-      deployment: this.#deployment,
-      producerId: this.#producerId,
-      messageId: this.#createMessageId(),
-      kind: 'server.event',
-      event,
-      ts,
-    });
-  }
-
-  async close(): Promise<void> {
-    if (this.#closing) return;
-    this.#closing = true;
-    await this.#dispatchTail.catch(() => undefined);
-    await this.options.transport.close().catch(() => undefined);
-  }
-
-  private async publish(envelope: PublicEventEnvelope): Promise<void> {
-    if (
-      this.#closing ||
-      !this.#started ||
-      !this.options.transport.isPublisherReady()
-    ) {
-      this.#health.dropped += 1;
-      return;
-    }
-    let serialized: string;
-    try {
-      serialized = encodePublicEventEnvelope(envelope);
-    } catch {
-      this.recordError();
-      this.#health.dropped += 1;
-      return;
-    }
-    await this.publishSerialized(serialized);
-  }
-
-  private async publishSerialized(serialized: string): Promise<void> {
     if (
       this.#closing ||
       !this.#started ||
@@ -698,20 +555,15 @@ export class RedisPublicEventPlane implements PublicEventPlane {
     if (this.#closing) return;
     this.#dispatchTail = this.#dispatchTail
       .then(async () => {
-        let envelope: PublicEventEnvelope;
+        let envelope: IndexedBatchEnvelope;
         try {
           envelope = decodePublicEventEnvelope(serialized, this.#deployment);
         } catch {
           this.#health.rejected += 1;
           return;
         }
-        if (envelope.producerId === this.#producerId) return;
         this.#health.received += 1;
-        if (envelope.kind === 'indexed.batch') {
-          await this.options.handlers?.onIndexedBatch(envelope.events);
-        } else {
-          await this.options.handlers?.onServerEvent(envelope.event, envelope.ts);
-        }
+        await this.options.onIndexedBatch?.(envelope.events);
       })
       .catch(() => {
         this.recordError();
@@ -723,22 +575,30 @@ export class RedisPublicEventPlane implements PublicEventPlane {
   }
 }
 
-export function createDisabledPublicEventPlane(): PublicEventPlane {
-  const health: PublicEventsHealth = {
-    status: 'disabled',
-    publisherReady: false,
-    subscriberReady: false,
-    published: 0,
-    received: 0,
-    rejected: 0,
-    dropped: 0,
-    errors: 0,
-  };
+const disabledHealth = (): PublicEventsHealth => ({
+  status: 'disabled',
+  publisherReady: false,
+  subscriberReady: false,
+  published: 0,
+  received: 0,
+  rejected: 0,
+  dropped: 0,
+  errors: 0,
+});
+
+export function createDisabledIndexedEventPublisher(): IndexedEventPublisher {
   return {
     start: () => undefined,
     publishIndexedBatch: async () => undefined,
-    publishServerEvent: async () => undefined,
-    getHealth: () => ({ ...health }),
+    getHealth: disabledHealth,
+    close: async () => undefined,
+  };
+}
+
+export function createDisabledIndexedEventSubscriber(): IndexedEventSubscriber {
+  return {
+    start: () => undefined,
+    getHealth: disabledHealth,
     close: async () => undefined,
   };
 }

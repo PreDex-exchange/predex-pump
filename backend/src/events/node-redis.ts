@@ -1,57 +1,61 @@
 import { createClient } from '@redis/client';
 
+import type { DecodedEvent } from '../indexer/types.js';
+
 import {
-  createDisabledPublicEventPlane,
+  createDisabledIndexedEventPublisher,
+  createDisabledIndexedEventSubscriber,
   RedisPublicEventPlane,
+  type IndexedEventPublisher,
+  type IndexedEventSubscriber,
   type PublicEventDeployment,
-  type PublicEventHandlers,
-  type PublicEventPlane,
   type PublicEventTransport,
 } from './public-plane.js';
 
-export interface NodeRedisPublicEventPlaneOptions {
+interface NodeRedisPublicEventOptions {
   url: string | undefined;
   deployment: PublicEventDeployment;
-  handlers?: PublicEventHandlers;
-  producerId?: string;
+}
+
+interface NodeRedisSubscriberOptions extends NodeRedisPublicEventOptions {
+  onIndexedBatch(events: readonly DecodedEvent[]): Promise<void>;
 }
 
 export function createNodeRedisPublicEventTransport(
   url: string,
+  role: 'publisher' | 'subscriber',
 ): PublicEventTransport {
-  // Pub/Sub mode occupies a connection, so commands and subscriptions must
-  // never share a client. Offline queues are disabled to avoid replaying stale
-  // notifications after Redis recovers.
-  const publisher = createClient({ url, disableOfflineQueue: true });
-  const subscriber = createClient({ url, disableOfflineQueue: true });
+  // A process creates only the connection its role needs. The publisher's
+  // offline queue is disabled so recovery emits future notifications only.
+  const client = createClient({ url, disableOfflineQueue: true });
   const errorListeners = new Set<(error: unknown) => void>();
   const reportError = (error: unknown): void => {
     for (const listener of errorListeners) listener(error);
   };
-  publisher.on('error', reportError);
-  subscriber.on('error', reportError);
+  client.on('error', reportError);
   let started = false;
   let closing = false;
-  let subscriberEnabled = false;
-  let publisherRun: Promise<void> | undefined;
-  let subscriberRun: Promise<void> | undefined;
+  let connectionRun: Promise<void> | undefined;
+  let subscriptionReady = false;
 
   const retryDelay = (): Promise<void> =>
     new Promise((resolve) => setTimeout(resolve, 250));
 
   const connectUntilReady = async (
-    client: typeof publisher,
-    afterConnect?: () => Promise<void>,
+    topic: string,
+    onMessage?: (message: string) => void,
   ): Promise<void> => {
     while (!closing) {
       try {
         // node-redis retries socket establishment internally. If connect or
-        // the initial subscribe still rejects, this outer loop establishes a
-        // new attempt without queueing any publish command.
+        // initial subscribe rejects, retry without queuing publish commands.
         if (!client.isOpen) await client.connect();
         if (closing) return;
         if (client.isReady) {
-          await afterConnect?.();
+          if (role === 'subscriber' && onMessage !== undefined) {
+            await client.subscribe(topic, onMessage);
+            subscriptionReady = true;
+          }
           return;
         }
       } catch (error) {
@@ -63,63 +67,76 @@ export function createNodeRedisPublicEventTransport(
     }
   };
 
-  const closeClient = async (client: typeof publisher): Promise<void> => {
-    if (!client.isOpen) return;
-    if (!client.isReady) {
-      client.destroy();
-      return;
-    }
-    try {
-      await client.close();
-    } catch {
-      client.destroy();
-    }
-  };
-
   return {
-    isPublisherReady: () => publisher.isReady,
-    isSubscriberReady: () => subscriberEnabled && subscriber.isReady,
+    isPublisherReady: () => role === 'publisher' && client.isReady,
+    isSubscriberReady: () =>
+      role === 'subscriber' && subscriptionReady && client.isReady,
     onError: (listener) => {
       errorListeners.add(listener);
     },
     start: (topic, onMessage) => {
       if (started || closing) return;
-      started = true;
-      publisherRun = connectUntilReady(publisher);
-      if (onMessage !== undefined) {
-        subscriberEnabled = true;
-        subscriberRun = connectUntilReady(subscriber, async () => {
-          await subscriber.subscribe(topic, onMessage);
-        });
+      if ((role === 'subscriber') !== (onMessage !== undefined)) {
+        throw new Error('Redis public-event transport role does not match handler');
       }
+      started = true;
+      connectionRun = connectUntilReady(topic, onMessage);
     },
     publish: async (topic, message) => {
-      await publisher.publish(topic, message);
+      if (role !== 'publisher') {
+        throw new Error('Subscriber transport cannot publish');
+      }
+      await client.publish(topic, message);
     },
     close: async () => {
       if (closing) return;
       closing = true;
-      await Promise.all([closeClient(subscriber), closeClient(publisher)]);
-      await Promise.allSettled(
-        [publisherRun, subscriberRun].filter(
-          (run): run is Promise<void> => run !== undefined,
-        ),
-      );
+      subscriptionReady = false;
+      if (client.isOpen) {
+        if (client.isReady) {
+          try {
+            await client.close();
+          } catch {
+            client.destroy();
+          }
+        } else {
+          client.destroy();
+        }
+      }
+      if (connectionRun !== undefined) {
+        await Promise.allSettled([connectionRun]);
+      }
     },
   };
 }
 
-/** Creates and starts a non-blocking Redis event plane, or a no-op when absent. */
-export function createNodeRedisPublicEventPlane(
-  options: NodeRedisPublicEventPlaneOptions,
-): PublicEventPlane {
+export function createNodeRedisIndexedEventPublisher(
+  options: NodeRedisPublicEventOptions,
+): IndexedEventPublisher {
   const url = options.url?.trim();
-  if (!url) return createDisabledPublicEventPlane();
+  if (!url) return createDisabledIndexedEventPublisher();
   const plane = new RedisPublicEventPlane({
+    role: 'publisher',
     deployment: options.deployment,
-    transport: createNodeRedisPublicEventTransport(url),
-    ...(options.handlers === undefined ? {} : { handlers: options.handlers }),
-    ...(options.producerId === undefined ? {} : { producerId: options.producerId }),
+    transport: createNodeRedisPublicEventTransport(url, 'publisher'),
+  });
+  plane.start();
+  return plane;
+}
+
+export function createNodeRedisIndexedEventSubscriber(
+  options: NodeRedisSubscriberOptions,
+): IndexedEventSubscriber {
+  const url = options.url?.trim();
+  if (!url) return createDisabledIndexedEventSubscriber();
+  if (options.onIndexedBatch === undefined) {
+    throw new Error('Indexed-event subscriber requires a handler');
+  }
+  const plane = new RedisPublicEventPlane({
+    role: 'subscriber',
+    deployment: options.deployment,
+    transport: createNodeRedisPublicEventTransport(url, 'subscriber'),
+    onIndexedBatch: options.onIndexedBatch,
   });
   plane.start();
   return plane;

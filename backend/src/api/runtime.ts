@@ -1,8 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
-import type { FastifyInstance } from 'fastify';
 
 import type { PublicJsonReadCache } from '../cache/public-json.js';
-import type { PublicEventPlane } from '../events/public-plane.js';
+import type { IndexedEventSubscriber } from '../events/public-plane.js';
 
 export function waitForAbort(signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
@@ -13,8 +12,8 @@ export function waitForAbort(signal: AbortSignal): Promise<void> {
 
 /** Close every standalone API resource even when an earlier close reports failure. */
 export async function closeApiRuntime(resources: {
-  app: Pick<FastifyInstance, 'close'>;
-  publicEventPlane: Pick<PublicEventPlane, 'close'>;
+  app: { close(): Promise<void> };
+  publicEventPlane: Pick<IndexedEventSubscriber, 'close'>;
   publicReadCache: Pick<PublicJsonReadCache, 'close'>;
   prisma: Pick<PrismaClient, '$disconnect'>;
 }): Promise<void> {

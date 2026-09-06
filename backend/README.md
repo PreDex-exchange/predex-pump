@@ -34,12 +34,12 @@ pnpm indexer
 ```
 
 `pnpm api` contains only REST, WebSocket delivery, dedup/truth reads, and the public read cache; it
-does not run the indexer or operator. The indexer invalidates the Redis market-cache epoch after
-each committed batch and publishes that batch on one deployment-scoped Pub/Sub topic. API order
-placement/withdrawal is delivered to local sockets first, then published best-effort for another
-API process. Pub/Sub has no replay or delivery acknowledgement: reconnecting clients still refetch
-authoritative Postgres state, and Redis degradation is reported under `/health.publicEvents`
-without changing core health `ok`.
+does not run the indexer or operator. The standalone indexer invalidates the Redis market-cache
+epoch after each committed batch and publishes that batch on one deployment-scoped Pub/Sub topic;
+the standalone API subscribes and projects it onto its worker-local WebSocket bus. `pnpm start`
+keeps its indexer-to-WebSocket handoff local and does not join that topic. Pub/Sub has no replay or
+delivery acknowledgement: reconnecting clients still refetch authoritative Postgres state, and
+Redis degradation is reported under `/health.publicEvents` without changing core health `ok`.
 
 `pnpm dev` runs the same entrypoint under the `tsx` file watcher. Useful one-shot and inspection
 commands:
