@@ -71,6 +71,16 @@ interface PricesQuerystring {
   limit?: string;
 }
 
+interface OrderBookQuerystring {
+  orderLimitPerSide?: string;
+}
+
+interface AccountQuerystring {
+  marketId?: string;
+  positionsLimit?: string;
+  positionsCursor?: string;
+}
+
 interface ActivityQuerystring {
   marketId?: string;
   account?: string;
@@ -95,6 +105,8 @@ interface AccountParams {
 }
 
 export const MARKETS_CACHE_NAMESPACE = 'markets';
+export const MAX_ORDER_LIMIT_PER_SIDE = 100;
+export const MAX_ACCOUNT_POSITIONS_LIMIT = 200;
 
 function parseDedupQuestion(body: unknown): string {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
@@ -207,11 +219,26 @@ export function registerRestRoutes(
     },
   );
 
-  app.get<{ Params: IdParams }>(
+  app.get<{ Params: IdParams; Querystring: OrderBookQuerystring }>(
     routes.marketBook(':id'),
     async (request): Promise<MarketBookResponse> => {
       const marketId = parseDecimalId('market id', request.params.id);
-      const response = await getMarketBook(prisma, marketId);
+      const orderLimitPerSide =
+        request.query.orderLimitPerSide === undefined ||
+        request.query.orderLimitPerSide === ''
+          ? undefined
+          : parsePositiveInteger(
+              'orderLimitPerSide',
+              request.query.orderLimitPerSide,
+              20,
+              MAX_ORDER_LIMIT_PER_SIDE,
+            );
+      const response = await getMarketBook(
+        prisma,
+        marketId,
+        undefined,
+        orderLimitPerSide,
+      );
       if (response === null) throw notFound(`Market ${marketId} was not found`);
       return response;
     },
@@ -232,11 +259,26 @@ export function registerRestRoutes(
     },
   );
 
-  app.get<{ Params: TokenParams }>(
+  app.get<{ Params: TokenParams; Querystring: OrderBookQuerystring }>(
     routes.orderbook(':tokenId'),
     async (request): Promise<OrderBookResponse> => {
       const tokenId = parseDecimalId('token id', request.params.tokenId);
-      const response = await getOrderBook(prisma, tokenId);
+      const orderLimitPerSide =
+        request.query.orderLimitPerSide === undefined ||
+        request.query.orderLimitPerSide === ''
+          ? undefined
+          : parsePositiveInteger(
+              'orderLimitPerSide',
+              request.query.orderLimitPerSide,
+              20,
+              MAX_ORDER_LIMIT_PER_SIDE,
+            );
+      const response = await getOrderBook(
+        prisma,
+        tokenId,
+        undefined,
+        orderLimitPerSide,
+      );
       if (response === null) throw notFound(`Token ${tokenId} was not found`);
       return response;
     },
@@ -296,10 +338,39 @@ export function registerRestRoutes(
     },
   );
 
-  app.get<{ Params: AccountParams }>(
+  app.get<{ Params: AccountParams; Querystring: AccountQuerystring }>(
     routes.account(':addr'),
-    async (request): Promise<AccountResponse> =>
-      getAccount(prisma, parseAddress('account address', request.params.addr)),
+    async (request): Promise<AccountResponse> => {
+      const rawMarketId = parseOptionalString(request.query.marketId);
+      const marketId =
+        rawMarketId === undefined
+          ? undefined
+          : parseDecimalId('marketId', rawMarketId);
+      const positionsCursor = parseOptionalString(
+        request.query.positionsCursor,
+      );
+      const positionsLimit =
+        request.query.positionsLimit === undefined ||
+        request.query.positionsLimit === ''
+          ? positionsCursor === undefined
+            ? undefined
+            : 100
+          : parsePositiveInteger(
+              'positionsLimit',
+              request.query.positionsLimit,
+              100,
+              MAX_ACCOUNT_POSITIONS_LIMIT,
+            );
+      return getAccount(
+        prisma,
+        parseAddress('account address', request.params.addr),
+        {
+          ...(marketId === undefined ? {} : { marketId }),
+          ...(positionsLimit === undefined ? {} : { positionsLimit }),
+          ...(positionsCursor === undefined ? {} : { positionsCursor }),
+        },
+      );
+    },
   );
 
   app.get<{ Params: AccountParams }>(

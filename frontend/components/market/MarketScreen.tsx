@@ -63,7 +63,7 @@ export function MarketScreen({ marketId }: { marketId: string }) {
     error: bookError,
     refetch: refetchBook,
   } = useOrderBook(marketId);
-  const { data: account } = useIndexedAccount(address);
+  const { data: account } = useIndexedAccount(address, { marketId });
   const {
     data: accountProfile,
     isLoading: profileLoading,

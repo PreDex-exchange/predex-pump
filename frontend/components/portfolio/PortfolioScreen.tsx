@@ -21,10 +21,10 @@ import { StatePanel } from '@/components/ui/StatePanel';
 import { TxStatus } from '@/components/ui/TxStatus';
 import { useAuth } from '@/components/providers/AuthProvider';
 import {
-  useAccount as useIndexedAccount,
   useActivity,
   useMarkets,
   useMyOrders,
+  usePaginatedAccount,
 } from '@/lib/api/hooks';
 import { arcTestnet } from '@/lib/chain/arc';
 import { cancelOrderOnArc } from '@/lib/chain/transactions';
@@ -126,7 +126,11 @@ export function PortfolioScreen() {
     isLoading: accountLoading,
     error: accountError,
     refetch: refetchAccount,
-  } = useIndexedAccount(address);
+    isLoadingMore: positionsLoadingMore,
+    loadMoreError: positionsLoadMoreError,
+    hasNextPage: hasMorePositions,
+    loadMore: loadMorePositions,
+  } = usePaginatedAccount(address, { positionsLimit: 100 });
   const {
     data: marketsPage,
     isLoading: marketsLoading,
@@ -744,10 +748,14 @@ export function PortfolioScreen() {
                 Explore the feed
               </Link>
             }
-            message="This account holds no indexed outcome-token positions. Open orders, if any, remain listed above."
+            message={
+              hasMorePositions
+                ? 'No open positions appear in the loaded page. Load more to check the remaining indexed positions.'
+                : 'This account holds no indexed outcome-token positions. Open orders, if any, remain listed above.'
+            }
             showMascot={false}
             state="empty"
-            title="No open positions"
+            title={hasMorePositions ? 'No open positions shown yet' : 'No open positions'}
           />
         ) : (
           <Card className={styles.tableCard} padded={false} quiet>
@@ -807,6 +815,31 @@ export function PortfolioScreen() {
               </tbody>
             </table>
           </Card>
+        )}
+        {(hasMorePositions || positionsLoadingMore || positionsLoadMoreError) && (
+          <div className={styles.inlineState}>
+            <p role={positionsLoadMoreError ? 'alert' : 'status'}>
+              {positionsLoadMoreError
+                ? 'More positions could not be loaded. Positions already shown remain available.'
+                : positionsLoadingMore
+                  ? 'Loading the next page of indexed positions…'
+                  : 'More indexed positions are available.'}
+            </p>
+            {hasMorePositions && (
+              <Button
+                disabled={positionsLoadingMore}
+                onClick={loadMorePositions}
+                size="small"
+                variant="neutral"
+              >
+                {positionsLoadMoreError
+                  ? 'Try loading more positions'
+                  : positionsLoadingMore
+                    ? 'Loading more positions…'
+                    : 'Load more positions'}
+              </Button>
+            )}
+          </div>
         )}
       </section>
 

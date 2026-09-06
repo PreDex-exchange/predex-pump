@@ -179,6 +179,41 @@ describe('PredexRestClient Hybrid order methods', () => {
   });
 });
 
+describe('PredexRestClient bounded read methods', () => {
+  it('encodes optional book/account bounds and preserves legacy paths', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () =>
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const client = createRestClient({
+      baseUrl: 'http://predex.test',
+      fetch: fetchMock,
+    });
+
+    await client.getOrderBook('1', { orderLimitPerSide: 20 });
+    await client.getTokenOrderBook('101', { orderLimitPerSide: 20 });
+    await client.getAccount(`0x${'34'.repeat(20)}`, {
+      marketId: '1',
+      positionsLimit: 100,
+      positionsCursor: 'next-page',
+    });
+    await client.getOrderBook('1');
+    await client.getTokenOrderBook('101');
+    await client.getAccount(`0x${'34'.repeat(20)}`);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://predex.test/markets/1/book?orderLimitPerSide=20',
+      'http://predex.test/orderbook/101?orderLimitPerSide=20',
+      `http://predex.test/accounts/0x${'34'.repeat(20)}?marketId=1&positionsLimit=100&positionsCursor=next-page`,
+      'http://predex.test/markets/1/book',
+      'http://predex.test/orderbook/101',
+      `http://predex.test/accounts/0x${'34'.repeat(20)}`,
+    ]);
+  });
+});
+
 describe('PredexRestClient SIWE methods', () => {
   it('returns the HttpOnly session cookie from verification for headless callers', async () => {
     const nonce: SiweNonceResponse = {

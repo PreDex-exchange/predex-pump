@@ -86,6 +86,31 @@ afterEach(() => {
 });
 
 describe('browser fetch failure copy', () => {
+  it('serializes bounded book and filtered account queries exactly', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({}), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const address = `0x${'12'.repeat(20)}`;
+
+    await backendRestClient.getOrderBook('17', { orderLimitPerSide: 20 });
+    await backendRestClient.getTokenOrderBook('23', { orderLimitPerSide: 20 });
+    await backendRestClient.getAccount(address, {
+      marketId: '7',
+      positionsLimit: 100,
+      positionsCursor: 'cursor+/=',
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'http://localhost:3001/markets/17/book?orderLimitPerSide=20',
+      'http://localhost:3001/orderbook/23?orderLimitPerSide=20',
+      `http://localhost:3001/accounts/${address}?marketId=7&positionsLimit=100&positionsCursor=cursor%2B%2F%3D`,
+    ]);
+  });
+
   it('returns a null market for a genuine HTTP 404 response', async () => {
     vi.stubGlobal(
       'fetch',

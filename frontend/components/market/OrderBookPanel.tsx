@@ -786,8 +786,18 @@ function MiniClobOrderBookPanel({
                   : 'Open escrow records retained only for maker cancellation'}
               </p>
             </div>
-            <span className="numeric">{restingOrders.length} open</span>
+            <span className="numeric">
+              {restingOrders.length}{' '}
+              {tradingOpen && book.orderWindow ? 'shown' : 'open'}
+            </span>
           </div>
+          {tradingOpen && book.orderWindow?.orders.truncated && (
+            <p className={styles.resolvedNotice} role="status">
+              Showing the best {book.orderWindow.limitPerSide} on-chain orders
+              per side. Deeper MiniCLOB liquidity exists beyond this ladder and
+              list.
+            </p>
+          )}
           {!tradingOpen && (
             <p className={styles.resolvedNotice} role="status">
               Trading closed. This MiniCLOB book is historical. New orders and

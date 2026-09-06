@@ -73,6 +73,15 @@ export type VenueTransition =
   | { state: 'FAILED'; failureCode: string | null };
 
 // GET /markets/:id/book → a lifecycle-aware venue and both outcome snapshots.
+export interface OrderBookQuery {
+  /**
+   * Optional best-price/time top-of-book window, applied per side; max 100.
+   * Its levels and complete order DTOs cover only that visible window.
+   * Ended MiniCLOB market books ignore it so every cancellable escrow row remains reachable.
+   */
+  orderLimitPerSide?: number;
+}
+
 export type MarketBookResponse = MarketBookResponseBase &
   (
     | {
@@ -196,6 +205,16 @@ export interface AccountResponse {
   positions: Position[];
   recentTrades: Trade[];
   pnl: Pnl;
+  /** Present only for a bounded positions request. */
+  positionsNextCursor?: Cursor | null;
+}
+
+export interface AccountQuery {
+  /** Restrict positions to one market while account/PnL totals stay account-wide. */
+  marketId?: string;
+  /** Optional position page size. The product page uses 100; the API maximum is 200. */
+  positionsLimit?: number;
+  positionsCursor?: Cursor;
 }
 
 // POST /auth/siwe/nonce

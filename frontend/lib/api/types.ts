@@ -1,4 +1,5 @@
 import type {
+  AccountQuery,
   AccountResponse,
   AccountProfileResponse,
   ActivityQuery,
@@ -17,6 +18,7 @@ import type {
   IngestOrderResponse,
   MakerOrdersResponse,
   OrderBookResponse,
+  OrderBookQuery,
   PriceHistoryQuery,
   PriceHistoryResponse,
   RecordAccountBehaviorRequest,
@@ -33,8 +35,11 @@ export interface ApiClient {
   listMarkets(query?: ListMarketsQuery): Promise<ListMarketsResponse>;
   dedupCheck(input: DedupCheckRequest): Promise<DedupCheckResponse>;
   getMarket(id: string): Promise<MarketDetailResponse | null>;
-  getAccount(address: string): Promise<AccountResponse>;
-  getOrderBook(marketId: string): Promise<MarketBookResponse>;
+  getAccount(address: string, query?: AccountQuery): Promise<AccountResponse>;
+  getOrderBook(
+    marketId: string,
+    query?: OrderBookQuery,
+  ): Promise<MarketBookResponse>;
   getActivity(query?: ActivityQuery): Promise<ActivityResponse>;
   getConfig(): Promise<ConfigResponse>;
   getPriceHistory(
@@ -44,7 +49,10 @@ export interface ApiClient {
 }
 
 export interface BackendApiClient extends ApiClient {
-  getTokenOrderBook(tokenId: string): Promise<OrderBookResponse>;
+  getTokenOrderBook(
+    tokenId: string,
+    query?: OrderBookQuery,
+  ): Promise<OrderBookResponse>;
   getExchangeApprovals(
     address: string,
   ): Promise<ExchangeApprovalStateResponse>;

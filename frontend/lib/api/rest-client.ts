@@ -1,4 +1,5 @@
 import type {
+  AccountQuery,
   AccountResponse,
   AccountProfileResponse,
   ActivityQuery,
@@ -16,6 +17,7 @@ import type {
   MarketBookResponse,
   MarketDetailResponse,
   OrderBookResponse,
+  OrderBookQuery,
   PriceHistoryQuery,
   PriceHistoryResponse,
   RecordAccountBehaviorRequest,
@@ -263,8 +265,17 @@ export const backendRestClient: BackendApiClient = {
     });
   },
 
-  getAccount(address: string): Promise<AccountResponse> {
-    return request(routes.account(encodeURIComponent(address)));
+  getAccount(
+    address: string,
+    query: AccountQuery = {},
+  ): Promise<AccountResponse> {
+    return request(
+      withQuery(routes.account(encodeURIComponent(address)), {
+        marketId: query.marketId,
+        positionsLimit: query.positionsLimit,
+        positionsCursor: query.positionsCursor,
+      }),
+    );
   },
 
   getExchangeApprovals(
@@ -289,12 +300,26 @@ export const backendRestClient: BackendApiClient = {
     });
   },
 
-  getOrderBook(marketId: string): Promise<MarketBookResponse> {
-    return request(routes.marketBook(encodeURIComponent(marketId)));
+  getOrderBook(
+    marketId: string,
+    query: OrderBookQuery = {},
+  ): Promise<MarketBookResponse> {
+    return request(
+      withQuery(routes.marketBook(encodeURIComponent(marketId)), {
+        orderLimitPerSide: query.orderLimitPerSide,
+      }),
+    );
   },
 
-  getTokenOrderBook(tokenId: string): Promise<OrderBookResponse> {
-    return request(routes.orderbook(encodeURIComponent(tokenId)));
+  getTokenOrderBook(
+    tokenId: string,
+    query: OrderBookQuery = {},
+  ): Promise<OrderBookResponse> {
+    return request(
+      withQuery(routes.orderbook(encodeURIComponent(tokenId)), {
+        orderLimitPerSide: query.orderLimitPerSide,
+      }),
+    );
   },
 
   getActivity(query: ActivityQuery = {}): Promise<ActivityResponse> {

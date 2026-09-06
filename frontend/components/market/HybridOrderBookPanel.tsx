@@ -1165,9 +1165,20 @@ export function HybridOrderBookPanel({
             </div>
             <span className="numeric">
               {book.offchainOrders.length}{' '}
-              {tradingOpen ? 'fillable' : 'historical'}
+              {tradingOpen
+                ? book.orderWindow
+                  ? 'shown'
+                  : 'fillable'
+                : 'historical'}
             </span>
           </div>
+          {tradingOpen && book.orderWindow?.offchainOrders.truncated && (
+            <p className={styles.withdrawWarning} role="status">
+              Showing the best {book.orderWindow.limitPerSide} signed orders
+              per side. Deeper Hybrid liquidity exists beyond this ladder and
+              list.
+            </p>
+          )}
           <div className={styles.orderTable}>
             <div className={`${styles.orderRow} ${styles.orderHead}`}>
               <span>Order</span>

@@ -12,6 +12,7 @@ import type {
   MarketBookResponse,
   MarketDetailResponse,
   OrderBook,
+  OrderBookWindow,
   OrderBookResponse,
   PriceHistoryResponse,
   ReadCacheHealth,
@@ -22,6 +23,7 @@ import {
   type Fill as DbFill,
   type Market as DbMarket,
   type PrismaClient,
+  type SignedOrder as DbSignedOrder,
 } from '@prisma/client';
 
 import { DEFAULT_INDEXER_STALL_MS } from '../config.js';
@@ -30,7 +32,14 @@ import {
   inspectChainStateRows,
   inspectPersistedChainState,
 } from '../indexer/chain-state-bootstrap.js';
-import { findFillableSignedOrders } from '../orderbook/fillability.js';
+import {
+  ACTIVE_ORDER_STATUSES,
+  fillabilityForOrders,
+  findActiveSignedOrderBookRows,
+  findFillableSignedOrders,
+  type PreloadedFillabilityMarketState,
+  type SignedOrderBookRow,
+} from '../orderbook/fillability.js';
 import { toOffchainOrderDto } from '../orderbook/order.js';
 
 import {
@@ -50,8 +59,10 @@ import {
 import {
   decodeActivityCursor,
   decodeMarketCursor,
+  decodePositionCursor,
   encodeActivityCursor,
   encodeMarketCursor,
+  encodePositionCursor,
 } from './input.js';
 import { deriveTruthSignal } from './truth.js';
 
@@ -123,6 +134,19 @@ const ORDER_SELECT = {
   createdAt: true,
   updatedAt: true,
 } as const satisfies Prisma.OrderSelect;
+
+const ORDER_BOOK_SELECT = {
+  orderId: true,
+  tokenId: true,
+  side: true,
+  priceRaw: true,
+  remainingRaw: true,
+  createdAt: true,
+} as const satisfies Prisma.OrderSelect;
+
+type OrderBookRow = Prisma.OrderGetPayload<{
+  select: typeof ORDER_BOOK_SELECT;
+}>;
 
 const POSITION_SELECT = {
   account: true,
@@ -322,9 +346,132 @@ function compareRaw(left: string, right: string): number {
 }
 
 interface LevelOrder {
+  tokenId: string;
   side: string;
   priceRaw: string;
   remainingRaw: string;
+}
+
+interface PriceTimeOrder extends LevelOrder {
+  createdAt: number;
+}
+
+function comparePriceTime<T extends PriceTimeOrder>(
+  left: T,
+  right: T,
+  identity: (row: T) => string,
+  identityKind: 'DECIMAL' | 'LEXICAL',
+): number {
+  if (left.side !== right.side) return left.side === 'BID' ? -1 : 1;
+  const priceOrder = compareRaw(left.priceRaw, right.priceRaw);
+  if (priceOrder !== 0) {
+    return left.side === 'BID' ? -priceOrder : priceOrder;
+  }
+  if (left.createdAt !== right.createdAt) {
+    return left.createdAt - right.createdAt;
+  }
+  return identityKind === 'DECIMAL'
+    ? compareRaw(identity(left), identity(right))
+    : identity(left).localeCompare(identity(right));
+}
+
+interface BoundedBookRows<T> {
+  visible: T[];
+  truncatedTokenIds: Set<string>;
+}
+
+function sortedPriceTimeGroups<T extends PriceTimeOrder>(
+  rows: readonly T[],
+  identity: (row: T) => string,
+  identityKind: 'DECIMAL' | 'LEXICAL',
+): T[][] {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = `${row.tokenId}:${row.side}`;
+    const group = groups.get(key) ?? [];
+    group.push(row);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) =>
+    group.sort((left, right) =>
+      comparePriceTime(left, right, identity, identityKind),
+    ),
+  );
+}
+
+function boundedBestRows<T extends PriceTimeOrder>(
+  rows: readonly T[],
+  limitPerSide: number,
+  identity: (row: T) => string,
+  identityKind: 'DECIMAL' | 'LEXICAL',
+): BoundedBookRows<T> {
+  const visible: T[] = [];
+  const truncatedTokenIds = new Set<string>();
+  for (const group of sortedPriceTimeGroups(rows, identity, identityKind)) {
+    visible.push(...group.slice(0, limitPerSide));
+    const tokenId = group[0]?.tokenId;
+    if (tokenId !== undefined && group.length > limitPerSide) {
+      truncatedTokenIds.add(tokenId);
+    }
+  }
+  return { visible, truncatedTokenIds };
+}
+
+async function boundedFillableSignedRows(
+  prisma: Prisma.TransactionClient,
+  rows: readonly SignedOrderBookRow[],
+  orderLimitPerSide: number,
+  now: number,
+  preloadedMarketStates: readonly PreloadedFillabilityMarketState[],
+): Promise<BoundedBookRows<SignedOrderBookRow>> {
+  const groups = sortedPriceTimeGroups(
+    rows,
+    (row) => row.orderHash,
+    'LEXICAL',
+  ).map((group) => ({ group, next: 0, fillable: [] as SignedOrderBookRow[] }));
+  const batchSize = orderLimitPerSide + 1;
+
+  while (true) {
+    const batches = groups.flatMap((state) => {
+      if (
+        state.fillable.length >= batchSize ||
+        state.next >= state.group.length
+      ) {
+        return [];
+      }
+      const candidates = state.group.slice(state.next, state.next + batchSize);
+      state.next += candidates.length;
+      return [{ state, candidates }];
+    });
+    if (batches.length === 0) break;
+    const fillability = await fillabilityForOrders(
+      prisma,
+      batches.flatMap(({ candidates }) => candidates),
+      now,
+      preloadedMarketStates,
+    );
+    for (const { state, candidates } of batches) {
+      for (const candidate of candidates) {
+        if (
+          state.fillable.length < batchSize &&
+          fillability.get(candidate.orderHash)?.fillable === true
+        ) {
+          state.fillable.push(candidate);
+        }
+      }
+    }
+  }
+
+  const visible: SignedOrderBookRow[] = [];
+  const truncatedTokenIds = new Set<string>();
+  for (const state of groups) {
+    visible.push(...state.fillable.slice(0, orderLimitPerSide));
+    const tokenId = state.group[0]?.tokenId;
+    if (tokenId !== undefined && state.fillable.length > orderLimitPerSide) {
+      truncatedTokenIds.add(tokenId);
+    }
+  }
+  return { visible, truncatedTokenIds };
 }
 
 function buildLevels(orders: readonly LevelOrder[], side: 'BID' | 'ASK') {
@@ -356,42 +503,44 @@ function buildOrderBook(
   minimumTickSizeRaw: string,
   outcome: 'YES' | 'NO',
   tokenId: string,
-  rows: readonly OrderDtoRow[],
-  signedRows: readonly import('@prisma/client').SignedOrder[],
-  managementRows: readonly OrderDtoRow[] = rows,
+  levelOrders: readonly LevelOrder[],
+  levelSignedOrders: readonly LevelOrder[],
+  wireOrders: readonly OrderDtoRow[],
+  wireSignedOrders: readonly DbSignedOrder[],
+  orderLimitPerSide?: number,
+  truncatedOrderTokenIds: ReadonlySet<string> = new Set(),
+  truncatedSignedTokenIds: ReadonlySet<string> = new Set(),
 ): OrderBook {
-  const activeOrders = rows
+  const activeOrders = levelOrders.filter((row) => row.tokenId === tokenId);
+  const orders = wireOrders
     .filter((row) => row.tokenId === tokenId)
-    .sort((left, right) => {
-      if (left.side !== right.side) return left.side === 'BID' ? -1 : 1;
-      const priceOrder = compareRaw(left.priceRaw, right.priceRaw);
-      if (priceOrder !== 0) {
-        return left.side === 'BID' ? -priceOrder : priceOrder;
-      }
-      return left.createdAt - right.createdAt || left.orderId.localeCompare(right.orderId);
-    });
-  const orders = managementRows
+    .sort((left, right) =>
+      comparePriceTime(left, right, (row) => row.orderId, 'DECIMAL'),
+    );
+  const activeSignedOrders = levelSignedOrders.filter(
+    (row) => row.tokenId === tokenId,
+  );
+  const offchainOrders = wireSignedOrders
     .filter((row) => row.tokenId === tokenId)
-    .sort((left, right) => {
-      if (left.side !== right.side) return left.side === 'BID' ? -1 : 1;
-      const priceOrder = compareRaw(left.priceRaw, right.priceRaw);
-      if (priceOrder !== 0) {
-        return left.side === 'BID' ? -priceOrder : priceOrder;
-      }
-      return left.createdAt - right.createdAt || left.orderId.localeCompare(right.orderId);
-    });
-  const offchainOrders = signedRows
-    .filter((row) => row.tokenId === tokenId)
-    .sort((left, right) => {
-      if (left.side !== right.side) return left.side === 'BID' ? -1 : 1;
-      const priceOrder = compareRaw(left.priceRaw, right.priceRaw);
-      if (priceOrder !== 0) {
-        return left.side === 'BID' ? -priceOrder : priceOrder;
-      }
-      return left.createdAt - right.createdAt || left.orderHash.localeCompare(right.orderHash);
-    });
-  const bids = buildLevels([...activeOrders, ...offchainOrders], 'BID');
-  const asks = buildLevels([...activeOrders, ...offchainOrders], 'ASK');
+    .sort((left, right) =>
+      comparePriceTime(left, right, (row) => row.orderHash, 'LEXICAL'),
+    );
+  const bids = buildLevels([...activeOrders, ...activeSignedOrders], 'BID');
+  const asks = buildLevels([...activeOrders, ...activeSignedOrders], 'ASK');
+  const orderWindow: OrderBookWindow | undefined =
+    orderLimitPerSide === undefined
+      ? undefined
+      : {
+          limitPerSide: orderLimitPerSide,
+          orders: {
+            returned: orders.length,
+            truncated: truncatedOrderTokenIds.has(tokenId),
+          },
+          offchainOrders: {
+            returned: offchainOrders.length,
+            truncated: truncatedSignedTokenIds.has(tokenId),
+          },
+        };
   return {
     marketId,
     minimumTickSizeRaw,
@@ -405,13 +554,42 @@ function buildOrderBook(
     offchainOrders: offchainOrders.map((order) =>
       toOffchainOrderDto(order, { fillable: true, reason: null }),
     ),
+    ...(orderWindow === undefined ? {} : { orderWindow }),
   };
 }
 
-export async function getMarketBook(
-  prisma: PrismaClient,
+async function hydrateBoundedMiniOrders(
+  prisma: Prisma.TransactionClient,
+  rows: readonly OrderBookRow[],
+): Promise<OrderDtoRow[]> {
+  const orderIds = rows.map((row) => row.orderId);
+  if (orderIds.length === 0) return [];
+  return prisma.order.findMany({
+    where: { orderId: { in: orderIds }, open: true },
+    select: ORDER_SELECT,
+  });
+}
+
+async function hydrateBoundedSignedOrders(
+  prisma: Prisma.TransactionClient,
+  rows: readonly SignedOrderBookRow[],
+): Promise<DbSignedOrder[]> {
+  const orderHashes = rows.map((row) => row.orderHash);
+  if (orderHashes.length === 0) return [];
+  return prisma.signedOrder.findMany({
+    where: {
+      orderHash: { in: orderHashes },
+      status: { in: [...ACTIVE_ORDER_STATUSES] },
+      withdrawnAt: null,
+    },
+  });
+}
+
+async function getMarketBookSnapshot(
+  prisma: Prisma.TransactionClient,
   marketId: string,
   now = Math.floor(Date.now() / 1_000),
+  orderLimitPerSide?: number,
 ): Promise<MarketBookResponse | null> {
   const market = await prisma.market.findUnique({
     where: { id: marketId },
@@ -456,6 +634,9 @@ export async function getMarketBook(
         market.yesTokenId ?? '',
         [],
         [],
+        [],
+        [],
+        orderLimitPerSide,
       ),
       no: buildOrderBook(
         marketId,
@@ -464,6 +645,9 @@ export async function getMarketBook(
         market.noTokenId ?? '',
         [],
         [],
+        [],
+        [],
+        orderLimitPerSide,
       ),
     };
   }
@@ -493,6 +677,9 @@ export async function getMarketBook(
         market.yesTokenId ?? '',
         [],
         [],
+        [],
+        [],
+        orderLimitPerSide,
       ),
       no: buildOrderBook(
         marketId,
@@ -501,32 +688,83 @@ export async function getMarketBook(
         market.noTokenId ?? '',
         [],
         [],
+        [],
+        [],
+        orderLimitPerSide,
       ),
     };
   }
 
   const liveVenue =
     market.bookMigration?.status === 'MIGRATED' ? 'HYBRID' : 'MINICLOB';
-  const [liveMiniClobOrders, liveSignedOrders] =
-    liveVenue === 'HYBRID'
-      ? [
-          [],
-          tradingOpen
-            ? await findFillableSignedOrders(
-                prisma,
-                { marketId },
-                now,
-              )
-            : [],
-        ]
-      : [
-          await prisma.order.findMany({
-            where: { marketId, open: true },
-            select: ORDER_SELECT,
-          }),
-          [],
-        ];
-  const activeMiniClobOrders = tradingOpen ? liveMiniClobOrders : [];
+  const responseOrderLimitPerSide =
+    liveVenue === 'MINICLOB' && !tradingOpen
+      ? undefined
+      : orderLimitPerSide;
+  const fillabilityMarketStates = [
+    {
+      id: market.id,
+      tradingEndsAt: market.tradingEndsAt,
+      resolvedAt: market.resolvedAt,
+    },
+  ];
+  let miniLevelRows: readonly LevelOrder[] = [];
+  let miniWireRows: OrderDtoRow[] = [];
+  let truncatedMiniTokenIds: ReadonlySet<string> = new Set();
+  let signedLevelRows: readonly LevelOrder[] = [];
+  let signedWireRows: DbSignedOrder[] = [];
+  let truncatedSignedTokenIds: ReadonlySet<string> = new Set();
+  if (liveVenue === 'HYBRID' && tradingOpen) {
+    if (orderLimitPerSide === undefined) {
+      const rows = await findFillableSignedOrders(prisma, { marketId }, now);
+      signedLevelRows = rows;
+      signedWireRows = rows;
+    } else {
+      const candidates = await findActiveSignedOrderBookRows(
+        prisma,
+        { marketId },
+      );
+      const window = await boundedFillableSignedRows(
+        prisma,
+        candidates,
+        orderLimitPerSide,
+        now,
+        fillabilityMarketStates,
+      );
+      signedLevelRows = window.visible;
+      truncatedSignedTokenIds = window.truncatedTokenIds;
+      signedWireRows = await hydrateBoundedSignedOrders(
+        prisma,
+        window.visible,
+      );
+    }
+  } else if (liveVenue === 'MINICLOB') {
+    if (orderLimitPerSide === undefined || !tradingOpen) {
+      const rows = await prisma.order.findMany({
+        where: { marketId, open: true },
+        select: ORDER_SELECT,
+      });
+      miniLevelRows = tradingOpen ? rows : [];
+      miniWireRows = rows;
+    } else {
+      const rows = await prisma.order.findMany({
+        where: { marketId, open: true },
+        select: ORDER_BOOK_SELECT,
+      });
+      const window = boundedBestRows(
+        rows,
+        orderLimitPerSide,
+        (row) => row.orderId,
+        'DECIMAL',
+      );
+      miniLevelRows = window.visible;
+      truncatedMiniTokenIds = window.truncatedTokenIds;
+      miniWireRows = await hydrateBoundedMiniOrders(
+        prisma,
+        window.visible,
+      );
+    }
+  }
   return {
     marketId,
     tradingOpen,
@@ -539,26 +777,57 @@ export async function getMarketBook(
       market.minimumTickSizeRaw,
       'YES',
       market.yesTokenId ?? '',
-      activeMiniClobOrders,
-      liveSignedOrders,
-      liveVenue === 'MINICLOB' ? liveMiniClobOrders : activeMiniClobOrders,
+      miniLevelRows,
+      signedLevelRows,
+      miniWireRows,
+      signedWireRows,
+      responseOrderLimitPerSide,
+      truncatedMiniTokenIds,
+      truncatedSignedTokenIds,
     ),
     no: buildOrderBook(
       marketId,
       market.minimumTickSizeRaw,
       'NO',
       market.noTokenId ?? '',
-      activeMiniClobOrders,
-      liveSignedOrders,
-      liveVenue === 'MINICLOB' ? liveMiniClobOrders : activeMiniClobOrders,
+      miniLevelRows,
+      signedLevelRows,
+      miniWireRows,
+      signedWireRows,
+      responseOrderLimitPerSide,
+      truncatedMiniTokenIds,
+      truncatedSignedTokenIds,
     ),
   };
 }
 
-export async function getOrderBook(
+export async function getMarketBook(
   prisma: PrismaClient,
+  marketId: string,
+  now = Math.floor(Date.now() / 1_000),
+  orderLimitPerSide?: number,
+): Promise<MarketBookResponse | null> {
+  if (orderLimitPerSide === undefined) {
+    return getMarketBookSnapshot(prisma, marketId, now);
+  }
+  // The visible levels and bounded full DTOs must describe one database view.
+  return prisma.$transaction(
+    (transaction) =>
+      getMarketBookSnapshot(
+        transaction,
+        marketId,
+        now,
+        orderLimitPerSide,
+      ),
+    { isolationLevel: 'RepeatableRead' },
+  );
+}
+
+async function getOrderBookSnapshot(
+  prisma: Prisma.TransactionClient,
   tokenId: string,
   now = Math.floor(Date.now() / 1_000),
+  orderLimitPerSide?: number,
 ): Promise<OrderBookResponse | null> {
   const market = await prisma.market.findFirst({
     where: { OR: [{ yesTokenId: tokenId }, { noTokenId: tokenId }] },
@@ -581,27 +850,104 @@ export async function getOrderBook(
     now < market.tradingEndsAt;
   const hybrid = market.bookMigration?.status === 'MIGRATED';
   const transitioning = market.bookMigration !== null && !hybrid;
-  const orders =
-    !tradingOpen || hybrid || transitioning
-      ? []
-      : await prisma.order.findMany({
-          where: { tokenId, open: true },
-          select: ORDER_SELECT,
-        });
-  const signedOrders = hybrid && tradingOpen
-    ? await findFillableSignedOrders(
+  const fillabilityMarketStates = [
+    {
+      id: market.id,
+      tradingEndsAt: market.tradingEndsAt,
+      resolvedAt: market.resolvedAt,
+    },
+  ];
+  let miniLevelRows: readonly LevelOrder[] = [];
+  let miniWireRows: OrderDtoRow[] = [];
+  let truncatedMiniTokenIds: ReadonlySet<string> = new Set();
+  let signedLevelRows: readonly LevelOrder[] = [];
+  let signedWireRows: DbSignedOrder[] = [];
+  let truncatedSignedTokenIds: ReadonlySet<string> = new Set();
+  if (tradingOpen && !hybrid && !transitioning) {
+    if (orderLimitPerSide === undefined) {
+      const rows = await prisma.order.findMany({
+        where: { tokenId, open: true },
+        select: ORDER_SELECT,
+      });
+      miniLevelRows = rows;
+      miniWireRows = rows;
+    } else {
+      const rows = await prisma.order.findMany({
+        where: { tokenId, open: true },
+        select: ORDER_BOOK_SELECT,
+      });
+      const window = boundedBestRows(
+        rows,
+        orderLimitPerSide,
+        (row) => row.orderId,
+        'DECIMAL',
+      );
+      miniLevelRows = window.visible;
+      truncatedMiniTokenIds = window.truncatedTokenIds;
+      miniWireRows = await hydrateBoundedMiniOrders(
+        prisma,
+        window.visible,
+      );
+    }
+  } else if (hybrid && tradingOpen) {
+    if (orderLimitPerSide === undefined) {
+      const rows = await findFillableSignedOrders(prisma, { tokenId }, now);
+      signedLevelRows = rows;
+      signedWireRows = rows;
+    } else {
+      const candidates = await findActiveSignedOrderBookRows(
         prisma,
         { tokenId },
+      );
+      const window = await boundedFillableSignedRows(
+        prisma,
+        candidates,
+        orderLimitPerSide,
         now,
-      )
-    : [];
+        fillabilityMarketStates,
+      );
+      signedLevelRows = window.visible;
+      truncatedSignedTokenIds = window.truncatedTokenIds;
+      signedWireRows = await hydrateBoundedSignedOrders(
+        prisma,
+        window.visible,
+      );
+    }
+  }
   return buildOrderBook(
     market.id,
     market.minimumTickSizeRaw,
     outcome,
     tokenId,
-    hybrid ? [] : orders,
-    hybrid ? signedOrders : [],
+    miniLevelRows,
+    signedLevelRows,
+    miniWireRows,
+    signedWireRows,
+    orderLimitPerSide,
+    truncatedMiniTokenIds,
+    truncatedSignedTokenIds,
+  );
+}
+
+export async function getOrderBook(
+  prisma: PrismaClient,
+  tokenId: string,
+  now = Math.floor(Date.now() / 1_000),
+  orderLimitPerSide?: number,
+): Promise<OrderBookResponse | null> {
+  if (orderLimitPerSide === undefined) {
+    return getOrderBookSnapshot(prisma, tokenId, now);
+  }
+  // The visible levels and bounded full DTOs must describe one database view.
+  return prisma.$transaction(
+    (transaction) =>
+      getOrderBookSnapshot(
+        transaction,
+        tokenId,
+        now,
+        orderLimitPerSide,
+      ),
+    { isolationLevel: 'RepeatableRead' },
   );
 }
 
@@ -662,10 +1008,23 @@ export async function getTruthSignal(
   });
 }
 
+export interface GetAccountInput {
+  marketId?: string;
+  positionsLimit?: number;
+  positionsCursor?: string;
+}
+
 export async function getAccount(
   prisma: PrismaClient,
   accountAddress: string,
+  input: GetAccountInput = {},
 ): Promise<AccountResponse> {
+  const positionCursor =
+    input.positionsCursor === undefined
+      ? undefined
+      : decodePositionCursor(input.positionsCursor);
+  const positionsLimit =
+    input.positionsLimit ?? (positionCursor === undefined ? undefined : 100);
   const [account, positionRows, tradeRows] = await Promise.all([
     prisma.account.findUnique({
       where: { address: accountAddress },
@@ -679,9 +1038,29 @@ export async function getAccount(
       },
     }),
     prisma.position.findMany({
-      where: { account: accountAddress },
+      where: {
+        account: accountAddress,
+        ...(input.marketId === undefined ? {} : { marketId: input.marketId }),
+        ...(positionCursor === undefined
+          ? {}
+          : {
+              OR: [
+                { updatedAt: { lt: positionCursor.updatedAt } },
+                {
+                  updatedAt: positionCursor.updatedAt,
+                  marketId: { lt: positionCursor.marketId },
+                },
+                {
+                  updatedAt: positionCursor.updatedAt,
+                  marketId: positionCursor.marketId,
+                  outcome: { gt: positionCursor.outcome },
+                },
+              ],
+            }),
+      },
       select: POSITION_SELECT,
       orderBy: [{ updatedAt: 'desc' }, { marketId: 'desc' }, { outcome: 'asc' }],
+      ...(positionsLimit === undefined ? {} : { take: positionsLimit + 1 }),
     }),
     prisma.trade.findMany({
       where: { account: accountAddress },
@@ -690,7 +1069,24 @@ export async function getAccount(
       take: 50,
     }),
   ]);
-  const positions = positionRows.map(toPositionDto);
+  const hasNextPositionsPage =
+    positionsLimit !== undefined && positionRows.length > positionsLimit;
+  const positionsPage =
+    positionsLimit === undefined
+      ? positionRows
+      : positionRows.slice(0, positionsLimit);
+  const positions = positionsPage.map(toPositionDto);
+  const lastPosition = positionsPage.at(-1);
+  const positionsNextCursor =
+    positionsLimit === undefined
+      ? undefined
+      : hasNextPositionsPage && lastPosition !== undefined
+        ? encodePositionCursor({
+            updatedAt: lastPosition.updatedAt,
+            marketId: lastPosition.marketId,
+            outcome: lastPosition.outcome as 'YES' | 'NO',
+          })
+        : null;
   return {
     account:
       account === null
@@ -710,6 +1106,7 @@ export async function getAccount(
             realizedRaw: account.realizedPnlRaw,
             unrealizedRaw: account.unrealizedPnlRaw,
           },
+    ...(positionsNextCursor === undefined ? {} : { positionsNextCursor }),
   };
 }
 

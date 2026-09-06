@@ -145,6 +145,20 @@ export interface BookLevel {
   orderCount: number;
 }
 
+export interface OrderBookCollectionWindow {
+  /** Number of complete wire DTOs returned in this snapshot. */
+  returned: number;
+  /** True when at least one deeper executable order exists beyond this window. */
+  truncated: boolean;
+}
+
+export interface OrderBookWindow {
+  /** Maximum complete wire DTOs returned for each of BID and ASK. */
+  limitPerSide: number;
+  orders: OrderBookCollectionWindow;
+  offchainOrders: OrderBookCollectionWindow;
+}
+
 /** JSON-safe representation of the exact CTFExchange struct that was signed. */
 export interface SignedCtfExchangeOrder {
   saltRaw: Raw;
@@ -209,15 +223,19 @@ export interface OrderBook {
   minimumTickSizeRaw: Raw;
   outcome: Outcome;
   tokenId: string;
-  bids: BookLevel[]; // sorted best (highest price) first
-  asks: BookLevel[]; // sorted best (lowest price) first
+  // Sorted best-first. A bounded response aggregates only its visible top-of-book
+  // order window; an unbounded response aggregates the complete executable book.
+  bids: BookLevel[];
+  asks: BookLevel[];
   bestBidRaw: Raw | null;
   bestAskRaw: Raw | null;
   // Raw open MiniCLOB orders. After trading ends they leave the ladder but stay
   // visible so their makers can recover escrow through cancellation.
   orders: Order[];
-  /** Fillable signed CTFExchange orders included in the same aggregated levels. */
+  /** Complete wire DTOs for fillable signed orders; orderWindow reports any bound. */
   offchainOrders: OffchainOrder[];
+  /** Present only when the caller requested a bounded raw-order window. */
+  orderWindow?: OrderBookWindow;
 }
 
 export interface Position {

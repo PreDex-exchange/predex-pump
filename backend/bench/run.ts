@@ -2,18 +2,31 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { cpus, platform, release } from 'node:os';
 import { resolve } from 'node:path';
 
-import { ADDRESSES, type ServerEvent } from '@predex-pump/shared';
+import { ADDRESSES } from '@predex-pump/shared';
 import type { PrismaClient } from '@prisma/client';
 import type { Address, Hex } from 'viem';
 import { WebSocket } from 'ws';
 
-import { buildServer } from '../src/api/server.js';
-import { createNodeRedisPublicJsonReadCache } from '../src/cache/node-redis.js';
-import { loadRuntimeConfig } from '../src/config.js';
-import { ServerEventBus } from '../src/events/bus.js';
 import { applyDecodedEvents } from '../src/indexer/runner.js';
 import type { DecodedEvent } from '../src/indexer/types.js';
+import {
+  assertHotHybridResponses,
+  assertWebsocketDeliverySnapshot,
+  BOUNDED_BOOK_REST_P95_MS,
+  createWebsocketDeliveryTracker,
+  DEFAULT_INTERACTIVE_REST_P95_MS,
+  evaluateRestGate,
+  payloadRestScenarios,
+  type BenchmarkRestScenario,
+  type HotHybridEvidence,
+  type WebsocketDeliverySnapshot,
+  type WebsocketDeliveryTracker,
+} from './protocol.js';
 import { resolveBenchmarkProvenance } from './provenance.js';
+import {
+  launchBenchmarkServer,
+  type BenchmarkServerController,
+} from './server-process.js';
 import {
   address,
   benchDatabaseUrl,
@@ -42,6 +55,7 @@ interface RestResult extends Distribution {
   concurrency: number;
   throughputRps: number;
   averagePayloadBytes: number;
+  targetP95Ms: number | null;
 }
 
 interface PlanNodeSummary {
@@ -72,6 +86,8 @@ interface ObservedScale {
   fills: number;
   pricePoints: number;
   activityEvents: number;
+  signedOrders: number;
+  bookMigrations: number;
 }
 
 function percentile(sorted: readonly number[], fraction: number): number {
@@ -105,10 +121,20 @@ async function requestOnce(
   return { elapsedMs, bytes: body.byteLength };
 }
 
+async function requestJson(baseUrl: string, path: string): Promise<unknown> {
+  const response = await fetch(`${baseUrl}${path}`);
+  const body = await response.json();
+  if (response.status !== 200) {
+    throw new Error(`${path} returned ${response.status}: ${JSON.stringify(body)}`);
+  }
+  return body;
+}
+
 async function benchmarkRest(
   baseUrl: string,
   name: string,
   path: string,
+  targetP95Ms: number | null,
   requestCount: number,
   concurrency: number,
   warmupRequests: number,
@@ -142,6 +168,7 @@ async function benchmarkRest(
     concurrency,
     throughputRps: requestCount / durationSeconds,
     averagePayloadBytes: bytes / requestCount,
+    targetP95Ms,
     ...stats,
   };
   console.info(
@@ -291,6 +318,10 @@ async function collectPlans(
     {
       name: 'market.book',
       sql: `SELECT * FROM "Order" WHERE "marketId" = '1' AND "open" = true`,
+    },
+    {
+      name: 'market.hybrid-book',
+      sql: `SELECT * FROM "SignedOrder" WHERE "marketId" = '1' AND "status" IN ('OPEN', 'PARTIALLY_FILLED') AND "withdrawnAt" IS NULL`,
     },
     {
       name: 'market.prices',
@@ -486,19 +517,14 @@ function closeSocket(socket: WebSocket): Promise<void> {
 
 async function benchmarkWebsocket(
   websocketUrl: string,
-  eventBus: ServerEventBus,
+  server: Pick<BenchmarkServerController, 'publish'>,
   clientCount: number,
   targetSubscribers: number,
+  warmupEventCount: number,
   eventCount: number,
 ): Promise<Record<string, number>> {
   const sockets: WebSocket[] = [];
-  let targetDeliveries = 0;
-  let nonTargetDeliveries = 0;
-  let resolveDelivered: (() => void) | undefined;
-  const delivered = new Promise<void>((resolvePromise) => {
-    resolveDelivered = resolvePromise;
-  });
-  const expectedTargetDeliveries = targetSubscribers * eventCount;
+  let activeTracker: WebsocketDeliveryTracker | undefined;
 
   try {
     for (let offset = 0; offset < clientCount; offset += 50) {
@@ -525,14 +551,7 @@ async function benchmarkWebsocket(
                     return;
                   }
                   if (message.type === 'update') {
-                    if (index < targetSubscribers) {
-                      targetDeliveries += 1;
-                      if (targetDeliveries === expectedTargetDeliveries) {
-                        resolveDelivered?.();
-                      }
-                    } else {
-                      nonTargetDeliveries += 1;
-                    }
+                    activeTracker?.record(index < targetSubscribers);
                   }
                 });
                 socket.once('error', reject);
@@ -553,64 +572,60 @@ async function benchmarkWebsocket(
       await Promise.all(batch);
     }
 
-    const event: ServerEvent = {
-      channel: 'market:bench-target',
-      event: 'price.tick',
-      data: {
-        marketId: 'bench-target',
-        yesPriceRaw: '500000',
-        noPriceRaw: '500000',
-        ts: BASE_TS,
-      },
-    };
-    const samples: number[] = [];
-    const endToEndStartedAt = performance.now();
-    for (let index = 0; index < eventCount; index += 1) {
-      const startedAt = performance.now();
-      eventBus.publish(event, BASE_TS + index);
-      samples.push(performance.now() - startedAt);
-    }
-    const publishDurationMs = samples.reduce((sum, value) => sum + value, 0);
-    let deliveryTimer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      deliveryTimer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              `WebSocket delivery timed out at ${targetDeliveries}/${expectedTargetDeliveries}`,
-            ),
-          ),
-        30_000,
+    const runPhase = async (
+      phase: WebsocketDeliverySnapshot['phase'],
+      phaseEventCount: number,
+    ) => {
+      const tracker = createWebsocketDeliveryTracker(
+        phase,
+        targetSubscribers * phaseEventCount,
       );
-    });
-    try {
-      await Promise.race([delivered, timeout]);
-    } finally {
-      if (deliveryTimer !== undefined) clearTimeout(deliveryTimer);
-    }
-    const endToEndDurationMs = performance.now() - endToEndStartedAt;
-    if (nonTargetDeliveries !== 0) {
-      throw new Error(`Non-target clients received ${nonTargetDeliveries} updates`);
-    }
-    const stats = distribution(samples.map((value) => value * 1_000));
+      activeTracker = tracker;
+      const endToEndStartedAt = performance.now();
+      let deliveryTimer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        deliveryTimer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `WebSocket ${phase} delivery timed out at ` +
+                  `${tracker.snapshot.targetDeliveries}/` +
+                  `${tracker.snapshot.expectedTargetDeliveries}`,
+              ),
+            ),
+          30_000,
+        );
+      });
+      try {
+        const [publish] = await Promise.all([
+          server.publish(phaseEventCount, BASE_TS),
+          Promise.race([tracker.delivered, timeout]),
+        ]);
+        const endToEndDurationMs = performance.now() - endToEndStartedAt;
+        assertWebsocketDeliverySnapshot(tracker.snapshot);
+        return { publish, endToEndDurationMs, snapshot: tracker.snapshot };
+      } finally {
+        if (deliveryTimer !== undefined) clearTimeout(deliveryTimer);
+        if (activeTracker === tracker) activeTracker = undefined;
+      }
+    };
+
+    await runPhase('warmup', warmupEventCount);
+    // A fresh tracker keeps every warmup delivery and publish sample out of the metric.
+    const measured = await runPhase('measurement', eventCount);
     const result = {
       clients: clientCount,
       targetSubscribers,
       events: eventCount,
-      deliveredMessages: targetDeliveries,
-      nonTargetDeliveries,
-      publishP50Us: stats.p50,
-      publishP95Us: stats.p95,
-      publishP99Us: stats.p99,
-      publishDurationMs,
-      publishesPerSecond: eventCount / (publishDurationMs / 1_000),
-      endToEndDurationMs,
+      deliveredMessages: measured.snapshot.targetDeliveries,
+      nonTargetDeliveries: measured.snapshot.nonTargetDeliveries,
+      ...measured.publish,
+      endToEndDurationMs: measured.endToEndDurationMs,
     };
     console.info(
       `[bench:ws] clients=${clientCount} target=${targetSubscribers} ` +
-        `p95=${stats.p95.toFixed(2)}us rate=${result.publishesPerSecond.toFixed(
-          1,
-        )} broadcasts/s`,
+        `p95=${result.publishP95Us.toFixed(2)}us ` +
+        `rate=${result.publishesPerSecond.toFixed(1)} broadcasts/s`,
     );
     return result;
   } finally {
@@ -628,6 +643,8 @@ async function observedScale(prisma: PrismaClient): Promise<ObservedScale> {
     fills,
     pricePoints,
     activityEvents,
+    signedOrders,
+    bookMigrations,
   ] = await Promise.all([
     prisma.market.count(),
     prisma.account.count(),
@@ -637,6 +654,8 @@ async function observedScale(prisma: PrismaClient): Promise<ObservedScale> {
     prisma.fill.count(),
     prisma.pricePoint.count(),
     prisma.activityEvent.count(),
+    prisma.signedOrder.count(),
+    prisma.bookMigration.count(),
   ]);
   return {
     markets,
@@ -647,6 +666,62 @@ async function observedScale(prisma: PrismaClient): Promise<ObservedScale> {
     fills,
     pricePoints,
     activityEvents,
+    signedOrders,
+    bookMigrations,
+  };
+}
+
+async function assertHotHybridWorkload(
+  prisma: PrismaClient,
+  baseUrl: string,
+): Promise<
+  HotHybridEvidence & {
+    historicalMiniClobOrders: number;
+    historicalMiniClobOpenOrders: 0;
+  }
+> {
+  const [
+    marketBook,
+    tokenBook,
+    bulkMarketBook,
+    bulkTokenBook,
+    historicalMiniClobOrders,
+    openHistoricalOrders,
+  ] = await Promise.all([
+    requestJson(baseUrl, '/markets/1/book?orderLimitPerSide=20'),
+    requestJson(baseUrl, '/orderbook/1000000000?orderLimitPerSide=20'),
+    requestJson(baseUrl, '/markets/1/book'),
+    requestJson(baseUrl, '/orderbook/1000000000'),
+    prisma.order.count({ where: { marketId: '1' } }),
+    prisma.order.count({ where: { marketId: '1', open: true } }),
+  ]);
+  if (historicalMiniClobOrders === 0 || openHistoricalOrders !== 0) {
+    throw new Error(
+      'Benchmark market 1 must retain closed historical MiniCLOB rows',
+    );
+  }
+  const hotHybrid = assertHotHybridResponses(marketBook, tokenBook, 20);
+  const bulkHybrid = assertHotHybridResponses(bulkMarketBook, bulkTokenBook);
+  if (
+    hotHybrid.marketBookOffchainOrders !== 80 ||
+    hotHybrid.tokenBookOffchainOrders !== 40
+  ) {
+    throw new Error(
+      'Benchmark bounded Hybrid response must expose at most 20 orders per side',
+    );
+  }
+  if (
+    bulkHybrid.marketBookOffchainOrders !== 400 ||
+    bulkHybrid.tokenBookOffchainOrders !== 200
+  ) {
+    throw new Error(
+      'Benchmark informational Hybrid responses must retain all 400 seeded orders',
+    );
+  }
+  return {
+    ...hotHybrid,
+    historicalMiniClobOrders,
+    historicalMiniClobOpenOrders: 0,
   };
 }
 
@@ -660,6 +735,7 @@ async function main(): Promise<void> {
   const warmupRequests = positiveFlag(argv, 'warmup', 20);
   const wsClients = positiveFlag(argv, 'ws-clients', 500);
   const wsSubscribers = positiveFlag(argv, 'ws-subscribers', 5);
+  const wsWarmupEvents = positiveFlag(argv, 'ws-warmup-events', 200);
   const wsEvents = positiveFlag(argv, 'ws-events', 2_000);
   const ingestEvents = positiveFlag(argv, 'ingest-events', 10);
   const ingestPositions = positiveFlag(argv, 'ingest-positions', 100);
@@ -667,26 +743,28 @@ async function main(): Promise<void> {
     throw new Error('--ws-subscribers cannot exceed --ws-clients');
   }
 
-  const runtimeConfig = loadRuntimeConfig();
   const prisma = makePrisma(databaseUrl);
-  const eventBus = new ServerEventBus();
-  const publicReadCache = createNodeRedisPublicJsonReadCache({
-    url: runtimeConfig.redisUrl,
-    keyPrefix: runtimeConfig.redisKeyPrefix,
-  });
-  const app = await buildServer({
-    prisma,
-    eventBus,
-    logger: false,
-    publicReadCache,
-    marketListCacheTtlSeconds: runtimeConfig.marketsCacheTtlSeconds,
-  });
+  let server: BenchmarkServerController | undefined;
   try {
     const observed = await observedScale(prisma);
-    if (observed.markets === 0 || observed.activityEvents === 0) {
+    if (
+      observed.markets === 0 ||
+      observed.activityEvents === 0 ||
+      observed.signedOrders === 0 ||
+      observed.bookMigrations === 0
+    ) {
       throw new Error('Benchmark schema is empty; run pnpm bench:seed first');
     }
-    const addressUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+    server = await launchBenchmarkServer(databaseUrl);
+    if (!server.isolation.redisConfigured) {
+      console.warn(
+        '[bench] REDIS_URL is not configured; market-list cache measurements use the disabled cache',
+      );
+    }
+    const hotHybrid = await assertHotHybridWorkload(
+      prisma,
+      server.baseUrl,
+    );
     const marketCursor = encodeCursor({
       kind: 'markets',
       createdAt: BASE_TS + Math.floor(observed.markets / 2) * 60,
@@ -697,46 +775,71 @@ async function main(): Promise<void> {
       blockNumber: BASE_BLOCK + Math.floor(observed.activityEvents / 20),
       logIndex: 5,
     });
-    const scenarios = [
-      { name: 'markets.list', path: '/markets?limit=50' },
+    const scenarios: BenchmarkRestScenario[] = [
+      {
+        name: 'markets.list',
+        path: '/markets?limit=50',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
       {
         name: 'markets.phase',
         path: '/markets?phase=Graduated&limit=50',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
       {
         name: 'markets.deep-keyset',
         path: `/markets?limit=50&cursor=${encodeURIComponent(marketCursor)}`,
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
-      { name: 'market.detail', path: '/markets/1' },
-      { name: 'market.book', path: '/markets/1/book' },
       {
-        name: 'market.prices',
-        path: `/markets/1/prices?fromTs=${BASE_TS}&limit=2000`,
+        name: 'market.detail',
+        path: '/markets/1',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
-      { name: 'orderbook.token', path: '/orderbook/1000000000' },
-      { name: 'account.detail', path: `/accounts/${address(0)}` },
-      { name: 'activity.list', path: '/activity?limit=50' },
+      ...payloadRestScenarios(address(0)),
+      {
+        name: 'activity.list',
+        path: '/activity?limit=50',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
       {
         name: 'activity.market-deep-keyset',
         path: `/activity?marketId=1&limit=50&cursor=${encodeURIComponent(
           activityCursor,
         )}`,
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
       },
-      { name: 'config', path: '/config' },
-      { name: 'health', path: '/health' },
+      {
+        name: 'config',
+        path: '/config',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
+      {
+        name: 'health',
+        path: '/health',
+        targetP95Ms: DEFAULT_INTERACTIVE_REST_P95_MS,
+      },
     ];
     const rest: RestResult[] = [];
     for (const scenario of scenarios) {
       rest.push(
         await benchmarkRest(
-          addressUrl,
+          server.baseUrl,
           scenario.name,
           scenario.path,
+          scenario.targetP95Ms,
           requestCount,
           concurrency,
           warmupRequests,
         ),
       );
+    }
+    const hotHybridAfterRest = await assertHotHybridWorkload(
+      prisma,
+      server.baseUrl,
+    );
+    if (JSON.stringify(hotHybridAfterRest) !== JSON.stringify(hotHybrid)) {
+      throw new Error('Benchmark Hybrid workload changed during REST measurement');
     }
 
     const plans = await collectPlans(prisma, benchSchema(databaseUrl), observed);
@@ -746,10 +849,11 @@ async function main(): Promise<void> {
       ingestPositions,
     );
     const websocket = await benchmarkWebsocket(
-      `${addressUrl.replace(/^http/, 'ws')}/ws`,
-      eventBus,
+      server.websocketUrl,
+      server,
       wsClients,
       wsSubscribers,
+      wsWarmupEvents,
       wsEvents,
     );
 
@@ -762,6 +866,8 @@ async function main(): Promise<void> {
       sourceProvenance: provenance.kind,
       schema: benchSchema(databaseUrl),
       syntheticOnly: true,
+      isolatedProcesses: true,
+      processIsolation: server.isolation,
       environment: {
         node: process.version,
         platform: `${platform()} ${release()}`,
@@ -774,17 +880,24 @@ async function main(): Promise<void> {
         restWarmupRequests: warmupRequests,
         wsClients,
         wsSubscribers,
+        wsWarmupEvents,
         wsEvents,
         ingestEvents,
         ingestPositions,
       },
       targets: {
-        restP95Ms: 100,
+        restP95Ms: {
+          defaultInteractive: DEFAULT_INTERACTIVE_REST_P95_MS,
+          boundedBook: BOUNDED_BOOK_REST_P95_MS,
+          informationalBulk: null,
+        },
         indexerEventsPerSecond: 20,
         wsPublishP95Us: 250,
       },
       observedScale: observed,
+      hotHybrid,
       rest,
+      restGate: evaluateRestGate(rest),
       plans,
       indexer,
       websocket,
@@ -795,9 +908,11 @@ async function main(): Promise<void> {
     await writeFile(output, `${JSON.stringify(result, null, 2)}\n`);
     console.info(`[bench] wrote ${output}`);
   } finally {
-    await app.close();
-    await publicReadCache.close();
-    await prisma.$disconnect();
+    try {
+      await server?.close();
+    } finally {
+      await prisma.$disconnect();
+    }
   }
 }
 

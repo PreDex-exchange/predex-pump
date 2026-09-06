@@ -66,6 +66,16 @@ vi.mock('@/lib/api/hooks', () => ({
     error: null,
     refetch: vi.fn(),
   }),
+  usePaginatedAccount: () => ({
+    data: mocks.account,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+    isLoadingMore: false,
+    loadMoreError: null,
+    hasNextPage: false,
+    loadMore: vi.fn(),
+  }),
   useAccountProfile: () => ({
     data: null,
     isLoading: false,

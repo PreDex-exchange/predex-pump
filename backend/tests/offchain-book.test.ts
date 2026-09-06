@@ -1,7 +1,7 @@
 import { ADDRESSES, OFFCHAIN_WITHDRAWAL_WARNING } from '@predex-pump/shared';
 import { Side, ctfExchangeAbi, hashCtfExchangeOrder } from '@predex-pump/shared/tx';
 import { decodeFunctionData } from 'viem';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getMarketBook, getOrderBook } from '../src/api/queries.js';
 import { ServerEventBus } from '../src/events/bus.js';
@@ -40,6 +40,10 @@ describe('hybrid off-chain book', () => {
       },
     });
     reader.state = validChainState();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   async function ingestSell(priceRaw: bigint, sizeRaw: bigint, salt: bigint) {
@@ -130,6 +134,225 @@ describe('hybrid off-chain book', () => {
       filledRaw: '250000',
       remainingRaw: '750000',
     });
+  });
+
+  it('rejects an invalid numeric exchange side in reduced fillability rows', async () => {
+    const created = await ingestBuy(700_000n, 500_000n, 107n);
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+
+    await expect(
+      fillabilityForOrders(
+        testPrisma,
+        [{ ...row, exchangeSide: 2 }],
+        BOOK_NOW,
+      ),
+    ).rejects.toThrow('Order side must be Side.BUY or Side.SELL.');
+  });
+
+  it('deduplicates SELL position keys and skips inapplicable USER-order readers', async () => {
+    const created = await ingestSell(640_000n, 200_000n, 108n);
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+    const positionRead = vi.spyOn(testPrisma.position, 'findMany');
+    const ctfRead = vi.spyOn(testPrisma.ctfExchangeApproval, 'findMany');
+    const collateralApprovalRead = vi.spyOn(
+      testPrisma.collateralExchangeApproval,
+      'findMany',
+    );
+    const collateralBalanceRead = vi.spyOn(
+      testPrisma.collateralBalance,
+      'findMany',
+    );
+    const migrationRead = vi.spyOn(testPrisma.bookMigration, 'findMany');
+    const indexerRead = vi.spyOn(testPrisma.indexerState, 'findUnique');
+
+    const result = await fillabilityForOrders(
+      testPrisma,
+      [row, row, row],
+      BOOK_NOW,
+    );
+
+    expect(result.get(row.orderHash)).toEqual({ fillable: true, reason: null });
+    expect(positionRead).toHaveBeenCalledTimes(1);
+    expect(positionRead.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        OR: [
+          {
+            account: row.maker,
+            marketId: row.marketId,
+            outcome: row.outcome,
+          },
+        ],
+      },
+    });
+    expect(ctfRead).toHaveBeenCalledWith({
+      where: { owner: { in: [row.maker] } },
+    });
+    expect(collateralApprovalRead).not.toHaveBeenCalled();
+    expect(collateralBalanceRead).not.toHaveBeenCalled();
+    expect(migrationRead).not.toHaveBeenCalled();
+    expect(indexerRead).not.toHaveBeenCalled();
+  });
+
+  it('queries only collateral asset readers for BUY orders', async () => {
+    const created = await ingestBuy(700_000n, 500_000n, 109n);
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+    const positionRead = vi.spyOn(testPrisma.position, 'findMany');
+    const ctfRead = vi.spyOn(testPrisma.ctfExchangeApproval, 'findMany');
+    const collateralApprovalRead = vi.spyOn(
+      testPrisma.collateralExchangeApproval,
+      'findMany',
+    );
+    const collateralBalanceRead = vi.spyOn(
+      testPrisma.collateralBalance,
+      'findMany',
+    );
+    const migrationRead = vi.spyOn(testPrisma.bookMigration, 'findMany');
+    const indexerRead = vi.spyOn(testPrisma.indexerState, 'findUnique');
+
+    const result = await fillabilityForOrders(testPrisma, [row], BOOK_NOW);
+
+    expect(result.get(row.orderHash)).toEqual({ fillable: true, reason: null });
+    expect(positionRead).not.toHaveBeenCalled();
+    expect(ctfRead).not.toHaveBeenCalled();
+    expect(collateralApprovalRead).toHaveBeenCalledWith({
+      where: { owner: { in: [row.maker] } },
+    });
+    expect(collateralBalanceRead).toHaveBeenCalledWith({
+      where: { owner: { in: [row.maker] } },
+    });
+    expect(migrationRead).not.toHaveBeenCalled();
+    expect(indexerRead).not.toHaveBeenCalled();
+  });
+
+  it('reuses the outer bounded-book market snapshot without delegate rereads', async () => {
+    await ingestBuy(700_000n, 500_000n, 110n);
+    await ingestSell(640_000n, 200_000n, 111n);
+    const marketRead = vi.spyOn(testPrisma.market, 'findMany');
+    const resolutionRead = vi.spyOn(testPrisma.resolution, 'findMany');
+
+    const book = await getMarketBook(testPrisma, '1', BOOK_NOW, 1);
+
+    expect(book?.yes.offchainOrders).toHaveLength(2);
+    expect(marketRead).not.toHaveBeenCalled();
+    expect(resolutionRead).not.toHaveBeenCalled();
+  });
+
+  it('uses only covered preloaded market state for terminal fillability reasons', async () => {
+    const created = await ingestBuy(700_000n, 500_000n, 112n);
+    const row = await testPrisma.signedOrder.findUniqueOrThrow({
+      where: { orderHash: created.request.orderHash.toLowerCase() },
+    });
+    const marketRead = vi.spyOn(testPrisma.market, 'findMany');
+
+    const resolved = await fillabilityForOrders(
+      testPrisma,
+      [row],
+      BOOK_NOW,
+      [{ id: '1', tradingEndsAt: BOOK_NOW, resolvedAt: BOOK_NOW - 1 }],
+    );
+    const ended = await fillabilityForOrders(
+      testPrisma,
+      [row],
+      BOOK_NOW,
+      [{ id: '1', tradingEndsAt: BOOK_NOW, resolvedAt: null }],
+    );
+    const uncovered = await fillabilityForOrders(
+      testPrisma,
+      [row],
+      BOOK_NOW,
+      [],
+    );
+
+    expect(resolved.get(row.orderHash)).toEqual({
+      fillable: false,
+      reason: 'MARKET_RESOLVED',
+    });
+    expect(ended.get(row.orderHash)).toEqual({
+      fillable: false,
+      reason: 'TRADING_ENDED',
+    });
+    expect(uncovered.get(row.orderHash)).toEqual({
+      fillable: false,
+      reason: 'INDEXED_STATE_UNAVAILABLE',
+    });
+    expect(marketRead).not.toHaveBeenCalled();
+
+    const generic = await fillabilityForOrders(testPrisma, [row], BOOK_NOW);
+    expect(generic.get(row.orderHash)).toEqual({ fillable: true, reason: null });
+    expect(marketRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('walks past unfillable Hybrid candidates to build a bounded top-of-book', async () => {
+    const lowerBid = await ingestBuy(650_000n, 500_000n, 201n);
+    const bestBid = await ingestBuy(700_000n, 500_000n, 202n);
+    const higherAsk = await ingestSell(640_000n, 200_000n, 203n);
+    const bestAsk = await ingestSell(620_000n, 300_000n, 204n);
+    const tiedBestAsk = await ingestSell(620_000n, 100_000n, 206n);
+    const expired = await ingestSell(610_000n, 100_000n, 205n);
+    await testPrisma.signedOrder.update({
+      where: { orderHash: expired.request.orderHash.toLowerCase() },
+      data: { expiration: 1 },
+    });
+
+    const bounded = await getMarketBook(testPrisma, '1', BOOK_NOW, 1);
+    await expect(
+      testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: expired.request.orderHash.toLowerCase() },
+      }),
+    ).resolves.toMatchObject({ status: 'OPEN', expiration: 1 });
+    const boundedToken = await getOrderBook(testPrisma, '101', BOOK_NOW, 1);
+    await expect(
+      testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: expired.request.orderHash.toLowerCase() },
+      }),
+    ).resolves.toMatchObject({ status: 'OPEN', expiration: 1 });
+    const legacy = await getMarketBook(testPrisma, '1', BOOK_NOW);
+
+    expect(bounded?.yes.bids.map(({ priceRaw }) => priceRaw)).toEqual([
+      '700000',
+    ]);
+    expect(bounded?.yes.asks.map(({ priceRaw }) => priceRaw)).toEqual([
+      '620000',
+    ]);
+    expect(
+      bounded?.yes.offchainOrders.map(({ orderHash }) => orderHash),
+    ).toEqual([
+      bestBid.request.orderHash.toLowerCase(),
+      [bestAsk, tiedBestAsk]
+        .map(({ request }) => request.orderHash.toLowerCase())
+        .sort((left, right) => left.localeCompare(right))[0],
+    ]);
+    expect(
+      bounded?.yes.offchainOrders.map(({ orderHash }) => orderHash),
+    ).not.toContain(expired.request.orderHash.toLowerCase());
+    expect(bounded?.yes.orderWindow).toEqual({
+      limitPerSide: 1,
+      orders: { returned: 0, truncated: false },
+      offchainOrders: { returned: 2, truncated: true },
+    });
+    expect(boundedToken?.offchainOrders).toEqual(bounded?.yes.offchainOrders);
+    expect(boundedToken?.bids).toEqual(bounded?.yes.bids);
+    expect(boundedToken?.asks).toEqual(bounded?.yes.asks);
+    expect(boundedToken?.orderWindow).toEqual(bounded?.yes.orderWindow);
+    expect(legacy?.yes.offchainOrders).toHaveLength(5);
+    expect(legacy?.yes).not.toHaveProperty('orderWindow');
+    await expect(
+      testPrisma.signedOrder.findUniqueOrThrow({
+        where: { orderHash: expired.request.orderHash.toLowerCase() },
+      }),
+    ).resolves.toMatchObject({ status: 'EXPIRED' });
+    expect(legacy?.yes.offchainOrders.map(({ orderHash }) => orderHash)).toEqual(
+      expect.arrayContaining([
+        lowerBid.request.orderHash.toLowerCase(),
+        higherAsk.request.orderHash.toLowerCase(),
+      ]),
+    );
   });
 
   it('keeps ended Hybrid orders manageable but removes them from public ladders', async () => {

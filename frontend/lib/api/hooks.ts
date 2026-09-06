@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  AccountQuery,
   AccountResponse,
   AccountProfileResponse,
   ActivityQuery,
@@ -14,6 +15,7 @@ import type {
   MarketBookResponse,
   MarketDetailResponse,
   MakerOrdersResponse,
+  OrderBookQuery,
   PriceHistoryQuery,
   PriceHistoryResponse,
   VenueTransition,
@@ -46,6 +48,9 @@ const MARKET_DETAIL_FALLBACK_REFRESH_MS = 15_000;
 const ORDER_BOOK_TRANSITION_REFRESH_MS = 2_000;
 const ORDER_BOOK_LIVE_REFRESH_MS = 15_000;
 const ORDER_BOOK_FALLBACK_REFRESH_MS = 4_000;
+const MARKET_BOOK_QUERY = {
+  orderLimitPerSide: 20,
+} as const satisfies OrderBookQuery;
 const HEALTH_REFRESH_MS = 15_000;
 export const MARKET_DETAIL_RETRY_COUNT = 3;
 const API_RETRY_BASE_DELAY_MS = 1_000;
@@ -271,27 +276,126 @@ export function useMarket(id: string) {
   };
 }
 
-export function useAccount(address?: string) {
+function useAccountLiveUpdates(normalizedAddress?: string) {
   const queryClient = useQueryClient();
-  const normalizedAddress = address?.toLowerCase();
-  const load = useCallback(
-    () => (address ? apiClient.getAccount(address) : Promise.resolve(null)),
-    [address],
-  );
   useEffect(() => {
     if (!normalizedAddress) return;
     return backendWsClient.subscribe(
       `account:${normalizedAddress}`,
       () => {
         void queryClient.invalidateQueries({
-          exact: true,
-          queryKey: ['account', address],
+          queryKey: ['account', normalizedAddress],
         });
       },
     );
-  }, [address, normalizedAddress, queryClient]);
+  }, [normalizedAddress, queryClient]);
+}
 
-  return useApiResource<AccountResponse | null>(['account', address], load);
+export function useAccount(address?: string, query: AccountQuery = {}) {
+  const normalizedAddress = address?.toLowerCase();
+  const { marketId, positionsLimit, positionsCursor } = query;
+  useAccountLiveUpdates(normalizedAddress);
+  const load = useCallback(
+    () =>
+      normalizedAddress
+        ? apiClient.getAccount(normalizedAddress, {
+            ...(marketId === undefined ? {} : { marketId }),
+            ...(positionsLimit === undefined ? {} : { positionsLimit }),
+            ...(positionsCursor === undefined ? {} : { positionsCursor }),
+          })
+        : Promise.resolve(null),
+    [marketId, normalizedAddress, positionsCursor, positionsLimit],
+  );
+
+  return useApiResource<AccountResponse | null>(
+    [
+      'account',
+      normalizedAddress,
+      'single',
+      marketId ?? null,
+      positionsLimit ?? null,
+      positionsCursor ?? null,
+    ],
+    load,
+  );
+}
+
+export function usePaginatedAccount(
+  address: string | undefined,
+  query: AccountQuery,
+) {
+  const normalizedAddress = address?.toLowerCase();
+  const { marketId, positionsLimit, positionsCursor } = query;
+  useAccountLiveUpdates(normalizedAddress);
+  const result = useInfiniteQuery({
+    queryKey: [
+      'account',
+      normalizedAddress,
+      'position-pages',
+      marketId ?? null,
+      positionsLimit ?? null,
+      positionsCursor ?? null,
+    ],
+    queryFn: ({ pageParam }) => {
+      if (!normalizedAddress) {
+        return Promise.reject(new Error('An account address is required.'));
+      }
+      return apiClient.getAccount(normalizedAddress, {
+        ...(marketId === undefined ? {} : { marketId }),
+        ...(positionsLimit === undefined ? {} : { positionsLimit }),
+        ...(pageParam === undefined
+          ? positionsCursor === undefined
+            ? {}
+            : { positionsCursor }
+          : { positionsCursor: pageParam }),
+      });
+    },
+    initialPageParam: positionsCursor,
+    getNextPageParam: (lastPage: AccountResponse) =>
+      lastPage.positionsNextCursor ?? undefined,
+    enabled: Boolean(normalizedAddress),
+    staleTime: 30_000,
+  });
+  const status = stableResourceStatus(result);
+  const data = useMemo<AccountResponse | null>(() => {
+    const firstPage = result.data?.pages[0];
+    if (!firstPage) return null;
+    const positions: Position[] = [];
+    const seen = new Set<string>();
+    for (const page of result.data?.pages ?? []) {
+      for (const position of page.positions) {
+        const key = `${position.marketId}:${position.outcome}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        positions.push(position);
+      }
+    }
+    const positionsNextCursor = result.data?.pages.at(-1)?.positionsNextCursor;
+    return {
+      ...firstPage,
+      positions,
+      ...(positionsNextCursor === undefined ? {} : { positionsNextCursor }),
+    };
+  }, [result.data]);
+  const loadMoreError = result.isFetchNextPageError ? result.error : null;
+
+  return {
+    data,
+    isLoading: status.isLoading,
+    error: result.isFetchNextPageError ? null : status.error,
+    isSuccess: result.isSuccess,
+    refetch: () => {
+      void result.refetch();
+    },
+    isLoadingMore: result.isFetchingNextPage,
+    loadMoreError,
+    hasNextPage: result.hasNextPage,
+    loadMore: () => {
+      if (result.hasNextPage && !result.isFetchingNextPage) {
+        void result.fetchNextPage();
+      }
+    },
+  };
 }
 
 export function useExchangeApprovals(address?: string) {
@@ -372,12 +476,14 @@ export function useOrderBook(marketId: string) {
   const queryClient = useQueryClient();
   const [connectionStatus, setConnectionStatus] =
     useState<BackendConnectionStatus>('idle');
-  const load = useCallback(() => apiClient.getOrderBook(marketId), [marketId]);
+  const load = useCallback(
+    () => apiClient.getOrderBook(marketId, MARKET_BOOK_QUERY),
+    [marketId],
+  );
   useEffect(() => {
     if (!marketId || marketId === 'preview') return;
     return backendWsClient.subscribe(`book:${marketId}`, () => {
       void queryClient.invalidateQueries({
-        exact: true,
         queryKey: ['order-book', marketId],
       });
     });
@@ -387,11 +493,15 @@ export function useOrderBook(marketId: string) {
     [],
   );
 
-  return useApiResource<MarketBookResponse>(['order-book', marketId], load, {
-    refetchInterval: (query) =>
-      orderBookRefreshIntervalMs(connectionStatus, query.state.data),
-    refetchOnWindowFocus: 'always',
-  });
+  return useApiResource<MarketBookResponse>(
+    ['order-book', marketId, MARKET_BOOK_QUERY.orderLimitPerSide],
+    load,
+    {
+      refetchInterval: (query) =>
+        orderBookRefreshIntervalMs(connectionStatus, query.state.data),
+      refetchOnWindowFocus: 'always',
+    },
+  );
 }
 
 export function useActivity(query: ActivityQuery = {}) {

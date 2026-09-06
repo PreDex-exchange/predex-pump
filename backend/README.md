@@ -97,11 +97,19 @@ pnpm bench:teardown
 
 `bench:seed` drops and recreates only the selected benchmark schema. Every count can be overridden
 with flags such as `--markets=200` or `--activity-events=100000`; `BENCH_DATABASE_URL` selects a
-different safely named benchmark schema. `bench:run` measures every REST route at fixed
-concurrency, emits JSON `EXPLAIN (ANALYZE, BUFFERS)` plans, runs a transactional synthetic
-TradeState ingest fixture, and measures channel-selective fan-out with many real WebSocket
-connections. Its explicit targets are REST p95 below 100 ms, at least 20 indexed price ticks/sec
-when each tick re-marks 100 positions, and WebSocket publish p95 below 250 µs with 500 clients.
+different safely named benchmark schema. Market 1 is a deliberately active migrated Hybrid hot
+book; the runner refuses to time an ended or empty book. `bench:run` starts Fastify, Redis, and the
+event bus in a dedicated child process, drives REST and WebSocket clients from the parent process,
+emits JSON `EXPLAIN (ANALYZE, BUFFERS)` plans, and runs a transactional synthetic TradeState ingest
+fixture. Its frozen REST targets are p95 at or below 250 ms for the bounded market/token books and
+at or below 100 ms for every other interactive scenario. It also requires at least 20 indexed
+price ticks/sec when each tick re-marks 100 positions and WebSocket publish p95 below 250 µs with
+500 clients. Interactive reads use 20 book orders per side, 500 price points, and 100 account
+positions. Matching unbounded/2,000-point `.bulk` scenarios remain in the result with a null target
+as informational capacity measurements and do not decide the interactive gate. WebSocket clients
+receive 200 warmup events by default (`--ws-warmup-events`); warmup uses the same child/event-bus/
+socket path and is verified separately, but its publishes, duration, and deliveries are excluded
+from the reported WebSocket metric.
 
 ## Serving contract
 
@@ -111,11 +119,11 @@ Every route is declared in `shared/src/rest.ts`:
 | --- | --- | --- |
 | GET | `/markets` | Keyset-paginated markets (`phase`, `creator`, `limit`, `cursor`) |
 | GET | `/markets/:id` | Market, recent trades, resolution |
-| GET | `/markets/:id/book` | YES and NO books |
+| GET | `/markets/:id/book` | YES and NO books (`orderLimitPerSide` optionally returns bounded top-of-book levels and complete order DTOs) |
 | GET | `/markets/:id/prices` | Indexed price curve (`fromTs`, `limit`) |
 | GET | `/truth/:marketId` | Explainable indexed fair value; x402-protected when seller mode is `circle` |
-| GET | `/orderbook/:tokenId` | One token's aggregated ladder and open orders |
-| GET | `/accounts/:addr` | Account, positions, recent trades, estimated PnL |
+| GET | `/orderbook/:tokenId` | One token's aggregated ladder or bounded top-of-book (`orderLimitPerSide`) |
+| GET | `/accounts/:addr` | Account, positions (`marketId`, `positionsLimit`, `positionsCursor`), recent trades, aggregate PnL |
 | GET | `/activity` | Keyset-paginated activity (`marketId`, `account`, `limit`, `cursor`) |
 | GET | `/config` | Registry params, addresses, trading-window bounds, committee |
 | GET | `/health` | Indexed block, Arc head, and lag |

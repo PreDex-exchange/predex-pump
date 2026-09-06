@@ -495,6 +495,7 @@ describe('REST shared contract', () => {
       asks: [{ priceRaw: '650000', sizeRaw: '1000000', orderCount: 1 }],
     });
     expect(body.yes.orders).toHaveLength(3);
+    expect(body.yes).not.toHaveProperty('orderWindow');
     expect(body.yes.orders[0]).toEqual({
       orderId: '1',
       marketId: '1',
@@ -526,17 +527,143 @@ describe('REST shared contract', () => {
     });
   });
 
+  it('returns a truthful bounded MiniCLOB top-of-book per side and outcome', async () => {
+    await testPrisma.order.createMany({
+      data: [
+        {
+          orderId: '4', marketId: '1', conditionId: MARKET_ONE_CONDITION,
+          tokenId: '102', outcome: 'NO', maker: DEPLOYER, side: 'BID',
+          priceRaw: '400000', sizeRaw: '1000000', escrowRaw: '400000',
+          remainingRaw: '1000000', open: true, isSeed: false,
+          txHash: `0x${'1'.repeat(64)}`, logIndex: 4, blockNumber: 98,
+          createdAt: 1_700_003_603, updatedAt: 1_700_003_603,
+        },
+        {
+          orderId: '5', marketId: '1', conditionId: MARKET_ONE_CONDITION,
+          tokenId: '102', outcome: 'NO', maker: DEPLOYER, side: 'BID',
+          priceRaw: '450000', sizeRaw: '1000000', escrowRaw: '450000',
+          remainingRaw: '1000000', open: true, isSeed: false,
+          txHash: `0x${'2'.repeat(64)}`, logIndex: 5, blockNumber: 98,
+          createdAt: 1_700_003_604, updatedAt: 1_700_003_604,
+        },
+        {
+          orderId: '6', marketId: '1', conditionId: MARKET_ONE_CONDITION,
+          tokenId: '102', outcome: 'NO', maker: DEPLOYER, side: 'ASK',
+          priceRaw: '550000', sizeRaw: '1000000', escrowRaw: '1000000',
+          remainingRaw: '1000000', open: true, isSeed: false,
+          txHash: `0x${'3'.repeat(64)}`, logIndex: 6, blockNumber: 98,
+          createdAt: 1_700_003_605, updatedAt: 1_700_003_605,
+        },
+        {
+          orderId: '7', marketId: '1', conditionId: MARKET_ONE_CONDITION,
+          tokenId: '102', outcome: 'NO', maker: DEPLOYER, side: 'ASK',
+          priceRaw: '500000', sizeRaw: '1000000', escrowRaw: '1000000',
+          remainingRaw: '1000000', open: true, isSeed: false,
+          txHash: `0x${'4'.repeat(64)}`, logIndex: 7, blockNumber: 98,
+          createdAt: 1_700_003_606, updatedAt: 1_700_003_606,
+        },
+      ],
+    });
+
+    const [marketResponse, tokenResponse] = await Promise.all([
+      app.inject({ method: 'GET', url: '/markets/1/book?orderLimitPerSide=1' }),
+      app.inject({ method: 'GET', url: '/orderbook/102?orderLimitPerSide=1' }),
+    ]);
+    const marketBook = marketResponse.json<MarketBookResponse>();
+    const tokenBook = tokenResponse.json<OrderBookResponse>();
+
+    expect(marketBook.yes.orders.map(({ orderId }) => orderId)).toEqual(['1', '3']);
+    expect(marketBook.no.orders.map(({ orderId }) => orderId)).toEqual(['5', '7']);
+    expect(marketBook.yes.bids).toEqual([
+      { priceRaw: '600000', sizeRaw: '750000', orderCount: 1 },
+    ]);
+    expect(marketBook.no.bids).toEqual([
+      { priceRaw: '450000', sizeRaw: '1000000', orderCount: 1 },
+    ]);
+    expect(marketBook.no.asks).toEqual([
+      { priceRaw: '500000', sizeRaw: '1000000', orderCount: 1 },
+    ]);
+    expect(marketBook.yes.orderWindow).toEqual({
+      limitPerSide: 1,
+      orders: { returned: 2, truncated: true },
+      offchainOrders: { returned: 0, truncated: false },
+    });
+    expect(marketBook.no.orderWindow).toEqual({
+      limitPerSide: 1,
+      orders: { returned: 2, truncated: true },
+      offchainOrders: { returned: 0, truncated: false },
+    });
+    expect(tokenBook.orders.map(({ orderId }) => orderId)).toEqual(['5', '7']);
+    expect(tokenBook.bids).toEqual(marketBook.no.bids);
+    expect(tokenBook.asks).toEqual(marketBook.no.asks);
+    expect(tokenBook.orderWindow).toEqual(marketBook.no.orderWindow);
+  });
+
+  it('breaks equal MiniCLOB price-time priority by numeric order id', async () => {
+    await testPrisma.order.update({
+      where: { orderId: '2' },
+      data: { priceRaw: '700000', createdAt: 1_700_003_650 },
+    });
+    await testPrisma.order.create({
+      data: {
+        orderId: '10',
+        marketId: '1',
+        conditionId: MARKET_ONE_CONDITION,
+        tokenId: '101',
+        outcome: 'YES',
+        maker: DEPLOYER,
+        side: 'BID',
+        priceRaw: '700000',
+        sizeRaw: '1000000',
+        escrowRaw: '700000',
+        remainingRaw: '1000000',
+        open: true,
+        isSeed: false,
+        txHash: `0x${'5'.repeat(64)}`,
+        logIndex: 10,
+        blockNumber: 98,
+        createdAt: 1_700_003_650,
+        updatedAt: 1_700_003_650,
+      },
+    });
+
+    const body = (
+      await app.inject({
+        method: 'GET',
+        url: '/markets/1/book?orderLimitPerSide=1',
+      })
+    ).json<MarketBookResponse>();
+
+    expect(
+      body.yes.orders
+        .filter(({ side }) => side === 'BID')
+        .map(({ orderId }) => orderId),
+    ).toEqual(['2']);
+    expect(body.yes.bids).toEqual([
+      { priceRaw: '700000', sizeRaw: '500000', orderCount: 1 },
+    ]);
+    expect(body.yes.orderWindow?.orders).toEqual({
+      returned: 2,
+      truncated: true,
+    });
+  });
+
   it('keeps ended MiniCLOB orders on the market book only for cancellation', async () => {
     await testPrisma.market.update({
       where: { id: '1' },
       data: { tradingEndsAt: Math.floor(Date.now() / 1_000) },
     });
 
-    const [marketResponse, tokenResponse] = await Promise.all([
+    const [marketResponse, boundedMarketResponse, tokenResponse] = await Promise.all([
       app.inject({ method: 'GET', url: '/markets/1/book' }),
+      app.inject({
+        method: 'GET',
+        url: '/markets/1/book?orderLimitPerSide=1',
+      }),
       app.inject({ method: 'GET', url: '/orderbook/101' }),
     ]);
     const marketBook = marketResponse.json<MarketBookResponse>();
+    const boundedMarketBook = boundedMarketResponse.json<MarketBookResponse>();
     const tokenBook = tokenResponse.json<OrderBookResponse>();
 
     expect(marketBook).toMatchObject({
@@ -546,6 +673,10 @@ describe('REST shared contract', () => {
       yes: { bids: [], asks: [], bestBidRaw: null, bestAskRaw: null },
     });
     expect(marketBook.yes.orders).toHaveLength(3);
+    expect(boundedMarketBook.yes).toMatchObject({ bids: [], asks: [] });
+    expect(boundedMarketBook.yes.orders).toEqual(marketBook.yes.orders);
+    expect(boundedMarketBook.yes.orders).toHaveLength(3);
+    expect(boundedMarketBook.yes).not.toHaveProperty('orderWindow');
     expect(tokenBook).toMatchObject({
       bids: [],
       asks: [],
@@ -1017,6 +1148,99 @@ describe('REST shared contract', () => {
       recentTrades: [],
       pnl: { realizedRaw: '0', unrealizedRaw: '0' },
     });
+  });
+
+  it('filters and keyset-paginates account positions without changing aggregate PnL', async () => {
+    await testPrisma.position.createMany({
+      data: [
+        {
+          account: TRADER,
+          marketId: '1',
+          outcome: 'NO',
+          qtyRaw: '1000000',
+          updatedAt: 1_700_000_020,
+        },
+        {
+          account: TRADER,
+          marketId: '2',
+          outcome: 'YES',
+          qtyRaw: '2000000',
+          updatedAt: 1_700_000_020,
+        },
+        {
+          account: TRADER,
+          marketId: '2',
+          outcome: 'NO',
+          qtyRaw: '3000000',
+          updatedAt: 1_700_000_020,
+        },
+      ],
+    });
+
+    const legacy = (
+      await app.inject({ method: 'GET', url: `/accounts/${TRADER}` })
+    ).json<AccountResponse>();
+    expect(legacy.positions).toHaveLength(4);
+    expect(legacy).not.toHaveProperty('positionsNextCursor');
+
+    const filtered = (
+      await app.inject({
+        method: 'GET',
+        url: `/accounts/${TRADER}?marketId=2`,
+      })
+    ).json<AccountResponse>();
+    expect(filtered.positions.map(({ marketId }) => marketId)).toEqual(['2', '2']);
+    expect(filtered.pnl).toEqual(legacy.pnl);
+    expect(filtered.account).toEqual(legacy.account);
+    expect(filtered).not.toHaveProperty('positionsNextCursor');
+
+    const first = (
+      await app.inject({
+        method: 'GET',
+        url: `/accounts/${TRADER}?positionsLimit=2`,
+      })
+    ).json<AccountResponse>();
+    expect(first.positions.map(({ marketId, outcome }) => `${marketId}:${outcome}`)).toEqual([
+      '2:NO',
+      '2:YES',
+    ]);
+    expect(first.positionsNextCursor).toEqual(expect.any(String));
+
+    const second = (
+      await app.inject({
+        method: 'GET',
+        url: `/accounts/${TRADER}?positionsLimit=2&positionsCursor=${encodeURIComponent(
+          first.positionsNextCursor ?? '',
+        )}`,
+      })
+    ).json<AccountResponse>();
+    expect(second.positions.map(({ marketId, outcome }) => `${marketId}:${outcome}`)).toEqual([
+      '1:NO',
+      '1:YES',
+    ]);
+    expect(second.positionsNextCursor).toBeNull();
+    expect(
+      new Set(
+        [...first.positions, ...second.positions].map(
+          ({ marketId, outcome }) => `${marketId}:${outcome}`,
+        ),
+      ).size,
+    ).toBe(4);
+    expect(second.pnl).toEqual(legacy.pnl);
+  });
+
+  it('rejects out-of-range book/account bounds and malformed position cursors', async () => {
+    for (const url of [
+      '/markets/1/book?orderLimitPerSide=0',
+      '/markets/1/book?orderLimitPerSide=101',
+      '/orderbook/101?orderLimitPerSide=0',
+      `/accounts/${TRADER}?positionsLimit=0`,
+      `/accounts/${TRADER}?positionsLimit=201`,
+      `/accounts/${TRADER}?positionsLimit=2&positionsCursor=not-a-cursor`,
+    ]) {
+      const response = await app.inject({ method: 'GET', url });
+      expect(response.statusCode, url).toBe(400);
+    }
   });
 
   it('GET /accounts/:addr/exchange-approvals returns indexed state without guessing', async () => {
