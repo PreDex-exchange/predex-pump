@@ -1,0 +1,29 @@
+[Unit]
+Description=Predex production Next.js frontend
+PartOf=predex.target
+Wants=predex-api.service
+After=predex-api.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=/users/span14/predex-builds/predex-pump/runtime/runtime.env
+Environment=NODE_ENV=production
+Environment=PORT=3002
+Environment=HOSTNAME=127.0.0.1
+Environment=PATH=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/users/span14/predex-builds/predex-pump/source/frontend
+ExecStartPre=/users/span14/predex-builds/predex-pump/runtime/bin/runtime-remote.sh unit-preflight frontend
+ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm start --hostname 127.0.0.1 --port 3002
+Restart=on-failure
+RestartSec=3s
+KillMode=control-group
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predex-frontend
+UMask=0077
+
+[Install]
+WantedBy=predex.target

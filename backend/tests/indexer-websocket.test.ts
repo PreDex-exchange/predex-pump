@@ -313,6 +313,7 @@ describe('WebSocket-driven indexer', () => {
     client: PublicClient,
     subscriptionTransportFactory: (url: string) => IndexerSubscriptionTransport,
     onEvents?: (events: readonly unknown[]) => Promise<void>,
+    now?: () => Date,
   ): ActiveRun {
     const controller = new AbortController();
     const run = runIndexer(testPrisma, config, {
@@ -326,6 +327,7 @@ describe('WebSocket-driven indexer', () => {
         : {
             onEvents: async (events) => onEvents(events),
           }),
+      ...(now === undefined ? {} : { now }),
     });
     const active = { controller, run };
     activeRuns.push(active);
@@ -857,11 +859,21 @@ describe('WebSocket-driven indexer', () => {
     releaseReconnectGap();
 
     await waitUntil(
-      async () =>
-        (await testPrisma.registeredMarketType.findUnique({
-          where: { version: 7 },
-        })) !== null,
-      'the reconnect gap-fill event',
+      async () => {
+        const [registeredMarketType, subscriptionState] = await Promise.all([
+          testPrisma.registeredMarketType.findUnique({
+            where: { version: 7 },
+          }),
+          testPrisma.indexerSubscriptionState.findUnique({
+            where: { id: 1 },
+          }),
+        ]);
+        return (
+          registeredMarketType !== null &&
+          subscriptionState?.status === 'connected'
+        );
+      },
+      'the reconnect gap-fill event and trusted subscription',
     );
     expect(transports.length).toBeGreaterThanOrEqual(2);
     expect(transports[0]?.close).toHaveBeenCalledTimes(1);
@@ -885,6 +897,8 @@ describe('WebSocket-driven indexer', () => {
   });
 
   it('detects a silent newHeads subscription and stops reporting healthy', async () => {
+    const webSocketStallMs = 40;
+    let nowMs = 1_700_000_000_000;
     const transport = new FakeSubscriptionTransport();
     const client = asClient({
       getBlockNumber: async () => 99n,
@@ -893,13 +907,15 @@ describe('WebSocket-driven indexer', () => {
     start(
       testConfig({
         fallbackPollMs: 1_000,
-        webSocketStallMs: 40,
+        webSocketStallMs,
         webSocketHeartbeatMs: 10,
         webSocketReconnectBaseMs: 1_000,
         webSocketReconnectMaxMs: 1_000,
       }),
       client,
       () => transport,
+      undefined,
+      () => new Date(nowMs),
     );
 
     await waitUntil(
@@ -916,6 +932,7 @@ describe('WebSocket-driven indexer', () => {
           ?.lastBlock === 100,
       'the last live subscription watermark',
     );
+    nowMs += webSocketStallMs + 1;
     await waitUntil(
       async () =>
         transport.close.mock.calls.length === 1 &&
@@ -925,7 +942,7 @@ describe('WebSocket-driven indexer', () => {
       'silent-stall fallback',
     );
 
-    expect(await getHealth(testPrisma, 1_000)).toMatchObject({
+    expect(await getHealth(testPrisma, 1_000, new Date(nowMs))).toMatchObject({
       ok: true,
       indexerStatus: 'degraded',
       indexedBlock: 100,

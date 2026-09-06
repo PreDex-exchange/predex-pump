@@ -36,6 +36,7 @@ source_id="$(git -C "$repo_root" rev-parse --short=12 HEAD)-${source_hash:0:12}"
 ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" bash -s -- "$source_dir" <<'REMOTE'
 set -euo pipefail
 source_dir="$1"
+runtime_active='/users/span14/predex-builds/predex-pump/runtime/active'
 case "$source_dir" in
   /users/span14/predex-builds/predex-pump/source) ;;
   *)
@@ -45,6 +46,10 @@ case "$source_dir" in
 esac
 if [[ -e "$source_dir/.qa/active" ]]; then
   printf 'Refusing to sync over an active QA stack; run qa-stack.sh down first.\n' >&2
+  exit 1
+fi
+if [[ -e "$runtime_active" ]]; then
+  printf 'Refusing to sync over the active persistent runtime; run runtime.sh down first.\n' >&2
   exit 1
 fi
 REMOTE
@@ -81,6 +86,7 @@ rsync -az --delete --delete-excluded \
   --exclude='**/coverage/' \
   --exclude='.qa/' \
   --exclude='.gstack/' \
+  --exclude='runtime/' \
   --exclude='*.log' \
   -e "ssh ${ssh_args[*]}" \
   "$repo_root/" "$CLOUDLAB_HOST:$source_dir/"

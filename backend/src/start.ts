@@ -1,6 +1,5 @@
 import 'dotenv/config';
 
-import { MARKETS_CACHE_NAMESPACE } from './api/routes.js';
 import { buildServer } from './api/server.js';
 import { createNodeRedisPublicJsonReadCache } from './cache/node-redis.js';
 import { loadRuntimeConfig } from './config.js';
@@ -8,6 +7,7 @@ import { prisma } from './db.js';
 import { PrismaMarketCatalog } from './dedup/market-catalog.js';
 import { createDedupRuntime } from './dedup/runtime.js';
 import { ServerEventBus } from './events/bus.js';
+import { publishCommittedIndexedEvents } from './events/committed.js';
 import { publishIndexedEvents } from './events/projector.js';
 import { terminateOnFatal } from './fatal.js';
 import { parseServerOptions, SERVER_HELP } from './indexer/cli.js';
@@ -61,12 +61,11 @@ async function main(): Promise<void> {
           ? {}
           : { startPolicy: parsed.startPolicy }),
         onEvents: async (events) => {
-          if (events.length === 0) return;
-          // applyDecodedEvents invokes this only after its serializable database
-          // transaction commits. Await the bounded best-effort invalidation so
-          // a WebSocket-triggered refetch cannot observe the prior cache epoch.
-          await publicReadCache.invalidate(MARKETS_CACHE_NAMESPACE);
-          await publishIndexedEvents(prisma, eventBus, events);
+          await publishCommittedIndexedEvents(events, {
+            publicReadCache,
+            publishLocal: (committed) =>
+              publishIndexedEvents(prisma, eventBus, committed),
+          });
         },
         marketDedupIndexer: dedup.indexer,
       });

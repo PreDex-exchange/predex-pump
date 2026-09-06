@@ -9,7 +9,7 @@ import {
 import { BookMigrationOperator } from './orderbook/migration.js';
 import {
   createViemSettlementSubmitter,
-  operatorAccountFromEnv,
+  operatorAccountFromRuntime,
   runOperatorLoop,
   SettlementOperator,
 } from './orderbook/operator.js';
@@ -33,7 +33,7 @@ function tokenRegistrationEnabled(): boolean {
 
 async function main(): Promise<void> {
   const config = loadRuntimeConfig();
-  const account = operatorAccountFromEnv();
+  const account = await operatorAccountFromRuntime();
   const client = createArcPublicClient(config.rpcUrls);
   const submitter = createViemSettlementSubmitter(account, config.rpcUrl);
   const settlementOperator = new SettlementOperator(

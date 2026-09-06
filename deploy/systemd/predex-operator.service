@@ -1,0 +1,34 @@
+[Unit]
+Description=Predex singleton Hybrid migration and settlement operator
+PartOf=predex.target
+Requires=predex-data.service
+Wants=predex-api.service predex-indexer.service
+After=predex-data.service predex-api.service predex-indexer.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=/users/span14/predex-builds/predex-pump/runtime/runtime.env
+Environment=NODE_ENV=production
+Environment=DATABASE_URL=postgresql://predex:predex@127.0.0.1:5432/predex_pump?schema=public
+Environment=DATABASE_POOL_SIZE=8
+Environment=QDRANT_URL=http://127.0.0.1:6333
+Environment=OPERATOR_REGISTER_TOKENS=true
+Environment=PATH=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
+LoadCredential=operator-private-key:/users/span14/predex-builds/predex-pump/runtime/operator.key
+WorkingDirectory=/users/span14/predex-builds/predex-pump/source/backend
+ExecStartPre=/users/span14/predex-builds/predex-pump/runtime/bin/runtime-remote.sh unit-preflight operator
+ExecStart=/usr/bin/env OPERATOR_PRIVATE_KEY_FILE=${CREDENTIALS_DIRECTORY}/operator-private-key /users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm operator
+Restart=on-failure
+RestartSec=3s
+KillMode=control-group
+TimeoutStartSec=720
+TimeoutStopSec=130
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predex-operator
+UMask=0077
+
+[Install]
+WantedBy=predex.target

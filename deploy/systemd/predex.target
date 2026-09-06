@@ -1,0 +1,8 @@
+[Unit]
+Description=Predex persistent Arc testnet runtime
+Requires=predex-data.service
+Wants=predex-api.service predex-indexer.service predex-frontend.service predex-operator.service
+After=predex-data.service
+
+[Install]
+WantedBy=default.target

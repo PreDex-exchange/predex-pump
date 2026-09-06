@@ -374,6 +374,20 @@ export interface ReadCacheHealth {
   invalidations: number;
 }
 
+export type PublicEventsStatus = 'disabled' | 'connecting' | 'ready' | 'degraded';
+
+/** Best-effort cross-process public notifications; Postgres remains authoritative. */
+export interface PublicEventsHealth {
+  status: PublicEventsStatus;
+  publisherReady: boolean;
+  subscriberReady: boolean;
+  published: number;
+  received: number;
+  rejected: number;
+  dropped: number;
+  errors: number;
+}
+
 export interface HealthResponse {
   ok: boolean;
   chainId: number;
@@ -392,6 +406,8 @@ export interface HealthResponse {
   dedupIndex: DedupIndexHealth;
   /** Redis-backed acceleration for public reads; degradation never fails core reads. */
   readCache: ReadCacheHealth;
+  /** Redis Pub/Sub bridge health. It is deliberately excluded from core `ok`. */
+  publicEvents?: PublicEventsHealth;
   /** Append-only audit history of blocks intentionally omitted at startup. */
   historyGaps: IndexerHistoryGap[];
 }

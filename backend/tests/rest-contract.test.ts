@@ -1401,6 +1401,16 @@ describe('REST shared contract', () => {
         errors: 0,
         invalidations: 0,
       },
+      publicEvents: {
+        status: 'disabled',
+        publisherReady: false,
+        subscriberReady: false,
+        published: 0,
+        received: 0,
+        rejected: 0,
+        dropped: 0,
+        errors: 0,
+      },
       historyGaps: [],
     });
   });

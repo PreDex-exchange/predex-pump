@@ -12,6 +12,7 @@ import {
   type MarketDetailResponse,
   type OrderBookResponse,
   type PriceHistoryResponse,
+  type PublicEventsHealth,
   type TruthSignalResponse,
 } from '@predex-pump/shared';
 import type { FastifyInstance } from 'fastify';
@@ -151,6 +152,7 @@ export function registerRestRoutes(
   dedupIndexHealthReader?: DedupIndexHealthReader,
   publicReadCache: PublicJsonReadCache = createDisabledPublicJsonReadCache(),
   marketListCacheTtlSeconds = DEFAULT_MARKETS_CACHE_TTL_SECONDS,
+  publicEventsHealthReader?: { getHealth(): PublicEventsHealth },
 ): void {
   const readConfig = createCachedConfigReader(prisma);
 
@@ -430,6 +432,7 @@ export function registerRestRoutes(
         new Date(),
         dedupIndex,
         publicReadCache.getHealth(),
+        publicEventsHealthReader?.getHealth(),
       );
     },
   );

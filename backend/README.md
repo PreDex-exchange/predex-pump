@@ -26,6 +26,21 @@ pnpm start
 - Override the listener with `API_HOST` / `API_PORT`.
 - CORS is open for local frontend development.
 
+For persistent deployments, run the serving and indexing lifecycles separately:
+
+```sh
+pnpm api
+pnpm indexer
+```
+
+`pnpm api` contains only REST, WebSocket delivery, dedup/truth reads, and the public read cache; it
+does not run the indexer or operator. The standalone indexer invalidates the Redis market-cache
+epoch after each committed batch and publishes that batch on one deployment-scoped Pub/Sub topic;
+the standalone API subscribes and projects it onto its worker-local WebSocket bus. `pnpm start`
+keeps its indexer-to-WebSocket handoff local and does not join that topic. Pub/Sub has no replay or
+delivery acknowledgement: reconnecting clients still refetch authoritative Postgres state, and
+Redis degradation is reported under `/health.publicEvents` without changing core health `ok`.
+
 `pnpm dev` runs the same entrypoint under the `tsx` file watcher. Useful one-shot and inspection
 commands:
 
@@ -39,7 +54,9 @@ pnpm test
 ## Graduated-book operator
 
 Apply database migrations before starting the operator, then inject `OPERATOR_PRIVATE_KEY` from a
-runtime secret store. The key must belong to the configured CTFExchange operator address.
+runtime secret store, or set `OPERATOR_PRIVATE_KEY_FILE` to an owner-only (0400/0600) systemd
+credential containing the key. The two settings are mutually exclusive. File whitespace is
+trimmed; the key must belong to the configured CTFExchange operator address.
 
 `OPERATOR_REGISTER_TOKENS=false` is the safe default. On Arc Testnet, set it to `true` only after
 confirming that address still has CTFExchange `ADMIN_ROLE`. Registration activates direct
