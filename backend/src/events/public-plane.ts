@@ -198,9 +198,8 @@ function encodeValue(value: unknown, depth = 0): WireValue {
   if (typeof value === 'bigint') {
     return { type: 'bigint', value: value.toString() };
   }
-  if (typeof value === 'string' || typeof value === 'boolean') {
-    return { type: value, value };
-  }
+  if (typeof value === 'string') return { type: 'string', value };
+  if (typeof value === 'boolean') return { type: 'boolean', value };
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) {
       throw new Error('Decoded event contains a non-finite number');

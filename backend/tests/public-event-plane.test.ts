@@ -338,10 +338,10 @@ describe('Redis public event plane', () => {
     await expect(
       closeApiRuntime({
         app: {
-          close: async () => {
+          close: (async () => {
             calls.push('app');
             throw new Error('socket close failed');
-          },
+          }) as Parameters<typeof closeApiRuntime>[0]['app']['close'],
         },
         publicEventPlane: {
           close: async () => {
