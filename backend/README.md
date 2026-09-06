@@ -106,7 +106,10 @@ at or below 100 ms for every other interactive scenario. It also requires at lea
 price ticks/sec when each tick re-marks 100 positions and WebSocket publish p95 below 250 µs with
 500 clients. Interactive reads use 20 book orders per side, 500 price points, and 100 account
 positions. Matching unbounded/2,000-point `.bulk` scenarios remain in the result with a null target
-as informational capacity measurements and do not decide the interactive gate.
+as informational capacity measurements and do not decide the interactive gate. WebSocket clients
+receive 200 warmup events by default (`--ws-warmup-events`); warmup uses the same child/event-bus/
+socket path and is verified separately, but its publishes, duration, and deliveries are excluded
+from the reported WebSocket metric.
 
 ## Serving contract
 

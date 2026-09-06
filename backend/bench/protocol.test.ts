@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertHotHybridResponses,
+  assertWebsocketDeliverySnapshot,
   BOUNDED_BOOK_REST_P95_MS,
+  createWebsocketDeliveryTracker,
   DEFAULT_INTERACTIVE_REST_P95_MS,
   evaluateRestGate,
   parseBenchmarkServerMessage,
@@ -56,6 +58,53 @@ describe('benchmark child protocol', () => {
         result: { publishP95Us: Number.NaN },
       }),
     ).toThrow(/publishP50Us/u);
+  });
+
+  it('accepts exact WS phase delivery and rejects misses or leakage', () => {
+    expect(() =>
+      assertWebsocketDeliverySnapshot({
+        phase: 'warmup',
+        expectedTargetDeliveries: 1_000,
+        targetDeliveries: 1_000,
+        nonTargetDeliveries: 0,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertWebsocketDeliverySnapshot({
+        phase: 'warmup',
+        expectedTargetDeliveries: 1_000,
+        targetDeliveries: 999,
+        nonTargetDeliveries: 0,
+      }),
+    ).toThrow(/warmup target clients received 999\/1000/u);
+    expect(() =>
+      assertWebsocketDeliverySnapshot({
+        phase: 'measurement',
+        expectedTargetDeliveries: 10_000,
+        targetDeliveries: 10_000,
+        nonTargetDeliveries: 1,
+      }),
+    ).toThrow(/measurement delivered 1 updates to non-target/u);
+  });
+
+  it('keeps warmup and measured delivery counters independent', async () => {
+    const warmup = createWebsocketDeliveryTracker('warmup', 2);
+    warmup.record(true);
+    warmup.record(true);
+    await warmup.delivered;
+
+    const measurement = createWebsocketDeliveryTracker('measurement', 1);
+    measurement.record(true);
+    await measurement.delivered;
+
+    expect(warmup.snapshot).toMatchObject({
+      targetDeliveries: 2,
+      nonTargetDeliveries: 0,
+    });
+    expect(measurement.snapshot).toMatchObject({
+      targetDeliveries: 1,
+      nonTargetDeliveries: 0,
+    });
   });
 });
 

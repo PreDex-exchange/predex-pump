@@ -10,6 +10,66 @@ export interface PublishDistribution {
   publishesPerSecond: number;
 }
 
+export interface WebsocketDeliverySnapshot {
+  phase: 'warmup' | 'measurement';
+  expectedTargetDeliveries: number;
+  targetDeliveries: number;
+  nonTargetDeliveries: number;
+}
+
+export interface WebsocketDeliveryTracker {
+  snapshot: WebsocketDeliverySnapshot;
+  delivered: Promise<void>;
+  record(isTarget: boolean): void;
+}
+
+export function createWebsocketDeliveryTracker(
+  phase: WebsocketDeliverySnapshot['phase'],
+  expectedTargetDeliveries: number,
+): WebsocketDeliveryTracker {
+  let resolveDelivered: () => void = () => undefined;
+  const delivered = new Promise<void>((resolve) => {
+    resolveDelivered = () => resolve();
+  });
+  const snapshot: WebsocketDeliverySnapshot = {
+    phase,
+    expectedTargetDeliveries,
+    targetDeliveries: 0,
+    nonTargetDeliveries: 0,
+  };
+  return {
+    snapshot,
+    delivered,
+    record: (isTarget) => {
+      if (isTarget) {
+        snapshot.targetDeliveries += 1;
+        if (snapshot.targetDeliveries === expectedTargetDeliveries) {
+          resolveDelivered();
+        }
+      } else {
+        snapshot.nonTargetDeliveries += 1;
+      }
+    },
+  };
+}
+
+export function assertWebsocketDeliverySnapshot(
+  snapshot: WebsocketDeliverySnapshot,
+): void {
+  if (snapshot.targetDeliveries !== snapshot.expectedTargetDeliveries) {
+    throw new Error(
+      `WebSocket ${snapshot.phase} target clients received ` +
+        `${snapshot.targetDeliveries}/${snapshot.expectedTargetDeliveries} updates`,
+    );
+  }
+  if (snapshot.nonTargetDeliveries !== 0) {
+    throw new Error(
+      `WebSocket ${snapshot.phase} delivered ${snapshot.nonTargetDeliveries} ` +
+        'updates to non-target clients',
+    );
+  }
+}
+
 export type BenchmarkServerRequest =
   | {
       type: 'publish';

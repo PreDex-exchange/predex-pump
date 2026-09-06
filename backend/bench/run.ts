@@ -11,12 +11,16 @@ import { applyDecodedEvents } from '../src/indexer/runner.js';
 import type { DecodedEvent } from '../src/indexer/types.js';
 import {
   assertHotHybridResponses,
+  assertWebsocketDeliverySnapshot,
   BOUNDED_BOOK_REST_P95_MS,
+  createWebsocketDeliveryTracker,
   DEFAULT_INTERACTIVE_REST_P95_MS,
   evaluateRestGate,
   payloadRestScenarios,
   type BenchmarkRestScenario,
   type HotHybridEvidence,
+  type WebsocketDeliverySnapshot,
+  type WebsocketDeliveryTracker,
 } from './protocol.js';
 import { resolveBenchmarkProvenance } from './provenance.js';
 import {
@@ -516,16 +520,11 @@ async function benchmarkWebsocket(
   server: Pick<BenchmarkServerController, 'publish'>,
   clientCount: number,
   targetSubscribers: number,
+  warmupEventCount: number,
   eventCount: number,
 ): Promise<Record<string, number>> {
   const sockets: WebSocket[] = [];
-  let targetDeliveries = 0;
-  let nonTargetDeliveries = 0;
-  let resolveDelivered: (() => void) | undefined;
-  const delivered = new Promise<void>((resolvePromise) => {
-    resolveDelivered = resolvePromise;
-  });
-  const expectedTargetDeliveries = targetSubscribers * eventCount;
+  let activeTracker: WebsocketDeliveryTracker | undefined;
 
   try {
     for (let offset = 0; offset < clientCount; offset += 50) {
@@ -552,14 +551,7 @@ async function benchmarkWebsocket(
                     return;
                   }
                   if (message.type === 'update') {
-                    if (index < targetSubscribers) {
-                      targetDeliveries += 1;
-                      if (targetDeliveries === expectedTargetDeliveries) {
-                        resolveDelivered?.();
-                      }
-                    } else {
-                      nonTargetDeliveries += 1;
-                    }
+                    activeTracker?.record(index < targetSubscribers);
                   }
                 });
                 socket.once('error', reject);
@@ -580,51 +572,62 @@ async function benchmarkWebsocket(
       await Promise.all(batch);
     }
 
-    const endToEndStartedAt = performance.now();
-    let deliveryTimer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      deliveryTimer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              `WebSocket delivery timed out at ${targetDeliveries}/${expectedTargetDeliveries}`,
+    const runPhase = async (
+      phase: WebsocketDeliverySnapshot['phase'],
+      phaseEventCount: number,
+    ) => {
+      const tracker = createWebsocketDeliveryTracker(
+        phase,
+        targetSubscribers * phaseEventCount,
+      );
+      activeTracker = tracker;
+      const endToEndStartedAt = performance.now();
+      let deliveryTimer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        deliveryTimer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `WebSocket ${phase} delivery timed out at ` +
+                  `${tracker.snapshot.targetDeliveries}/` +
+                  `${tracker.snapshot.expectedTargetDeliveries}`,
+              ),
             ),
-          ),
-        30_000,
-      );
-    });
-    try {
-      const [publish] = await Promise.all([
-        server.publish(eventCount, BASE_TS),
-        Promise.race([delivered, timeout]),
-      ]);
-      const endToEndDurationMs = performance.now() - endToEndStartedAt;
-      if (targetDeliveries !== expectedTargetDeliveries) {
-        throw new Error(
-          `Target clients received ${targetDeliveries}/${expectedTargetDeliveries} updates`,
+          30_000,
         );
+      });
+      try {
+        const [publish] = await Promise.all([
+          server.publish(phaseEventCount, BASE_TS),
+          Promise.race([tracker.delivered, timeout]),
+        ]);
+        const endToEndDurationMs = performance.now() - endToEndStartedAt;
+        assertWebsocketDeliverySnapshot(tracker.snapshot);
+        return { publish, endToEndDurationMs, snapshot: tracker.snapshot };
+      } finally {
+        if (deliveryTimer !== undefined) clearTimeout(deliveryTimer);
+        if (activeTracker === tracker) activeTracker = undefined;
       }
-      if (nonTargetDeliveries !== 0) {
-        throw new Error(`Non-target clients received ${nonTargetDeliveries} updates`);
-      }
-      const result = {
-        clients: clientCount,
-        targetSubscribers,
-        events: eventCount,
-        deliveredMessages: targetDeliveries,
-        nonTargetDeliveries,
-        ...publish,
-        endToEndDurationMs,
-      };
-      console.info(
-        `[bench:ws] clients=${clientCount} target=${targetSubscribers} ` +
-          `p95=${result.publishP95Us.toFixed(2)}us ` +
-          `rate=${result.publishesPerSecond.toFixed(1)} broadcasts/s`,
-      );
-      return result;
-    } finally {
-      if (deliveryTimer !== undefined) clearTimeout(deliveryTimer);
-    }
+    };
+
+    await runPhase('warmup', warmupEventCount);
+    // A fresh tracker keeps every warmup delivery and publish sample out of the metric.
+    const measured = await runPhase('measurement', eventCount);
+    const result = {
+      clients: clientCount,
+      targetSubscribers,
+      events: eventCount,
+      deliveredMessages: measured.snapshot.targetDeliveries,
+      nonTargetDeliveries: measured.snapshot.nonTargetDeliveries,
+      ...measured.publish,
+      endToEndDurationMs: measured.endToEndDurationMs,
+    };
+    console.info(
+      `[bench:ws] clients=${clientCount} target=${targetSubscribers} ` +
+        `p95=${result.publishP95Us.toFixed(2)}us ` +
+        `rate=${result.publishesPerSecond.toFixed(1)} broadcasts/s`,
+    );
+    return result;
   } finally {
     await Promise.all(sockets.map(closeSocket));
   }
@@ -732,6 +735,7 @@ async function main(): Promise<void> {
   const warmupRequests = positiveFlag(argv, 'warmup', 20);
   const wsClients = positiveFlag(argv, 'ws-clients', 500);
   const wsSubscribers = positiveFlag(argv, 'ws-subscribers', 5);
+  const wsWarmupEvents = positiveFlag(argv, 'ws-warmup-events', 200);
   const wsEvents = positiveFlag(argv, 'ws-events', 2_000);
   const ingestEvents = positiveFlag(argv, 'ingest-events', 10);
   const ingestPositions = positiveFlag(argv, 'ingest-positions', 100);
@@ -849,6 +853,7 @@ async function main(): Promise<void> {
       server,
       wsClients,
       wsSubscribers,
+      wsWarmupEvents,
       wsEvents,
     );
 
@@ -875,6 +880,7 @@ async function main(): Promise<void> {
         restWarmupRequests: warmupRequests,
         wsClients,
         wsSubscribers,
+        wsWarmupEvents,
         wsEvents,
         ingestEvents,
         ingestPositions,
