@@ -293,7 +293,7 @@ assert_named_volume() {
   local expected_destination="$3"
   local mounts
   mounts="$(docker_safe container inspect --format \
-    '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Destination}}{{"\\n"}}{{end}}' \
+    '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Destination}}{{"\n"}}{{end}}' \
     "$container")"
   [[ "$mounts" == "volume|$expected_name|$expected_destination" ]] ||
     fail "container mount does not match protected runtime volume: $expected_name"

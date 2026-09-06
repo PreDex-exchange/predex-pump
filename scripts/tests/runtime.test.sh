@@ -88,6 +88,10 @@ assert_file_contains "$UNIT_DIR/predex-operator.service" 'LoadCredential=operato
 assert_file_contains "$REPO_DIR/scripts/cloudlab/sync.sh" '/users/span14/predex-builds/predex-pump/runtime/active'
 assert_file_contains "$REPO_DIR/scripts/cloudlab/sync.sh" "--exclude='runtime/'"
 assert_file_contains "$SCRIPT" 'LOCAL_OPERATOR_CREDENTIAL="${PREDEX_OPERATOR_CREDENTIAL_FILE:-$REPO_ROOT/../.credentials/.arc}"'
+assert_file_contains "$REMOTE_HELPER" '{{"\n"}}'
+if grep -Fq '{{"\\n"}}' "$REMOTE_HELPER"; then
+  fail 'runtime helper asks Docker to emit a literal backslash-n mount suffix'
+fi
 if grep -Eq '(^|[[:space:]])(kill|pkill|killall)([[:space:]]|$)|\.pid' "$REMOTE_HELPER"; then
   fail 'runtime helper uses unmanaged PID signalling'
 fi
