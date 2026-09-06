@@ -1,8 +1,8 @@
 [Unit]
 Description=Predex singleton Hybrid migration and settlement operator
 PartOf=predex.target
-Requires=predex-data.service predex-indexer.service
-Wants=predex-api.service
+Requires=predex-data.service
+Wants=predex-api.service predex-indexer.service
 After=predex-data.service predex-api.service predex-indexer.service
 StartLimitIntervalSec=60
 StartLimitBurst=5

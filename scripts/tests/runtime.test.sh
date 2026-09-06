@@ -31,6 +31,10 @@ assert_file_contains() {
   grep -Fq -- "$2" "$1" || fail "$1 does not contain: $2"
 }
 
+assert_file_line() {
+  grep -Fxq -- "$2" "$1" || fail "$1 does not contain exact line: $2"
+}
+
 file_mode() {
   local path="$1"
   if stat -f '%Lp' "$path" >/dev/null 2>&1; then
@@ -63,16 +67,20 @@ for unit in predex-data.service predex-api.service predex-indexer.service predex
   assert_file_contains "$UNIT_DIR/$unit" 'StandardOutput=journal'
   assert_file_contains "$UNIT_DIR/$unit" 'Environment=PATH=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin'
 done
-assert_file_contains "$UNIT_DIR/predex-frontend.service" 'PartOf=predex.target'
-assert_file_contains "$UNIT_DIR/predex-frontend.service" 'Wants=predex-api.service'
-assert_file_contains "$UNIT_DIR/predex-frontend.service" 'After=predex-api.service'
-assert_file_contains "$UNIT_DIR/predex-operator.service" 'PartOf=predex.target'
-assert_file_contains "$UNIT_DIR/predex-operator.service" 'Requires=predex-data.service predex-indexer.service'
-assert_file_contains "$UNIT_DIR/predex-operator.service" 'Wants=predex-api.service'
-assert_file_contains "$UNIT_DIR/predex-operator.service" 'After=predex-data.service predex-api.service predex-indexer.service'
+assert_file_line "$UNIT_DIR/predex-frontend.service" 'PartOf=predex.target'
+assert_file_line "$UNIT_DIR/predex-frontend.service" 'Wants=predex-api.service'
+assert_file_line "$UNIT_DIR/predex-frontend.service" 'After=predex-api.service'
+assert_file_line "$UNIT_DIR/predex-operator.service" 'PartOf=predex.target'
+assert_file_line "$UNIT_DIR/predex-operator.service" 'Requires=predex-data.service'
+assert_file_line "$UNIT_DIR/predex-operator.service" 'Wants=predex-api.service predex-indexer.service'
+assert_file_line "$UNIT_DIR/predex-operator.service" 'After=predex-data.service predex-api.service predex-indexer.service'
 if grep -Eq '^Requires=.*predex-api\.service' \
   "$UNIT_DIR/predex-frontend.service" "$UNIT_DIR/predex-operator.service"; then
   fail 'frontend or operator keeps API as a hard Requires dependency'
+fi
+if grep -Eq '^Requires=.*predex-indexer\.service' \
+  "$UNIT_DIR/predex-operator.service"; then
+  fail 'operator keeps indexer as a hard Requires dependency'
 fi
 assert_file_contains "$UNIT_DIR/predex-api.service" 'ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm api'
 assert_file_contains "$UNIT_DIR/predex-indexer.service" 'ExecStart=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin/pnpm indexer'
