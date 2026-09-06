@@ -102,6 +102,12 @@ assert_file_contains "$UNIT_DIR/predex-api.service" 'Environment=PREDEX_WEB_ORIG
 assert_file_contains "$UNIT_DIR/predex-api.service" 'Environment=SIWE_DOMAIN=localhost:3002'
 assert_file_contains "$UNIT_DIR/predex-api.service" 'Environment=SIWE_URI=http://localhost:3002'
 assert_file_contains "$UNIT_DIR/predex-api.service" 'Environment=ACCOUNT_COOKIE_SECURE=false'
+assert_file_line "$REPO_DIR/scripts/cloudlab/verify-mobile.sh" 'MOBILE_APP_URL="${MOBILE_APP_URL:-http://localhost:3002}"'
+assert_file_contains "$REPO_DIR/scripts/cloudlab/verify-mobile.sh" 'true:http://127.0.0.1:*'
+if grep -Fq 'MOBILE_APP_URL="${MOBILE_APP_URL:-http://127.0.0.1:3002}"' \
+  "$REPO_DIR/scripts/cloudlab/verify-mobile.sh"; then
+  fail 'standard mobile verification still defaults to the QA-only 127 origin'
+fi
 assert_file_contains "$UNIT_DIR/predex-indexer.service" 'TimeoutStopSec=130'
 assert_file_contains "$UNIT_DIR/predex-operator.service" 'TimeoutStopSec=130'
 assert_file_contains "$UNIT_DIR/predex-operator.service" 'LoadCredential=operator-private-key:/users/span14/predex-builds/predex-pump/runtime/operator.key'

@@ -49,18 +49,19 @@ CloudLab can run the Android shell and the official MetaMask app with KVM accele
 ```sh
 ./scripts/cloudlab/bootstrap-mobile-emulator.sh --accept-android-licenses
 ./scripts/cloudlab/sync.sh
+./scripts/cloudlab/verify.sh
 ./scripts/cloudlab/verify-mobile.sh
+./scripts/cloudlab/runtime.sh install
+./scripts/cloudlab/runtime.sh provision-operator
+./scripts/cloudlab/runtime.sh up
 ./scripts/cloudlab/mobile-emulator.sh start
 ```
 
-Start the application stack without the injected QA wallet:
-
-```sh
-./scripts/qa-stack.sh up --external-wallet
-```
-
 The emulator maps its loopback ports to CloudLab ports 3001 and 3002 with `adb reverse`,
-so use the standard debug APK built for `http://127.0.0.1:3002`. The acceptance flow is:
+so the standard debug APK uses `http://localhost:3002`, matching the persistent runtime's
+CORS, SIWE, REST, and WebSocket hostname. Do not start the QA stack alongside this runtime.
+`MOBILE_APP_URL` remains an explicit override for an isolated legacy QA stack that uses
+`http://127.0.0.1:3002`; it is not the persistent-runtime acceptance path. The flow is:
 connect MetaMask, add/switch to Arc Testnet, return through Android recents, explicitly
 sign in, and confirm the account screen loads. Create a disposable wallet in MetaMask;
 never send an existing recovery phrase or private key through ADB.

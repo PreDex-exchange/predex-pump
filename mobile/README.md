@@ -20,7 +20,7 @@ Production URLs must use HTTPS. Local HTTP is accepted only for explicit debug b
 
 ```sh
 flutter run \
-  --dart-define=PREDEX_APP_URL=http://127.0.0.1:3002 \
+  --dart-define=PREDEX_APP_URL=http://localhost:3002 \
   --dart-define=PREDEX_ALLOW_INSECURE_LOOPBACK=true
 ```
 
@@ -34,7 +34,7 @@ dart format --output=none --set-exit-if-changed .
 flutter analyze --fatal-infos --fatal-warnings
 flutter test
 flutter build apk --debug \
-  --dart-define=PREDEX_APP_URL=http://127.0.0.1:3002 \
+  --dart-define=PREDEX_APP_URL=http://localhost:3002 \
   --dart-define=PREDEX_ALLOW_INSECURE_LOOPBACK=true
 ```
 

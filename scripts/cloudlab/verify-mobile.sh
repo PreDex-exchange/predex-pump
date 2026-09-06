@@ -4,7 +4,7 @@ set -euo pipefail
 CLOUDLAB_HOST="${CLOUDLAB_HOST:-span14@c220g1-031117.wisc.cloudlab.us}"
 CLOUDLAB_IDENTITY_FILE="${CLOUDLAB_IDENTITY_FILE:-/Users/ggattacker/.ssh/cloudlab}"
 CLOUDLAB_REMOTE_ROOT="${CLOUDLAB_REMOTE_ROOT:-/users/span14/predex-builds/predex-pump}"
-MOBILE_APP_URL="${MOBILE_APP_URL:-http://127.0.0.1:3002}"
+MOBILE_APP_URL="${MOBILE_APP_URL:-http://localhost:3002}"
 MOBILE_ALLOW_INSECURE_LOOPBACK="${MOBILE_ALLOW_INSECURE_LOOPBACK:-true}"
 
 case "$CLOUDLAB_REMOTE_ROOT" in
