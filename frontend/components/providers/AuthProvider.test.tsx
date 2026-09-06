@@ -21,6 +21,12 @@ const FIRST_ADDRESS = `0x${'12'.repeat(20)}` as const;
 const SECOND_ADDRESS = `0x${'56'.repeat(20)}` as const;
 const mocks = vi.hoisted(() => ({
   address: `0x${'12'.repeat(20)}` as `0x${string}`,
+  accountStatus: null as
+    | 'connected'
+    | 'connecting'
+    | 'disconnected'
+    | 'reconnecting'
+    | null,
   isConnected: true,
   getSession: vi.fn(),
   getSiweNonce: vi.fn(),
@@ -75,7 +81,9 @@ vi.mock('wagmi', () => ({
     address: mocks.isConnected ? mocks.address : undefined,
     chainId: 5_042_002,
     isConnected: mocks.isConnected,
-    status: mocks.isConnected ? 'connected' : 'disconnected',
+    status:
+      mocks.accountStatus ??
+      (mocks.isConnected ? 'connected' : 'disconnected'),
   }),
   useConnect: () => ({
     connect: mocks.connect,
@@ -160,6 +168,7 @@ function renderAuth({
 
 beforeEach(() => {
   mocks.address = FIRST_ADDRESS;
+  mocks.accountStatus = null;
   mocks.isConnected = true;
   mocks.getSession.mockReset();
   mocks.getSiweNonce.mockReset().mockResolvedValue(siweNonce());
@@ -326,6 +335,7 @@ describe('AuthProvider wallet-bound sessions', () => {
 
     expect(screen.queryByText(`signed:${FIRST_ADDRESS}`)).toBeNull();
     await screen.findByText('anonymous');
+    await waitFor(() => expect(mocks.signOut).toHaveBeenCalledOnce());
     expect(mocks.signMessageAsync).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Use saved feature' }));
     await screen.findByText(`signed:${SECOND_ADDRESS}`);
@@ -353,18 +363,40 @@ describe('AuthProvider wallet-bound sessions', () => {
     expect(mocks.signMessageAsync).not.toHaveBeenCalled();
   });
 
-  it('never exposes or preserves an orphaned session without a wallet', async () => {
-    mocks.isConnected = false;
+  it('preserves a matching server session through transient connector hydration', async () => {
+    mocks.accountStatus = 'reconnecting';
     mocks.getSession.mockResolvedValue(authenticatedSession());
-    renderAuth({ showHeader: true });
+    const { queryClient, rendered } = renderAuth({ showHeader: true });
+
+    await screen.findByText(`signed:${FIRST_ADDRESS}`);
+    mocks.isConnected = false;
+    mocks.accountStatus = 'disconnected';
+    rendered.rerender(
+      <AuthTree queryClient={queryClient} showHeader />,
+    );
 
     await screen.findByText('anonymous');
-    await waitFor(() => expect(mocks.signOut).toHaveBeenCalledOnce());
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(mocks.signOut).not.toHaveBeenCalled();
     expect(
       screen.getByRole('button', { name: 'Connect MetaMask' }),
     ).toBeTruthy();
     expect(screen.queryByText(FIRST_ADDRESS)).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(1);
+
+    mocks.isConnected = true;
+    mocks.accountStatus = 'connected';
+    rendered.rerender(
+      <AuthTree queryClient={queryClient} showHeader />,
+    );
+
+    await screen.findByText(`signed:${FIRST_ADDRESS}`);
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(mocks.getSiweNonce).not.toHaveBeenCalled();
+    expect(mocks.signMessageAsync).not.toHaveBeenCalled();
+    expect(mocks.verifySiwe).not.toHaveBeenCalled();
   });
 
   it('selects MetaMask by connector identity rather than connector order', async () => {

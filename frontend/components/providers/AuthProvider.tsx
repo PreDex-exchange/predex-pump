@@ -67,7 +67,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const connectedAddress = isConnected ? address : undefined;
   const connectedAddressKey = addressKey(connectedAddress);
   const currentAddressRef = useRef<Address | undefined>(connectedAddress);
-  const previousAddressRef = useRef<Address | undefined>(connectedAddress);
+  // Hydration may expose a cached address before reconnect settles. Only a
+  // completed connection is durable evidence for a later disconnect/change.
+  const establishedAddressRef = useRef<Address | undefined>(
+    status === 'connected' ? connectedAddress : undefined,
+  );
   // Explicit sign-in requests for the same wallet share one in-flight prompt.
   const inFlightAttemptsRef = useRef(new Map<string, Promise<boolean>>());
   // Keep account changes and disconnects behind any older wallet prompt so a
@@ -253,20 +257,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [enqueueAuthWork, queryClient]);
 
   useEffect(() => {
-    const previousAddress = previousAddressRef.current;
-    previousAddressRef.current = connectedAddress;
-    if (previousAddress && !connectedAddress) void clearSession();
-  }, [clearSession, connectedAddress]);
-
-  useEffect(() => {
-    if (
-      status === 'disconnected' &&
-      sessionQuery.isSuccess &&
-      sessionQuery.data.authenticated
-    ) {
+    if (status === 'connected' && connectedAddress) {
+      const establishedAddress = establishedAddressRef.current;
+      establishedAddressRef.current = connectedAddress;
+      if (
+        establishedAddress &&
+        addressKey(establishedAddress) !== connectedAddressKey
+      ) {
+        void clearSession();
+      }
+      return;
+    }
+    if (status === 'disconnected' && establishedAddressRef.current) {
+      establishedAddressRef.current = undefined;
       void clearSession();
     }
-  }, [clearSession, sessionQuery.data, sessionQuery.isSuccess, status]);
+  }, [clearSession, connectedAddress, connectedAddressKey, status]);
 
   const walletSession = useMemo<SessionResponse | null>(() => {
     const savedSession = sessionQuery.data;
