@@ -31,6 +31,15 @@ assert_file_contains() {
   grep -Fq -- "$2" "$1" || fail "$1 does not contain: $2"
 }
 
+file_mode() {
+  local path="$1"
+  if stat -f '%Lp' "$path" >/dev/null 2>&1; then
+    stat -f '%Lp' "$path"
+  else
+    stat -c '%a' "$path"
+  fi
+}
+
 bash -n "$SCRIPT"
 bash -n "$REMOTE_HELPER"
 
@@ -271,7 +280,7 @@ remote_secret_output="$(
 )"
 [[ "$(tr -d '\n' < "$runtime_root/operator.key")" == "$sentinel" ]] ||
   fail 'remote credential content changed'
-[[ "$(stat -f '%Lp' "$runtime_root/operator.key" 2>/dev/null || stat -c '%a' "$runtime_root/operator.key")" == 600 ]] ||
+[[ "$(file_mode "$runtime_root/operator.key")" == 600 ]] ||
   fail 'remote credential mode is not 0600'
 assert_not_contains "$remote_secret_output" "$sentinel"
 
