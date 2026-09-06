@@ -1,6 +1,5 @@
 import 'dotenv/config';
 
-import { MARKETS_CACHE_NAMESPACE } from './api/routes.js';
 import { buildServer } from './api/server.js';
 import { createNodeRedisPublicJsonReadCache } from './cache/node-redis.js';
 import { loadRuntimeConfig } from './config.js';
@@ -8,6 +7,9 @@ import { prisma } from './db.js';
 import { PrismaMarketCatalog } from './dedup/market-catalog.js';
 import { createDedupRuntime } from './dedup/runtime.js';
 import { ServerEventBus } from './events/bus.js';
+import { publishCommittedIndexedEvents } from './events/committed.js';
+import { createNodeRedisPublicEventPlane } from './events/node-redis.js';
+import { predexPublicEventDeployment } from './events/public-plane.js';
 import { publishIndexedEvents } from './events/projector.js';
 import { terminateOnFatal } from './fatal.js';
 import { parseServerOptions, SERVER_HELP } from './indexer/cli.js';
@@ -32,6 +34,14 @@ async function main(): Promise<void> {
     url: config.redisUrl,
     keyPrefix: config.redisKeyPrefix,
   });
+  const publicEventPlane = createNodeRedisPublicEventPlane({
+    url: config.redisUrl,
+    deployment: predexPublicEventDeployment(config.redisKeyPrefix),
+    handlers: {
+      onIndexedBatch: (events) => publishIndexedEvents(prisma, eventBus, events),
+      onServerEvent: (event, ts) => eventBus.publish(event, ts),
+    },
+  });
 
   try {
     const app = await buildServer({
@@ -41,6 +51,7 @@ async function main(): Promise<void> {
       dedupIndexHealthReader: dedup.indexHealth,
       indexerStallMs: config.indexerStallMs,
       publicReadCache,
+      publicEventPlane,
       marketListCacheTtlSeconds: config.marketsCacheTtlSeconds,
       ...(truthPaymentGate === undefined ? {} : { truthPaymentGate }),
     });
@@ -61,12 +72,12 @@ async function main(): Promise<void> {
           ? {}
           : { startPolicy: parsed.startPolicy }),
         onEvents: async (events) => {
-          if (events.length === 0) return;
-          // applyDecodedEvents invokes this only after its serializable database
-          // transaction commits. Await the bounded best-effort invalidation so
-          // a WebSocket-triggered refetch cannot observe the prior cache epoch.
-          await publicReadCache.invalidate(MARKETS_CACHE_NAMESPACE);
-          await publishIndexedEvents(prisma, eventBus, events);
+          await publishCommittedIndexedEvents(events, {
+            publicReadCache,
+            publicEvents: publicEventPlane,
+            publishLocal: (committed) =>
+              publishIndexedEvents(prisma, eventBus, committed),
+          });
         },
         marketDedupIndexer: dedup.indexer,
       });
@@ -74,6 +85,7 @@ async function main(): Promise<void> {
       await app.close();
     }
   } finally {
+    await publicEventPlane.close();
     await publicReadCache.close();
     await prisma.$disconnect();
   }

@@ -12,11 +12,12 @@ import {
 } from '@predex-pump/shared/tx';
 import type { FastifyInstance } from 'fastify';
 import { zeroHash } from 'viem';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildServer } from '../src/api/server.js';
 import { SESSION_COOKIE_NAME } from '../src/account/service.js';
 import { ServerEventBus } from '../src/events/bus.js';
+import { OffchainOrderService } from '../src/orderbook/service.js';
 import { resetDatabase, testPrisma } from './database.js';
 import { seedContractData } from './fixtures.js';
 import {
@@ -87,6 +88,35 @@ describe('POST /orders validation', () => {
       where: { orderHash: request.orderHash.toLowerCase() },
     })).toMatchObject({ signature: request.order.signature });
     expect(reader.calls).toBe(1);
+  });
+
+  it('keeps a committed order and local notification when Redis publication fails', async () => {
+    const eventBus = new ServerEventBus();
+    const localDelivery = vi.fn();
+    eventBus.subscribe('book:1', localDelivery);
+    const publishServerEvent = vi.fn(async () => {
+      expect(localDelivery).toHaveBeenCalledOnce();
+      throw new Error('Redis unavailable');
+    });
+    const service = new OffchainOrderService(
+      testPrisma,
+      reader,
+      eventBus,
+      () => BOOK_NOW,
+      { publishIndexedBatch: async () => undefined, publishServerEvent },
+    );
+    const { request } = await signedOrderRequest({ salt: 101n });
+
+    await expect(service.ingest(request)).resolves.toMatchObject({
+      order: { orderHash: request.orderHash.toLowerCase() },
+    });
+    expect(localDelivery).toHaveBeenCalledOnce();
+    expect(publishServerEvent).toHaveBeenCalledOnce();
+    expect(
+      await testPrisma.signedOrder.findUnique({
+        where: { orderHash: request.orderHash.toLowerCase() },
+      }),
+    ).not.toBeNull();
   });
 
   it('rejects an order hash that does not match P1 hashing', async () => {

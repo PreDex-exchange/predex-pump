@@ -15,6 +15,7 @@ import type {
   OrderBookWindow,
   OrderBookResponse,
   PriceHistoryResponse,
+  PublicEventsHealth,
   ReadCacheHealth,
   TruthSignalResponse,
 } from '@predex-pump/shared';
@@ -1277,6 +1278,17 @@ const DISABLED_READ_CACHE_HEALTH: ReadCacheHealth = {
   invalidations: 0,
 };
 
+const DISABLED_PUBLIC_EVENTS_HEALTH: PublicEventsHealth = {
+  status: 'disabled',
+  publisherReady: false,
+  subscriberReady: false,
+  published: 0,
+  received: 0,
+  rejected: 0,
+  dropped: 0,
+  errors: 0,
+};
+
 export async function getHealth(
   prisma: PrismaClient,
   stallAfterMs = DEFAULT_INDEXER_STALL_MS,
@@ -1286,6 +1298,7 @@ export async function getHealth(
     'Dedup index health reader is not configured',
   ),
   readCache: ReadCacheHealth = DISABLED_READ_CACHE_HEALTH,
+  publicEvents: PublicEventsHealth = DISABLED_PUBLIC_EVENTS_HEALTH,
 ): Promise<HealthResponse> {
   const [state, subscription, gaps, persistedChainState] = await Promise.all([
     prisma.indexerState.findUnique({ where: { id: 1 } }),
@@ -1350,6 +1363,7 @@ export async function getHealth(
       chainState,
       dedupIndex,
       readCache,
+      publicEvents,
       historyGaps,
     };
   }
@@ -1398,6 +1412,7 @@ export async function getHealth(
     chainState,
     dedupIndex,
     readCache,
+    publicEvents,
     historyGaps,
   };
 }
