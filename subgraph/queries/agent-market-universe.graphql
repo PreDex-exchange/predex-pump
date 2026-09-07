@@ -1,0 +1,38 @@
+query AgentMarketUniverse($now: BigInt!, $limit: Int! = 20) {
+  _meta {
+    block {
+      number
+      timestamp
+    }
+    hasIndexingErrors
+  }
+  markets(
+    first: $limit
+    orderBy: lastTradeAt
+    orderDirection: desc
+    where: { phase: "GRADUATED", tradingEndsAt_gt: $now }
+  ) {
+    id
+    conditionId
+    tradingEndsAt
+    tradeEventCount
+    lastTradeAt
+    lastTradeBlock
+    lastTradeTransaction
+    lastTradeVenue
+    trades(first: 10, orderBy: timestamp, orderDirection: desc) {
+      venue
+      outcome
+      side
+      amountRaw
+      paymentRaw
+      baseAmountRaw
+      makerAmountFilledRaw
+      takerAmountFilledRaw
+      transactionHash
+      blockNumber
+      timestamp
+    }
+  }
+}
+

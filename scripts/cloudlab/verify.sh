@@ -41,7 +41,16 @@ printf 'source_id=%s\nhost=%s\nstarted_at=%s\nnode=%s\npnpm=%s\n' \
   "$source_id" "$(hostname)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   "$(node --version)" "$(pnpm --version)" > "$evidence_dir/manifest.txt"
 
-packages=(shared agent-sdk agents/creator agents/trader backend frontend)
+printf '\n== cloudlab_script_syntax ==\n'
+bash -n "$source_dir/scripts/cloudlab/deploy-subgraph.sh"
+bash -n "$source_dir/scripts/cloudlab/deploy-subgraph-remote.sh"
+printf 'cloudlab_script_syntax=pass\n' >> "$evidence_dir/manifest.txt"
+
+printf '\n== subgraph_deploy_safety ==\n'
+bash "$source_dir/scripts/tests/subgraph-deploy.test.sh"
+printf 'subgraph_deploy_safety=pass\n' >> "$evidence_dir/manifest.txt"
+
+packages=(shared agent-sdk agents/creator agents/trader backend frontend subgraph)
 for package in "${packages[@]}"; do
   printf '\n== install %s ==\n' "$package"
   (cd "$source_dir/$package" && pnpm install --frozen-lockfile)
@@ -52,14 +61,19 @@ rm -rf \
   "$source_dir/agent-sdk/dist" \
   "$source_dir/agents/creator/dist" \
   "$source_dir/agents/trader/dist" \
-  "$source_dir/frontend/.next"
+  "$source_dir/frontend/.next" \
+  "$source_dir/subgraph/build" \
+  "$source_dir/subgraph/generated"
 
 run() {
   local label="$1"
   local package="$2"
   local command="$3"
   printf '\n== %s ==\n' "$label"
-  (cd "$source_dir/$package" && pnpm run "$command")
+  # The verification program itself arrives through `ssh ... bash -s` stdin.
+  # Test runners such as Matchstick also inspect stdin, so never let a child
+  # consume the remaining verification script as interactive input.
+  (cd "$source_dir/$package" && pnpm run "$command" < /dev/null)
   printf '%s=pass\n' "$label" >> "$evidence_dir/manifest.txt"
 }
 
@@ -76,6 +90,13 @@ run trader_test agents/trader test
 run trader_build agents/trader build
 run backend_typecheck backend typecheck
 run backend_build backend build
+run subgraph_codegen subgraph codegen
+ldconfig -p 2>/dev/null | grep -F 'libpq.so.5' >/dev/null || {
+  printf 'Matchstick requires the libpq5 runtime package on CloudLab.\n' >&2
+  exit 1
+}
+run subgraph_test subgraph test
+run subgraph_build subgraph build
 
 command -v docker >/dev/null 2>&1 || {
   printf 'Docker is required for the isolated backend test database.\n' >&2

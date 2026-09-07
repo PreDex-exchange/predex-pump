@@ -1,0 +1,19 @@
+{
+  "name": "@predex-pump/subgraph",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "graph build subgraph.yaml",
+    "codegen": "graph codegen subgraph.yaml",
+    "test": "graph test --version 0.6.0"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-ts": "0.38.2"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "0.98.1",
+    "assemblyscript": "0.19.23",
+    "matchstick-as": "0.6.0"
+  },
+  "packageManager": "pnpm@10.29.2"
+}

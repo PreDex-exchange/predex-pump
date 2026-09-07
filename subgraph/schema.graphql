@@ -1,0 +1,71 @@
+type Market @entity(immutable: false) {
+  id: ID!
+  creator: Bytes
+  conditionId: Bytes
+  questionId: Bytes
+  ancillaryDataHash: Bytes
+  metadataHash: Bytes
+  marketTypeVersion: BigInt
+  phase: String!
+  openedAt: BigInt
+  tradingEndsAt: BigInt
+  graduatedAt: BigInt
+  resolvedAt: BigInt
+  closedOutAt: BigInt
+  tradeEventCount: BigInt!
+  lastTradeAt: BigInt
+  lastTradeBlock: BigInt
+  lastTradeTransaction: Bytes
+  lastTradeVenue: String
+  trades: [Trade!]! @derivedFrom(field: "market")
+}
+
+type MarketLookup @entity(immutable: false) {
+  id: ID!
+  kind: String!
+  market: Market!
+  outcome: String
+}
+
+type MiniOrderRef @entity(immutable: true) {
+  id: ID!
+  market: Market!
+  tokenId: BigInt!
+  outcome: String
+  maker: Bytes!
+  makerSide: String!
+  limitPriceRaw: BigInt!
+  originalSizeRaw: BigInt!
+  transactionHash: Bytes!
+  blockNumber: BigInt!
+  logIndex: BigInt!
+  timestamp: BigInt!
+}
+
+type Trade @entity(immutable: true) {
+  id: ID!
+  market: Market!
+  venue: String!
+  outcome: String
+  actor: Bytes
+  maker: Bytes
+  taker: Bytes
+  recipient: Bytes
+  side: String
+  miniOrder: MiniOrderRef
+  exchangeOrderHash: Bytes
+  tokenId: BigInt
+  amountRaw: BigInt
+  paymentRaw: BigInt
+  baseAmountRaw: BigInt
+  protocolFeeRaw: BigInt
+  depthContributionRaw: BigInt
+  totalCostRaw: BigInt
+  netProceedsRaw: BigInt
+  makerAmountFilledRaw: BigInt
+  takerAmountFilledRaw: BigInt
+  transactionHash: Bytes!
+  blockNumber: BigInt!
+  logIndex: BigInt!
+  timestamp: BigInt!
+}

@@ -20,6 +20,8 @@ Arc contracts (SETTLEMENT source of truth)  ⇄  backend (indexer + Postgres + R
 - **`frontend/`** — Next.js + wagmi/viem. Reads backend and uses MetaMask for transaction-critical chain access.
 - **`mobile/`** — Secure Flutter WebView shell around the responsive frontend. It
   contains no wallet keys, ABI encoder, or JavaScript bridge.
+- **`subgraph/`** — Arc Testnet lifecycle and execution history for live
+  Graph-backed agent discovery. It does not replace either backend orderbook.
 - **`shared/`** — the API contract (types) + contract addresses/ABIs. The interface both sides build against (defined after the contracts are final).
 
 ## Arc testnet (chainId 5042002, RPC `https://rpc.testnet.arc.io`)

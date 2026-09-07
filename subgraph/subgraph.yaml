@@ -1,0 +1,111 @@
+specVersion: 1.3.0
+description: Predex market lifecycle and execution history for the Continuity trader agent on Arc Testnet.
+repository: https://github.com/PreDex-exchange/predex-pump
+indexerHints:
+  prune: auto
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Registry
+    network: arc-testnet
+    source:
+      address: "0xc9A65eBBdECfd2BDcD4a921B2a05061BFc1FE50c"
+      abi: IncubatorRegistry
+      startBlock: 60710296
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Market
+        - MarketLookup
+      abis:
+        - name: IncubatorRegistry
+          file: ../shared/abis/IncubatorRegistry.json
+      eventHandlers:
+        - event: MarketCreated(indexed uint256,indexed address,indexed bytes32,bytes32,uint32,bytes32,bytes,bytes32,uint256)
+          handler: handleMarketCreated
+        - event: MarketParameterSnapshot(indexed uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleMarketParameterSnapshot
+        - event: MarketTokenBinding(indexed uint256,address,uint8,address,address,uint256,uint256)
+          handler: handleMarketTokenBinding
+        - event: MarketGraduated(indexed uint256,indexed bytes32,indexed address,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint32)
+          handler: handleMarketGraduated
+        - event: MarketResolutionObserved(indexed uint256,uint256)
+          handler: handleMarketResolutionObserved
+        - event: MarketClosedOut(indexed uint256,uint256)
+          handler: handleMarketClosedOut
+      file: ./src/mapping.ts
+
+  - kind: ethereum/contract
+    name: LMSR
+    network: arc-testnet
+    source:
+      address: "0xe0D94eE42B038e7db4E9CD7257467395fDC4a9F2"
+      abi: IncubatorLMSR
+      startBlock: 60710296
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Market
+        - Trade
+      abis:
+        - name: IncubatorLMSR
+          file: ../shared/abis/IncubatorLMSR.json
+      eventHandlers:
+        - event: TradeExecuted(indexed uint256,indexed address,indexed uint8,uint8,address,uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleLmsrTradeExecuted
+      file: ./src/mapping.ts
+
+  - kind: ethereum/contract
+    name: MiniCLOB
+    network: arc-testnet
+    source:
+      address: "0xCC7a8268f9F95d82f98e396C42b0562db758c7F5"
+      abi: MiniCLOB
+      startBlock: 60710296
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Market
+        - MarketLookup
+        - MiniOrderRef
+        - Trade
+      abis:
+        - name: MiniCLOB
+          file: ../shared/abis/MiniCLOB.json
+      eventHandlers:
+        - event: OrderPlaced(indexed uint256,indexed address,indexed bytes32,uint256,uint8,uint256,uint256,uint256)
+          handler: handleMiniOrderPlaced
+        - event: OrderFilled(indexed uint256,indexed address,indexed address,uint256,uint256,uint256,bool)
+          handler: handleMiniOrderFilled
+      file: ./src/mapping.ts
+
+  - kind: ethereum/contract
+    name: CTFExchange
+    network: arc-testnet
+    source:
+      address: "0xF39198eBd60C8fd02b192ceE599478488e424b79"
+      abi: CTFExchange
+      startBlock: 60710296
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Market
+        - MarketLookup
+        - Trade
+      abis:
+        - name: CTFExchange
+          file: ../shared/abis/CTFExchange.json
+      eventHandlers:
+        - event: OrderFilled(indexed bytes32,indexed address,indexed address,uint256,uint256,uint256)
+          handler: handleExchangeOrderFilled
+      file: ./src/mapping.ts
+
