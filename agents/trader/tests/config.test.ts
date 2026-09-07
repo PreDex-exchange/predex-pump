@@ -18,7 +18,55 @@ describe('loadTraderConfig', () => {
     expect(config.dryRun).toBe(true);
     expect(config.traderAddress).toBeUndefined();
     expect(config.truthMode).toBe('auto');
+    expect(config.marketDiscovery).toBe('backend');
     expect('privateKey' in config).toBe(false);
+  });
+
+  it('requires an explicit hosted Graph URL and keeps the market query bounded', () => {
+    expect(() =>
+      loadTraderConfig({ PREDEX_MARKET_DISCOVERY: 'graph-required' }, []),
+    ).toThrow(/PREDEX_GRAPH_QUERY_URL/u);
+
+    const config = loadTraderConfig(
+      {
+        PREDEX_MARKET_DISCOVERY: 'graph-required',
+        PREDEX_GRAPH_QUERY_URL:
+          'https://api.studio.thegraph.com/query/1758846/predex/0.0.1',
+        PREDEX_GRAPH_MARKET_LIMIT: '12',
+      },
+      [],
+    );
+    expect(config).toMatchObject({
+      marketDiscovery: 'graph-required',
+      graphMarketLimit: 12,
+      graphQueryUrl:
+        'https://api.studio.thegraph.com/query/1758846/predex/0.0.1',
+    });
+    expect(() =>
+      loadTraderConfig(
+        {
+          PREDEX_MARKET_DISCOVERY: 'graph-required',
+          PREDEX_GRAPH_QUERY_URL: 'https://example.com/query',
+          PREDEX_GRAPH_MARKET_LIMIT: '21',
+        },
+        [],
+      ),
+    ).toThrow(/must not exceed 20/u);
+  });
+
+  it('rejects invalid Graph discovery modes and unsafe URLs', () => {
+    expect(() =>
+      loadTraderConfig({ PREDEX_MARKET_DISCOVERY: 'graph' }, []),
+    ).toThrow(/backend or graph-required/u);
+    expect(() =>
+      loadTraderConfig(
+        {
+          PREDEX_MARKET_DISCOVERY: 'graph-required',
+          PREDEX_GRAPH_QUERY_URL: 'http://example.com/query',
+        },
+        [],
+      ),
+    ).toThrow(/HTTPS URL/u);
   });
 
   it('enables send only through an explicit flag or environment opt-in', () => {

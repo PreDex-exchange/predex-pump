@@ -13,26 +13,12 @@ query AgentMarketUniverse($now: BigInt!, $limit: Int! = 20) {
     where: { phase: "GRADUATED", tradingEndsAt_gt: $now }
   ) {
     id
-    conditionId
+    phase
     tradingEndsAt
     tradeEventCount
     lastTradeAt
     lastTradeBlock
     lastTradeTransaction
     lastTradeVenue
-    trades(first: 10, orderBy: timestamp, orderDirection: desc) {
-      venue
-      outcome
-      side
-      amountRaw
-      paymentRaw
-      baseAmountRaw
-      makerAmountFilledRaw
-      takerAmountFilledRaw
-      transactionHash
-      blockNumber
-      timestamp
-    }
   }
 }
-

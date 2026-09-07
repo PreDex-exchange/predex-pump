@@ -22,6 +22,19 @@ configured YES BID/ASK quotes around fair value.
 - Approvals are exact for the intended USDC amount; no unlimited ERC-20 approval is requested.
 - Backend, signal, RPC, and action failures are logged per cycle/market and the loop continues.
 
+## Market discovery modes
+
+- `backend` (default) preserves the original backend-ordered opportunity loop.
+- `graph-required` queries the hosted Predex subgraph and uses its ordered market IDs as
+  the allow-list for every new fill or placement. The backend still enumerates every market
+  and book for complete order/risk accounting, and Arc preflight remains authoritative.
+- A Graph timeout, stale block (older than 90 seconds), indexing error, malformed response,
+  or empty universe permits owned-order retirement but creates no new exposure. There is no
+  fallback to backend discovery in this mode.
+
+The Graph request timeout is fixed at ten seconds and the response is bounded to at most 20
+markets. The endpoint URL is intentionally omitted from logs.
+
 ## Truth payment modes
 
 - `auto` (default) calls `truth.buy` without a signer. It reads an unpaid dev endpoint, but if the
@@ -36,8 +49,15 @@ configured YES BID/ASK quotes around fair value.
 ## Dry-run demo
 
 ```sh
-PREDEX_API_URL=http://localhost:3001 pnpm start -- --once
+PREDEX_API_URL=http://localhost:3001 \
+PREDEX_MARKET_DISCOVERY=graph-required \
+PREDEX_GRAPH_QUERY_URL=https://api.studio.thegraph.com/query/1758846/predex/0.0.1 \
+PREDEX_GRAPH_MARKET_LIMIT=20 \
+pnpm start -- --once
 ```
+
+The Studio endpoint is limited to 3,000 daily queries. Use `--once` for evidence runs or a
+poll interval of at least 30 seconds; the published Network endpoint replaces it later.
 
 The package does not load dotenv files. Export variables in the runtime shell or inject them with a
 secret manager. Never put a real private key in this repository.

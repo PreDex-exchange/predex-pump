@@ -175,6 +175,29 @@ assert_equals "$run_hashes_a" "$run_hashes_a_repeat" 'same run ID derived differ
 assert_disjoint_sets "$default_hashes" "$run_hashes_a" 'run-scoped hashes overlap the default set'
 assert_disjoint_sets "$run_hashes_a" "$run_hashes_b" 'different run IDs produced overlapping hashes'
 
+graduated_only_output=$(env \
+  ARC_RPC_URL=http://127.0.0.1:1 \
+  PREDEX_PRIVATE_KEY="$SENTINEL_KEY" \
+  "$SCRIPT" --dry-run --run-id graph-agent-acceptance --only-graduated)
+assert_contains "$graduated_only_output" 'GRADUATED BOOK BEAT'
+assert_contains "$graduated_only_output" \
+  'First use:       create the isolated graduated market for this run ID'
+assert_not_contains "$graduated_only_output" 'BOOTSTRAP + NEAR-DUPLICATE BEAT'
+assert_not_contains "$graduated_only_output" 'COMMITTEE RESOLUTION / REDEEM BEAT'
+assert_not_contains "$graduated_only_output" 'Creation-time dedup cue'
+assert_not_contains "$graduated_only_output" 'dedup market'
+assert_not_contains "$graduated_only_output" "$SENTINEL_KEY"
+[ "$(printf '%s\n' "$graduated_only_output" | grep -c '^  create calldata:0xd571bd46')" -eq 1 ] || \
+  fail 'expected one createMarket calldata value in graduated-only mode'
+
+if graduated_without_run_id=$(env \
+  ARC_RPC_URL=http://127.0.0.1:1 \
+  "$SCRIPT" --dry-run --only-graduated 2>&1); then
+  fail '--only-graduated unexpectedly proceeded without --run-id'
+fi
+assert_contains "$graduated_without_run_id" \
+  '--only-graduated requires --run-id so the fixture is fresh and isolated.'
+
 question_number=1
 while [ "$question_number" -le 4 ]; do
   default_question=$(line_at "$default_questions" "$question_number")

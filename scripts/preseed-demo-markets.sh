@@ -40,6 +40,7 @@ QUOTE_BUY_SIG='quoteBuy(uint256,uint8,uint256,uint256,uint256)((uint256,uint256,
 CREATE_SIG='createMarket(bytes,uint256,uint256,uint256,bytes32)'
 
 SEND=0
+ONLY_GRADUATED=0
 RUN_ID=''
 RUN_ID_SET=0
 QUESTION_TAG=''
@@ -59,17 +60,19 @@ RESOLUTION_MARKET_ID=''
 
 usage() {
   printf '%s\n' \
-    'Usage: scripts/preseed-demo-markets.sh [--dry-run | --send] [--run-id ID]' \
+    'Usage: scripts/preseed-demo-markets.sh [--dry-run | --send] [--run-id ID] [--only-graduated]' \
     '' \
     'Default: --dry-run (offline planning only; no RPC reads and no broadcasts).' \
     '--send:   read PREDEX_PRIVATE_KEY at runtime and send direct transactions to Arc.' \
-    '--run-id: derive a distinct, repeatable market set for this operator-supplied ID.'
+    '--run-id: derive a distinct, repeatable market set for this operator-supplied ID.' \
+    '--only-graduated: create only the graduated live-book market; requires --run-id.'
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) SEND=0 ;;
     --send) SEND=1 ;;
+    --only-graduated) ONLY_GRADUATED=1 ;;
     --run-id)
       if [ "$#" -lt 2 ]; then
         printf 'ERROR: --run-id requires a value.\n' >&2
@@ -105,6 +108,11 @@ if [ "$RUN_ID_SET" -eq 1 ]; then
       'ERROR: --run-id must be 1-64 ASCII letters, digits, dots, underscores, or hyphens and start with a letter or digit.' >&2
     exit 2
   fi
+fi
+
+if [ "$ONLY_GRADUATED" -eq 1 ] && [ "$RUN_ID_SET" -ne 1 ]; then
+  printf 'ERROR: --only-graduated requires --run-id so the fixture is fresh and isolated.\n' >&2
+  exit 2
 fi
 
 if ! command -v "$CAST_BIN" >/dev/null 2>&1; then
@@ -195,8 +203,13 @@ print_plan() {
   if [ "$RUN_ID_SET" -eq 1 ]; then
     printf '  Run ID:          %s\n' "$RUN_ID"
     printf '  Question tag:    %s\n' "$QUESTION_TAG"
-    printf '%s\n' \
-      '  First use:       create markets with this run ID; the dedup market is created through the operator cue'
+    if [ "$ONLY_GRADUATED" -eq 1 ]; then
+      printf '%s\n' \
+        '  First use:       create the isolated graduated market for this run ID'
+    else
+      printf '%s\n' \
+        '  First use:       create markets with this run ID; the dedup market is created through the operator cue'
+    fi
     printf '%s\n' \
       '  Repeat use:      reuse markets with these metadata hashes; never duplicate'
   else
@@ -217,35 +230,45 @@ print_plan() {
   printf '  ERC-20 approve Registry, LMSR, MiniCLOB up to %s raw\n' "$APPROVAL_RAW"
   printf '  ERC-1155 setApprovalForAll LMSR and MiniCLOB\n'
 
-  print_market_plan \
-    1 \
-    'BOOTSTRAP + NEAR-DUPLICATE BEAT' \
-    "$BOOTSTRAP_QUESTION" \
-    'create; leave Opened and immediately tradable on the LMSR curve'
-  print_market_plan \
-    2 \
-    'GRADUATED BOOK BEAT' \
-    "$GRADUATED_QUESTION" \
-    'create; buy 0.25 YES; graduate; verify non-zero MiniCLOB seed depth'
-  print_market_plan \
-    3 \
-    'COMMITTEE RESOLUTION / REDEEM BEAT' \
-    "$RESOLUTION_QUESTION" \
-    'create; buy 0.25 YES for the operator; graduate; leave oracle unresolved'
-
-  dedup_ancillary=$(ancillary_for_question "$DEDUP_OPERATOR_QUESTION")
-  dedup_metadata=$(metadata_for_ancillary "$dedup_ancillary")
-  printf '\nCreation-time dedup cue\n'
-  printf '  Seeded: %s\n' "$BOOTSTRAP_QUESTION"
-  printf '  Type exactly: %s\n' "$DEDUP_OPERATOR_QUESTION"
-  printf '  metadataHash:   %s\n' "$dedup_metadata"
-  printf '  Expected cue: Manchester United / Man Utd alias + above / over paraphrase\n'
-  if [ "$RUN_ID_SET" -eq 1 ]; then
-    printf '%s\n' \
-      '  Expected action: create through the operator flow on first use; reuse on repeats'
+  if [ "$ONLY_GRADUATED" -eq 1 ]; then
+    print_market_plan \
+      1 \
+      'GRADUATED BOOK BEAT' \
+      "$GRADUATED_QUESTION" \
+      'create; buy 0.25 YES; graduate; verify non-zero MiniCLOB seed depth'
   else
-    printf '%s\n' \
-      '  Expected action: reuse the canonical dedup market if present; otherwise create it through the operator flow'
+    print_market_plan \
+      1 \
+      'BOOTSTRAP + NEAR-DUPLICATE BEAT' \
+      "$BOOTSTRAP_QUESTION" \
+      'create; leave Opened and immediately tradable on the LMSR curve'
+    print_market_plan \
+      2 \
+      'GRADUATED BOOK BEAT' \
+      "$GRADUATED_QUESTION" \
+      'create; buy 0.25 YES; graduate; verify non-zero MiniCLOB seed depth'
+    print_market_plan \
+      3 \
+      'COMMITTEE RESOLUTION / REDEEM BEAT' \
+      "$RESOLUTION_QUESTION" \
+      'create; buy 0.25 YES for the operator; graduate; leave oracle unresolved'
+  fi
+
+  if [ "$ONLY_GRADUATED" -ne 1 ]; then
+    dedup_ancillary=$(ancillary_for_question "$DEDUP_OPERATOR_QUESTION")
+    dedup_metadata=$(metadata_for_ancillary "$dedup_ancillary")
+    printf '\nCreation-time dedup cue\n'
+    printf '  Seeded: %s\n' "$BOOTSTRAP_QUESTION"
+    printf '  Type exactly: %s\n' "$DEDUP_OPERATOR_QUESTION"
+    printf '  metadataHash:   %s\n' "$dedup_metadata"
+    printf '  Expected cue: Manchester United / Man Utd alias + above / over paraphrase\n'
+    if [ "$RUN_ID_SET" -eq 1 ]; then
+      printf '%s\n' \
+        '  Expected action: create through the operator flow on first use; reuse on repeats'
+    else
+      printf '%s\n' \
+        '  Expected action: reuse the canonical dedup market if present; otherwise create it through the operator flow'
+    fi
   fi
 
   if [ "$SEND" -eq 0 ]; then
@@ -563,8 +586,13 @@ if [ "$committee_threshold" -ne 1 ] || [ "$committee_member" != true ]; then
   exit 1
 fi
 
-minimum_balance=$((3 * (SEED_RAW + OPENING_FEE_RAW) + \
-  2 * GRADUATION_TOLL_RAW + 4 * YES_INVENTORY_TARGET_RAW))
+if [ "$ONLY_GRADUATED" -eq 1 ]; then
+  minimum_balance=$((SEED_RAW + OPENING_FEE_RAW + \
+    GRADUATION_TOLL_RAW + 2 * YES_INVENTORY_TARGET_RAW))
+else
+  minimum_balance=$((3 * (SEED_RAW + OPENING_FEE_RAW) + \
+    2 * GRADUATION_TOLL_RAW + 4 * YES_INVENTORY_TARGET_RAW))
+fi
 balance=$(scalar "$(call "$USDC" 'balanceOf(address)(uint256)' "$OPERATOR")")
 if [ "$balance" -lt "$minimum_balance" ]; then
   printf 'ERROR: operator has %s raw USDC; at least %s raw is required.\n' \
@@ -584,10 +612,12 @@ ensure_erc20_allowance MiniCLOB "$MINICLOB"
 ensure_ctf_approval LMSR "$LMSR"
 ensure_ctf_approval MiniCLOB "$MINICLOB"
 
-printf '\n### 2. BOOTSTRAP + DEDUP MARKET\n'
-ensure_market bootstrap-dedup "$BOOTSTRAP_QUESTION"
-BOOTSTRAP_MARKET_ID=$MARKET_ID
-ensure_bootstrap_state "$BOOTSTRAP_MARKET_ID" bootstrap-dedup
+if [ "$ONLY_GRADUATED" -ne 1 ]; then
+  printf '\n### 2. BOOTSTRAP + DEDUP MARKET\n'
+  ensure_market bootstrap-dedup "$BOOTSTRAP_QUESTION"
+  BOOTSTRAP_MARKET_ID=$MARKET_ID
+  ensure_bootstrap_state "$BOOTSTRAP_MARKET_ID" bootstrap-dedup
+fi
 
 printf '\n### 3. GRADUATED LIVE-BOOK MARKET\n'
 ensure_market graduated-book "$GRADUATED_QUESTION"
@@ -595,31 +625,37 @@ GRADUATED_MARKET_ID=$MARKET_ID
 ensure_yes_inventory "$GRADUATED_MARKET_ID"
 ensure_graduated_book "$GRADUATED_MARKET_ID"
 
-printf '\n### 4. READY-TO-RESOLVE MARKET\n'
-ensure_market ready-to-resolve "$RESOLUTION_QUESTION"
-RESOLUTION_MARKET_ID=$MARKET_ID
-ensure_yes_inventory "$RESOLUTION_MARKET_ID"
-ensure_graduated_book "$RESOLUTION_MARKET_ID"
-load_binding "$RESOLUTION_MARKET_ID"
-resolved=$(scalar "$(call "$ORACLE" 'isResolved(bytes32)(bool)' "$QUESTION_ID")")
-snapshot_member=$(scalar "$(call "$ORACLE" 'isSnapshotMember(bytes32,address)(bool)' \
-  "$QUESTION_ID" "$OPERATOR")")
-if [ "$resolved" != false ] || [ "$snapshot_member" != true ]; then
-  printf 'ERROR: market #%s is not ready for operator resolution (resolved=%s snapshotMember=%s).\n' \
-    "$RESOLUTION_MARKET_ID" "$resolved" "$snapshot_member" >&2
-  exit 1
+if [ "$ONLY_GRADUATED" -ne 1 ]; then
+  printf '\n### 4. READY-TO-RESOLVE MARKET\n'
+  ensure_market ready-to-resolve "$RESOLUTION_QUESTION"
+  RESOLUTION_MARKET_ID=$MARKET_ID
+  ensure_yes_inventory "$RESOLUTION_MARKET_ID"
+  ensure_graduated_book "$RESOLUTION_MARKET_ID"
+  load_binding "$RESOLUTION_MARKET_ID"
+  resolved=$(scalar "$(call "$ORACLE" 'isResolved(bytes32)(bool)' "$QUESTION_ID")")
+  snapshot_member=$(scalar "$(call "$ORACLE" 'isSnapshotMember(bytes32,address)(bool)' \
+    "$QUESTION_ID" "$OPERATOR")")
+  if [ "$resolved" != false ] || [ "$snapshot_member" != true ]; then
+    printf 'ERROR: market #%s is not ready for operator resolution (resolved=%s snapshotMember=%s).\n' \
+      "$RESOLUTION_MARKET_ID" "$resolved" "$snapshot_member" >&2
+    exit 1
+  fi
+  printf '  OK    market #%s is unresolved; operator is a snapshotted committee signer\n' \
+    "$RESOLUTION_MARKET_ID"
 fi
-printf '  OK    market #%s is unresolved; operator is a snapshotted committee signer\n' \
-  "$RESOLUTION_MARKET_ID"
 
 printf '\n### PRE-SEED COMPLETE\n'
-printf '  Bootstrap / near duplicate: market #%s — %s\n' \
-  "$BOOTSTRAP_MARKET_ID" "$BOOTSTRAP_QUESTION"
+if [ "$ONLY_GRADUATED" -ne 1 ]; then
+  printf '  Bootstrap / near duplicate: market #%s — %s\n' \
+    "$BOOTSTRAP_MARKET_ID" "$BOOTSTRAP_QUESTION"
+fi
 printf '  Graduated live book:       market #%s — %s\n' \
   "$GRADUATED_MARKET_ID" "$GRADUATED_QUESTION"
-printf '  Ready to resolve YES:      market #%s — %s\n' \
-  "$RESOLUTION_MARKET_ID" "$RESOLUTION_QUESTION"
-printf '  Dedup input:               %s\n' "$DEDUP_OPERATOR_QUESTION"
-printf '  Frontend:                  configure NEXT_PUBLIC_AGENT_ADDRESSES with agent wallets\n'
-printf '  No resolution was sent; use the market #%s settlement UI for resolve → observe → redeem → closeout.\n' \
-  "$RESOLUTION_MARKET_ID"
+if [ "$ONLY_GRADUATED" -ne 1 ]; then
+  printf '  Ready to resolve YES:      market #%s — %s\n' \
+    "$RESOLUTION_MARKET_ID" "$RESOLUTION_QUESTION"
+  printf '  Dedup input:               %s\n' "$DEDUP_OPERATOR_QUESTION"
+  printf '  Frontend:                  configure NEXT_PUBLIC_AGENT_ADDRESSES with agent wallets\n'
+  printf '  No resolution was sent; use the market #%s settlement UI for resolve → observe → redeem → closeout.\n' \
+    "$RESOLUTION_MARKET_ID"
+fi

@@ -9,6 +9,7 @@ export interface TraderLogEntry {
   level: TraderLogLevel;
   event:
     | 'startup'
+    | 'market-discovery'
     | 'market-read'
     | 'decision'
     | 'refused'
@@ -38,6 +39,9 @@ export interface TraderLogEntry {
   notionalRaw?: string;
   sessionSpendRaw?: string;
   txHash?: `0x${string}`;
+  graphBlockNumber?: string;
+  graphBlockTimestamp?: string;
+  candidateCount?: string;
 }
 
 export interface TraderLogger {
@@ -72,6 +76,9 @@ export function formatTraderLogEntry(
     ['reason', 'reason'],
     ['rejectionCode', 'rejection'],
     ['txHash', 'tx'],
+    ['graphBlockNumber', 'graphBlock'],
+    ['graphBlockTimestamp', 'graphTimestamp'],
+    ['candidateCount', 'candidates'],
   ];
   for (const [key, label] of labels) {
     const value = entry[key];

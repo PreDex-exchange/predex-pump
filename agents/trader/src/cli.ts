@@ -14,6 +14,7 @@ import type {
 } from './agent.js';
 import { createArcTraderExecutor } from './arc-executor.js';
 import { loadTraderConfig } from './config.js';
+import { createGraphOpportunityDiscovery } from './graph-discovery.js';
 import { createArcHybridTraderExecutor } from './hybrid-executor.js';
 import { ConsoleTraderLogger } from './logger.js';
 
@@ -26,6 +27,7 @@ function printHelp(): void {
       'Pass --once to process one complete market scan and exit.',
       'The private key is read from PREDEX_PRIVATE_KEY only after send mode is selected.',
       'All quote sizes, thresholds, hard caps, polling, API, RPC, and address settings come from env.',
+      'Set PREDEX_MARKET_DISCOVERY=graph-required plus PREDEX_GRAPH_QUERY_URL to gate new exposure through The Graph.',
     ].join('\n'),
   );
 }
@@ -40,6 +42,13 @@ async function main(): Promise<void> {
   const config = loadTraderConfig(process.env, arguments_);
   const logger = new ConsoleTraderLogger();
   const restClient = createRestClient({ baseUrl: config.apiUrl });
+  const newOpportunityDiscovery =
+    config.marketDiscovery === 'graph-required'
+      ? createGraphOpportunityDiscovery({
+          queryUrl: config.graphQueryUrl,
+          marketLimit: config.graphMarketLimit,
+        })
+      : undefined;
   let traderAddress = config.traderAddress ?? zeroAddress;
   let executor;
   let hybridExecutor;
@@ -77,6 +86,10 @@ async function main(): Promise<void> {
       `ordersInFlight=${config.maxOrdersInFlight},` +
       `sessionSpendRaw=${config.maxSessionSpendRaw}] ` +
       `truthMode=${config.truthMode} truthMaxPaymentRaw=${config.truthMaxPaymentRaw} ` +
+      `marketDiscovery=${config.marketDiscovery}` +
+      (config.marketDiscovery === 'graph-required'
+        ? ` graphMarketLimit=${config.graphMarketLimit} `
+        : ' ') +
       `pollMs=${config.pollIntervalMs}`,
   });
 
@@ -147,6 +160,9 @@ async function main(): Promise<void> {
   const agent = new TraderAgent({
     dataClient: restClient,
     readSignal,
+    ...(newOpportunityDiscovery === undefined
+      ? {}
+      : { newOpportunityDiscovery }),
     ...(executor === undefined ? {} : { executor }),
     ...(hybridExecutor === undefined ? {} : { hybridExecutor }),
     logger,

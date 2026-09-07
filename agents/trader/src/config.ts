@@ -4,7 +4,7 @@ import { ARC } from '@predex-pump/shared';
 const DEFAULT_API_URL = 'http://localhost:3001';
 const DEFAULT_RPC_URL = ARC.rpcUrls[0];
 
-export interface TraderConfig {
+interface TraderBaseConfig {
   apiUrl: string;
   rpcUrl: string;
   traderAddress: Address | undefined;
@@ -22,6 +22,63 @@ export interface TraderConfig {
   truthMode: 'auto' | 'free' | 'paid' | 'skip';
   truthMaxPaymentRaw: bigint;
   dryRun: boolean;
+}
+
+export type TraderConfig = TraderBaseConfig &
+  (
+    | { marketDiscovery: 'backend' }
+    | {
+        marketDiscovery: 'graph-required';
+        graphQueryUrl: string;
+        graphMarketLimit: number;
+      }
+  );
+
+function marketDiscoveryMode(
+  value: string | undefined,
+): TraderConfig['marketDiscovery'] {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return 'backend';
+  if (normalized === 'backend' || normalized === 'graph-required') {
+    return normalized;
+  }
+  throw new Error(
+    'PREDEX_MARKET_DISCOVERY must be backend or graph-required.',
+  );
+}
+
+function graphQueryUrl(value: string | undefined): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw new Error(
+      'PREDEX_GRAPH_QUERY_URL is required for graph-required discovery.',
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error('PREDEX_GRAPH_QUERY_URL must be a valid HTTPS URL.');
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.hash !== ''
+  ) {
+    throw new Error(
+      'PREDEX_GRAPH_QUERY_URL must be an HTTPS URL without credentials or a fragment.',
+    );
+  }
+  return parsed.toString();
+}
+
+function graphMarketLimit(value: string | undefined): number {
+  const limit = positiveInteger('PREDEX_GRAPH_MARKET_LIMIT', value, 20);
+  if (limit > 20) {
+    throw new Error('PREDEX_GRAPH_MARKET_LIMIT must not exceed 20.');
+  }
+  return limit;
 }
 
 function truthMode(
@@ -111,7 +168,7 @@ export function loadTraderConfig(
 
   // PREDEX_PRIVATE_KEY is deliberately not accessed here. The CLI reads it
   // only after this explicit send gate has selected broadcast mode.
-  return {
+  const base: TraderBaseConfig = {
     apiUrl: (environment.PREDEX_API_URL?.trim() || DEFAULT_API_URL).replace(
       /\/+$/u,
       '',
@@ -180,5 +237,17 @@ export function loadTraderConfig(
       100n,
     ),
     dryRun,
+  };
+  const marketDiscovery = marketDiscoveryMode(
+    environment.PREDEX_MARKET_DISCOVERY,
+  );
+  if (marketDiscovery === 'backend') {
+    return { ...base, marketDiscovery };
+  }
+  return {
+    ...base,
+    marketDiscovery,
+    graphQueryUrl: graphQueryUrl(environment.PREDEX_GRAPH_QUERY_URL),
+    graphMarketLimit: graphMarketLimit(environment.PREDEX_GRAPH_MARKET_LIMIT),
   };
 }

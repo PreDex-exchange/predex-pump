@@ -24,6 +24,7 @@ import {
   type TraderExecutor,
   type HybridTraderExecutor,
 } from '../src/agent.js';
+import type { NewOpportunityDiscovery } from '../src/graph-discovery.js';
 import type {
   TraderLogEntry,
   TraderLogger,
@@ -340,6 +341,35 @@ function dataClient({
   };
 }
 
+function opportunityDiscovery(
+  marketIds: readonly string[],
+): NewOpportunityDiscovery & {
+  discover: ReturnType<typeof vi.fn<NewOpportunityDiscovery['discover']>>;
+} {
+  return {
+    discover: vi.fn(async () => ({
+      blockNumber: 60_000_000,
+      blockTimestamp: 990,
+      candidates: marketIds.map((marketId) => ({
+        marketId,
+        tradeEventCount: '0',
+        lastTradeAt: null,
+        lastTradeBlock: null,
+        lastTradeTransaction: null,
+        lastTradeVenue: null,
+      })),
+    })),
+  };
+}
+
+function unavailableDiscovery(): NewOpportunityDiscovery {
+  return {
+    discover: vi.fn(async () => {
+      throw new Error('private Graph endpoint detail');
+    }),
+  };
+}
+
 function executor(): TraderExecutor & {
   placeOrder: ReturnType<typeof vi.fn<TraderExecutor['placeOrder']>>;
   fillOrder: ReturnType<typeof vi.fn<TraderExecutor['fillOrder']>>;
@@ -433,6 +463,393 @@ function createAgent(
 }
 
 describe('TraderAgent', () => {
+  it('finishes backend pagination and every book read before Graph discovery', async () => {
+    const first = market('1');
+    const second = market('2');
+    const listMarkets = vi.fn<TraderDataClient['listMarkets']>(async (query) =>
+      query?.cursor === 'page-2'
+        ? { items: [second], nextCursor: null }
+        : { items: [first], nextCursor: 'page-2' },
+    );
+    const getOrderBook = vi.fn<TraderDataClient['getOrderBook']>(
+      async (marketId) => book(marketId === '1' ? first : second),
+    );
+    const client: TraderDataClient = {
+      listMarkets,
+      getAccount: vi.fn(async () => account([])),
+      getOrderBook,
+    };
+    const discovery = opportunityDiscovery(['2']);
+    const { agent } = createAgent({
+      dataClient: client,
+      newOpportunityDiscovery: discovery,
+    });
+
+    await agent.runCycle();
+
+    expect(listMarkets).toHaveBeenNthCalledWith(1, { limit: 200 });
+    expect(listMarkets).toHaveBeenNthCalledWith(2, {
+      limit: 200,
+      cursor: 'page-2',
+    });
+    expect(getOrderBook).toHaveBeenCalledTimes(2);
+    expect(Math.max(...getOrderBook.mock.invocationCallOrder)).toBeLessThan(
+      discovery.discover.mock.invocationCallOrder[0] as number,
+    );
+  });
+
+  it.each([
+    { graphOrder: ['2', '1'], expectedMarket: '2' },
+    { graphOrder: ['1', '2'], expectedMarket: '1' },
+  ])(
+    'lets Graph order choose the sole capacity-constrained new action: $graphOrder',
+    async ({ graphOrder, expectedMarket }) => {
+      const first = market('1');
+      const second = market('2');
+      const actionExecutor = executor();
+      const client = dataClient({
+        markets: [first, second],
+        books: new Map([
+          ['1', book(first)],
+          ['2', book(second)],
+        ]),
+      });
+      const { agent } = createAgent({
+        dataClient: client,
+        newOpportunityDiscovery: opportunityDiscovery(graphOrder),
+        executor: actionExecutor,
+        dryRun: false,
+        maxOrdersInFlight: 1,
+      });
+
+      await agent.runCycle();
+
+      expect(client.getOrderBook).toHaveBeenCalledTimes(2);
+      expect(actionExecutor.placeOrder).toHaveBeenCalledOnce();
+      expect(actionExecutor.placeOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ marketId: expectedMarket, side: 'BID' }),
+      );
+    },
+  );
+
+  it('uses Graph as an allow-list and skips truth for unselected empty markets', async () => {
+    const first = market('1');
+    const second = market('2');
+    const profitable = order({ marketId: '1', priceRaw: '100000' });
+    const readSignal = vi.fn(async ({ marketId }: { marketId: string }) => ({
+      signal: signal(marketId),
+      paymentSpendRaw: 0n,
+    }));
+    const actionExecutor = executor();
+    const client = dataClient({
+      markets: [first, second],
+      books: new Map([
+        ['1', book(first, [profitable])],
+        ['2', book(second)],
+      ]),
+    });
+    const { agent, logger } = createAgent({
+      dataClient: client,
+      newOpportunityDiscovery: opportunityDiscovery(['2']),
+      readSignal,
+      executor: actionExecutor,
+      dryRun: false,
+      maxOrdersInFlight: 1,
+    });
+
+    await agent.runCycle();
+
+    expect(client.getOrderBook).toHaveBeenCalledTimes(2);
+    expect(readSignal).toHaveBeenCalledOnce();
+    expect(readSignal).toHaveBeenCalledWith(
+      expect.objectContaining({ marketId: '2' }),
+    );
+    expect(actionExecutor.fillOrder).not.toHaveBeenCalled();
+    expect(
+      logger.entries.filter(
+        ({ marketId, event }) =>
+          marketId === '1' &&
+          (event === 'decision' || event === 'dry-run' || event === 'broadcast'),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('fails Graph outage closed for exposure while retiring stale owned orders', async () => {
+    const staleOwnBid = order({
+      orderId: '8',
+      maker: TRADER,
+      side: 'BID',
+      priceRaw: '500000',
+      updatedAt: 800,
+    });
+    const profitable = order({ orderId: '9', priceRaw: '100000' });
+    const readSignal = vi.fn(async ({ marketId }: { marketId: string }) => ({
+      signal: signal(marketId),
+      paymentSpendRaw: 0n,
+    }));
+    const actionExecutor = executor();
+    const { agent, logger } = createAgent({
+      dataClient: dataClient({
+        books: new Map([['1', book(market(), [staleOwnBid, profitable])]]),
+      }),
+      newOpportunityDiscovery: unavailableDiscovery(),
+      readSignal,
+      executor: actionExecutor,
+      dryRun: false,
+    });
+
+    await agent.runCycle();
+
+    expect(readSignal).toHaveBeenCalledOnce();
+    expect(actionExecutor.cancelOrder).toHaveBeenCalledWith({ orderId: '8' });
+    expect(actionExecutor.fillOrder).not.toHaveBeenCalled();
+    expect(actionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(JSON.stringify(logger.entries)).not.toContain(
+      'private Graph endpoint detail',
+    );
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'market-discovery',
+        level: 'error',
+        reason: expect.stringContaining('new exposure disabled'),
+      }),
+    );
+  });
+
+  it('retires an unranked stale order before ranked placement frees and uses its cap', async () => {
+    const first = market('1');
+    const second = market('2');
+    const staleOwnBid = order({
+      orderId: '8',
+      maker: TRADER,
+      side: 'BID',
+      updatedAt: 800,
+    });
+    const actionExecutor = executor();
+    const { agent } = createAgent({
+      dataClient: dataClient({
+        markets: [first, second],
+        books: new Map([
+          ['1', book(first, [staleOwnBid])],
+          ['2', book(second)],
+        ]),
+      }),
+      newOpportunityDiscovery: opportunityDiscovery(['2']),
+      executor: actionExecutor,
+      dryRun: false,
+      maxOrdersInFlight: 1,
+    });
+
+    await agent.runCycle();
+
+    expect(actionExecutor.cancelOrder).toHaveBeenCalledWith({ orderId: '8' });
+    expect(actionExecutor.placeOrder).toHaveBeenCalledOnce();
+    expect(actionExecutor.placeOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ marketId: '2', side: 'BID' }),
+    );
+    expect(actionExecutor.cancelOrder.mock.invocationCallOrder[0]).toBeLessThan(
+      actionExecutor.placeOrder.mock.invocationCallOrder[0] as number,
+    );
+  });
+
+  it('counts a fresh unranked owned order against ranked placement capacity', async () => {
+    const first = market('1');
+    const second = market('2');
+    const freshOwnBid = order({
+      orderId: '8',
+      maker: TRADER,
+      side: 'BID',
+      priceRaw: '580000',
+      updatedAt: 999,
+    });
+    const actionExecutor = executor();
+    const { agent, logger } = createAgent({
+      dataClient: dataClient({
+        markets: [first, second],
+        books: new Map([
+          ['1', book(first, [freshOwnBid])],
+          ['2', book(second)],
+        ]),
+        accountResponse: account([]),
+      }),
+      newOpportunityDiscovery: opportunityDiscovery(['2']),
+      executor: actionExecutor,
+      dryRun: false,
+      maxOrdersInFlight: 1,
+    });
+
+    await agent.runCycle();
+
+    expect(actionExecutor.cancelOrder).not.toHaveBeenCalled();
+    expect(actionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        marketId: '2',
+        event: 'refused',
+        reason: expect.stringContaining('max-orders-in-flight cap'),
+      }),
+    );
+  });
+
+  it('cancels an expired owned order without a truth read or replacement', async () => {
+    const endedMarket = market('1', { tradingEndsAt: 1_000 });
+    const ownOrder = order({ orderId: '8', maker: TRADER, side: 'BID' });
+    const endedBook = { ...book(endedMarket, [ownOrder]), tradingOpen: false };
+    const readSignal = vi.fn(async ({ marketId }: { marketId: string }) => ({
+      signal: signal(marketId),
+      paymentSpendRaw: 0n,
+    }));
+    const actionExecutor = executor();
+    const { agent } = createAgent({
+      dataClient: dataClient({
+        markets: [endedMarket],
+        books: new Map([['1', endedBook]]),
+      }),
+      newOpportunityDiscovery: opportunityDiscovery([]),
+      readSignal,
+      executor: actionExecutor,
+      dryRun: false,
+      nowSeconds: () => 1_000,
+    });
+
+    await agent.runCycle();
+
+    expect(readSignal).not.toHaveBeenCalled();
+    expect(actionExecutor.cancelOrder).toHaveBeenCalledWith({ orderId: '8' });
+    expect(actionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(actionExecutor.fillOrder).not.toHaveBeenCalled();
+  });
+
+  it('withdraws and cancels an expired Hybrid order without new exposure', async () => {
+    const endedMarket = market('1', { tradingEndsAt: 1_000 });
+    const ownOrder = offchainOrder({
+      maker: TRADER,
+      side: 'BID',
+      fillable: false,
+      unfillableReason: 'TRADING_ENDED',
+    });
+    const endedBook = {
+      ...hybridBook(endedMarket, [ownOrder]),
+      tradingOpen: false,
+    };
+    const hybridActionExecutor = hybridExecutor();
+    hybridActionExecutor.getMakerOrders.mockResolvedValue({
+      orders: [ownOrder],
+      onchainOrders: [],
+      offchainWithdrawalIsOnchainCancellation: false,
+      warning: 'Withdrawal is off-chain only.',
+    });
+    const actionExecutor = executor();
+    const readSignal = vi.fn(async ({ marketId }: { marketId: string }) => ({
+      signal: signal(marketId),
+      paymentSpendRaw: 0n,
+    }));
+    const { agent } = createAgent({
+      dataClient: dataClient({
+        markets: [endedMarket],
+        books: new Map([['1', endedBook]]),
+      }),
+      newOpportunityDiscovery: unavailableDiscovery(),
+      readSignal,
+      executor: actionExecutor,
+      hybridExecutor: hybridActionExecutor,
+      dryRun: false,
+      nowSeconds: () => 1_000,
+    });
+
+    await agent.runCycle();
+
+    expect(readSignal).not.toHaveBeenCalled();
+    expect(hybridActionExecutor.withdrawOrder).toHaveBeenCalledWith({
+      order: ownOrder,
+    });
+    expect(hybridActionExecutor.cancelOrder).toHaveBeenCalledWith({
+      order: ownOrder,
+    });
+    expect(hybridActionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(hybridActionExecutor.fillOrder).not.toHaveBeenCalled();
+    expect(actionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(actionExecutor.fillOrder).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Graph-selected market when the backend says trading ended', async () => {
+    const endedMarket = market('1', { tradingEndsAt: 1_000 });
+    const endedBook = {
+      ...book(endedMarket, [order({ priceRaw: '100000' })]),
+      tradingOpen: false,
+    };
+    const readSignal = vi.fn(async ({ marketId }: { marketId: string }) => ({
+      signal: signal(marketId),
+      paymentSpendRaw: 0n,
+    }));
+    const actionExecutor = executor();
+    const { agent } = createAgent({
+      dataClient: dataClient({
+        markets: [endedMarket],
+        books: new Map([['1', endedBook]]),
+      }),
+      newOpportunityDiscovery: opportunityDiscovery(['1']),
+      readSignal,
+      executor: actionExecutor,
+      dryRun: false,
+      nowSeconds: () => 1_000,
+    });
+
+    await agent.runCycle();
+
+    expect(readSignal).not.toHaveBeenCalled();
+    expect(actionExecutor.placeOrder).not.toHaveBeenCalled();
+    expect(actionExecutor.fillOrder).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse a successful Graph universe across failed cycles', async () => {
+    const discovery = opportunityDiscovery(['1']);
+    discovery.discover
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({
+        blockNumber: 60_000_001,
+        blockTimestamp: 995,
+        candidates: [
+          {
+            marketId: '1',
+            tradeEventCount: '0',
+            lastTradeAt: null,
+            lastTradeBlock: null,
+            lastTradeTransaction: null,
+            lastTradeVenue: null,
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('offline again'));
+    const { agent, logger } = createAgent({
+      newOpportunityDiscovery: discovery,
+    });
+
+    await agent.runCycle();
+    expect(logger.entries.filter(({ event }) => event === 'dry-run')).toHaveLength(0);
+    await agent.runCycle();
+    expect(logger.entries.filter(({ event }) => event === 'dry-run')).toHaveLength(2);
+    await agent.runCycle();
+    expect(logger.entries.filter(({ event }) => event === 'dry-run')).toHaveLength(2);
+  });
+
+  it('fails duplicate ranked IDs closed instead of evaluating twice', async () => {
+    const duplicate = opportunityDiscovery(['1', '1']);
+    const { agent, logger } = createAgent({
+      newOpportunityDiscovery: duplicate,
+    });
+
+    await agent.runCycle();
+
+    expect(logger.entries.filter(({ event }) => event === 'dry-run')).toHaveLength(0);
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: 'market-discovery',
+        level: 'error',
+      }),
+    );
+  });
+
   it('quotes both sides around fair value and broadcasts nothing in dry-run', async () => {
     const { agent, logger, executor: actionExecutor } = createAgent();
 

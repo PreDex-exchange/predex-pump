@@ -28,6 +28,7 @@ import {
 } from '@predex-pump/shared';
 
 import type { TraderLogger } from './logger.js';
+import type { NewOpportunityDiscovery } from './graph-discovery.js';
 
 const PRICE_SCALE = 1_000_000n;
 
@@ -147,6 +148,7 @@ export class BroadcastUncertainError extends Error {
 export interface TraderAgentOptions {
   dataClient: TraderDataClient;
   readSignal: TruthSignalReader;
+  newOpportunityDiscovery?: NewOpportunityDiscovery;
   executor?: TraderExecutor;
   hybridExecutor?: HybridTraderExecutor;
   logger: TraderLogger;
@@ -169,6 +171,7 @@ interface CycleRisk {
   spendRaw: bigint;
   inFlight: number;
   orderSnapshotComplete: boolean;
+  actualSignalSpendRaw: bigint;
 }
 
 interface InventoryState {
@@ -279,6 +282,20 @@ function venueOrders(
   }
   return book.offchainOrders
     .filter((order) => order.fillable && isActiveHybridOrder(order))
+    .map(hybridDecisionOrder);
+}
+
+function venueOrdersForMaintenance(
+  book: OrderBook,
+  venue: LiveBookVenue,
+): DecisionOrder[] {
+  if (venue === 'MINICLOB') {
+    return book.orders
+      .filter((order) => order.open)
+      .map(miniClobDecisionOrder);
+  }
+  return book.offchainOrders
+    .filter(isActiveHybridOrder)
     .map(hybridDecisionOrder);
 }
 
@@ -430,6 +447,8 @@ export class TraderAgent {
     order: DecisionOrder,
     risk: CycleRisk,
     inventory: InventoryState,
+    trigger = 'stale quote',
+    releaseReservedCapacity = true,
   ): Promise<boolean> {
     if (this.options.dryRun) {
       this.options.logger.write({
@@ -443,8 +462,8 @@ export class TraderAgent {
         venue: order.venue,
         message:
           order.venue === 'MINICLOB'
-            ? 'stale quote → would cancel → no broadcast'
-            : 'stale quote → would withdraw free from the operator book, then submit authoritative per-order cancelOrder with gas → no broadcast',
+            ? `${trigger} → would cancel → no broadcast`
+            : `${trigger} → would withdraw free from the operator book, then submit authoritative per-order cancelOrder with gas → no broadcast`,
       });
     } else if (order.venue === 'MINICLOB') {
       try {
@@ -463,7 +482,7 @@ export class TraderAgent {
           orderId: order.orderId,
           venue: order.venue,
           txHash: result.txHash,
-          message: 'stale quote → cancelled on Arc',
+          message: `${trigger} → cancelled on Arc`,
         });
       } catch (error) {
         this.options.logger.write({
@@ -507,7 +526,8 @@ export class TraderAgent {
           orderId: order.orderId,
           venue: order.venue,
           message:
-            'stale quote → withdrawn instantly and free from this operator book; the signature is still valid on-chain until expiry or per-order cancelOrder',
+            `${trigger} → withdrawn instantly and free from this operator book; ` +
+            'the signature is still valid on-chain until expiry or per-order cancelOrder',
         });
         if (
           response.offchainWithdrawalIsOnchainCancellation !== false ||
@@ -543,7 +563,8 @@ export class TraderAgent {
           venue: order.venue,
           txHash: result.txHash,
           message:
-            'stale quote → authoritative per-order CTFExchange.cancelOrder confirmed on Arc (costs gas; cancelAll was not used)',
+            `${trigger} → authoritative per-order CTFExchange.cancelOrder confirmed on Arc ` +
+            '(costs gas; cancelAll was not used)',
         });
       } catch (error) {
         this.options.logger.write({
@@ -563,12 +584,14 @@ export class TraderAgent {
         return false;
       }
     }
-    risk.inFlight = Math.max(0, risk.inFlight - 1);
-    if (order.outcome === 'YES' && order.side === 'BID') {
-      inventory.projectedYesRaw -= BigInt(order.remainingRaw);
-    }
-    if (order.outcome === 'YES' && order.side === 'ASK') {
-      inventory.availableYesRaw += BigInt(order.remainingRaw);
+    if (releaseReservedCapacity) {
+      risk.inFlight = Math.max(0, risk.inFlight - 1);
+      if (order.outcome === 'YES' && order.side === 'BID') {
+        inventory.projectedYesRaw -= BigInt(order.remainingRaw);
+      }
+      if (order.outcome === 'YES' && order.side === 'ASK') {
+        inventory.availableYesRaw += BigInt(order.remainingRaw);
+      }
     }
     return true;
   }
@@ -1057,8 +1080,18 @@ export class TraderAgent {
         sameAddress(order.maker, this.options.traderAddress),
       ),
     );
+    const maintenanceOwnOrdersFromBooks = orderBookSnapshots.flatMap(
+      ({ book }) =>
+        [
+          ...venueOrdersForMaintenance(book.yes, book.liveVenue),
+          ...venueOrdersForMaintenance(book.no, book.liveVenue),
+        ].filter((order) =>
+          sameAddress(order.maker, this.options.traderAddress),
+        ),
+    );
     let orderSnapshotComplete = snapshots.length === markets.length;
     let openOwnOrders = ownOrdersFromBooks;
+    let maintenanceOwnOrders = maintenanceOwnOrdersFromBooks;
     const hasHybridMarket = orderBookSnapshots.some(
       ({ book }) => book.liveVenue === 'HYBRID',
     );
@@ -1075,17 +1108,25 @@ export class TraderAgent {
       } else {
         try {
           const response = await this.options.hybridExecutor.getMakerOrders();
-          const authenticatedHybridOrders = response.orders
+          const authenticatedHybridMaintenanceOrders = response.orders
             .filter(
               (order) =>
                 isActiveHybridOrder(order) &&
-                order.fillable &&
                 sameAddress(order.maker, this.options.traderAddress),
             )
             .map(hybridDecisionOrder);
+          const authenticatedHybridOrders = authenticatedHybridMaintenanceOrders.filter(
+            (order) => hybridSource(order).fillable,
+          );
           openOwnOrders = [
             ...ownOrdersFromBooks.filter(({ venue }) => venue === 'MINICLOB'),
             ...authenticatedHybridOrders,
+          ];
+          maintenanceOwnOrders = [
+            ...maintenanceOwnOrdersFromBooks.filter(
+              ({ venue }) => venue === 'MINICLOB',
+            ),
+            ...authenticatedHybridMaintenanceOrders,
           ];
         } catch (error) {
           orderSnapshotComplete = false;
@@ -1118,17 +1159,98 @@ export class TraderAgent {
     const effectiveOpen = uniqueOpenOwnOrders.filter(
       ({ orderId }) => !this.confirmedClosedOrderIds.has(orderId),
     );
+    const effectiveOpenKeys = new Set(
+      effectiveOpen.map(({ venue, orderId }) => `${venue}:${orderId}`),
+    );
+    const uniqueMaintenanceOwnOrders = [
+      ...new Map(
+        maintenanceOwnOrders.map((order) => [
+          `${order.venue}:${order.orderId}`,
+          order,
+        ]),
+      ).values(),
+    ].filter(({ orderId }) => !this.confirmedClosedOrderIds.has(orderId));
+    const maintenanceOrdersByMarket = new Map<string, DecisionOrder[]>();
+    for (const order of uniqueMaintenanceOwnOrders) {
+      const existing = maintenanceOrdersByMarket.get(order.marketId) ?? [];
+      existing.push(order);
+      maintenanceOrdersByMarket.set(order.marketId, existing);
+    }
     const risk: CycleRisk = {
       spendRaw: this.sessionSpendRaw,
       inFlight: effectiveOpen.length + this.pendingPlacedOrderIds.size,
       orderSnapshotComplete,
+      actualSignalSpendRaw: 0n,
     };
-    let actualSignalSpendThisCycle = 0n;
 
-    for (const snapshot of snapshots) {
+    const newOpportunityDiscovery = this.options.newOpportunityDiscovery;
+    const graphDiscoveryEnabled = newOpportunityDiscovery !== undefined;
+    let scheduledSnapshots = snapshots.map((snapshot) => ({
+      snapshot,
+      allowNewExposure: true,
+    }));
+    if (newOpportunityDiscovery !== undefined) {
+      let rankedMarketIds: readonly string[] = [];
+      try {
+        const now = this.options.nowSeconds?.() ?? Math.floor(Date.now() / 1_000);
+        const discovery = await newOpportunityDiscovery.discover(now);
+        const discoveredMarketIds = discovery.candidates.map(
+          ({ marketId }) => marketId,
+        );
+        if (
+          new Set(discoveredMarketIds).size !== discoveredMarketIds.length
+        ) {
+          throw new Error('duplicate discovery market IDs');
+        }
+        rankedMarketIds = discoveredMarketIds;
+        this.options.logger.write({
+          level: 'info',
+          event: 'market-discovery',
+          graphBlockNumber: discovery.blockNumber.toString(),
+          graphBlockTimestamp: discovery.blockTimestamp.toString(),
+          candidateCount: rankedMarketIds.length.toString(),
+          message:
+            `Graph discovery → candidates=${rankedMarketIds.join(',') || 'none'} ` +
+            `at block=${discovery.blockNumber} timestamp=${discovery.blockTimestamp}`,
+        });
+      } catch {
+        this.options.logger.write({
+          level: 'error',
+          event: 'market-discovery',
+          action: 'HOLD',
+          reason: 'Graph discovery unavailable; new exposure disabled for this cycle',
+          message:
+            'Graph discovery → unavailable or invalid → maintenance only → continuing',
+        });
+      }
+
+      const snapshotByMarket = new Map(
+        snapshots.map((snapshot) => [snapshot.market.id, snapshot]),
+      );
+      const selectedMarketIds = new Set(rankedMarketIds);
+      const ownedOrderMarketIds = new Set(
+        uniqueMaintenanceOwnOrders.map(({ marketId }) => marketId),
+      );
+      const maintenanceOnly = snapshots
+        .filter(
+          ({ market }) =>
+            ownedOrderMarketIds.has(market.id) &&
+            !selectedMarketIds.has(market.id),
+        )
+        .map((snapshot) => ({ snapshot, allowNewExposure: false }));
+      const ranked = rankedMarketIds.flatMap((marketId) => {
+        const snapshot = snapshotByMarket.get(marketId);
+        return snapshot === undefined
+          ? []
+          : [{ snapshot, allowNewExposure: true }];
+      });
+      scheduledSnapshots = [...maintenanceOnly, ...ranked];
+    }
+
+    for (const { snapshot, allowNewExposure } of scheduledSnapshots) {
       const { market } = snapshot;
       if (
-        market.phase !== 'Graduated' ||
+        (!graphDiscoveryEnabled && market.phase !== 'Graduated') ||
         market.bookAddress === null ||
         !hasOrderBook(snapshot)
       ) {
@@ -1140,37 +1262,65 @@ export class TraderAgent {
         continue;
       }
       const { book } = snapshot;
-      const now = this.options.nowSeconds?.() ?? Math.floor(Date.now() / 1_000);
-      if (!book.tradingOpen || now >= market.tradingEndsAt) {
-        this.refuse(
-          market.id,
-          'HOLD',
-          `global trading deadline reached at ${market.tradingEndsAt}; placement and fills are disabled`,
-          { venue: book.liveVenue },
-        );
-        continue;
-      }
-
       const currentYesRaw = BigInt(
         account.positions.find(
           (position) => position.marketId === market.id && position.outcome === 'YES',
         )?.qtyRaw ?? '0',
       );
       const yesOrders = venueOrders(book.yes, book.liveVenue);
-      const ownYesOrders = yesOrders.filter(
-        (order) =>
-          sameAddress(order.maker, this.options.traderAddress) &&
-          !this.confirmedClosedOrderIds.has(order.orderId),
+      const ownYesOrders = (
+        !graphDiscoveryEnabled
+          ? yesOrders.filter(
+              (order) =>
+                sameAddress(order.maker, this.options.traderAddress) &&
+                !this.confirmedClosedOrderIds.has(order.orderId),
+            )
+          : maintenanceOrdersByMarket.get(market.id) ?? []
+      ).filter(({ outcome }) => outcome === 'YES');
+      const effectiveOwnYesOrders = effectiveOpen.filter(
+        (order) => order.marketId === market.id && order.outcome === 'YES',
       );
+      const reservedOwnYesOrders =
+        !graphDiscoveryEnabled
+          ? ownYesOrders
+          : effectiveOwnYesOrders;
       const inventory: InventoryState = {
         availableYesRaw: currentYesRaw,
         projectedYesRaw:
           currentYesRaw +
-          ownYesOrders
+          reservedOwnYesOrders
             .filter((order) => order.side === 'BID')
             .reduce((total, order) => total + BigInt(order.remainingRaw), 0n) +
           (this.sessionPotentialYesIncreaseRaw.get(market.id) ?? 0n),
       };
+      const now = this.options.nowSeconds?.() ?? Math.floor(Date.now() / 1_000);
+      if (
+        market.phase !== 'Graduated' ||
+        !book.tradingOpen ||
+        now >= market.tradingEndsAt
+      ) {
+        if (graphDiscoveryEnabled) {
+          for (const order of ownYesOrders) {
+            await this.executeCancel(
+              market.id,
+              order,
+              risk,
+              inventory,
+              'market ended',
+              effectiveOpenKeys.has(`${order.venue}:${order.orderId}`),
+            );
+          }
+        }
+        this.refuse(
+          market.id,
+          'HOLD',
+          graphDiscoveryEnabled
+            ? `market is not open for trading (phase=${market.phase}, tradingOpen=${book.tradingOpen}, deadline=${market.tradingEndsAt})`
+            : `global trading deadline reached at ${market.tradingEndsAt}; placement and fills are disabled`,
+          { venue: book.liveVenue },
+        );
+        continue;
+      }
 
       let signal: TruthSignalResponse;
       try {
@@ -1190,7 +1340,7 @@ export class TraderAgent {
           );
         }
         risk.spendRaw += result.paymentSpendRaw;
-        actualSignalSpendThisCycle += result.paymentSpendRaw;
+        risk.actualSignalSpendRaw += result.paymentSpendRaw;
         signal = result.signal;
       } catch (error) {
         this.options.logger.write({
@@ -1259,9 +1409,30 @@ export class TraderAgent {
           absolute(BigInt(order.priceRaw) - target) >
           this.options.repriceThresholdRaw;
         if (!ageStale && !priceStale) continue;
-        if (await this.executeCancel(market.id, order, risk, inventory)) {
+        if (
+          await this.executeCancel(
+            market.id,
+            order,
+            risk,
+            inventory,
+            'stale quote',
+            effectiveOpenKeys.has(`${order.venue}:${order.orderId}`),
+          )
+        ) {
           cancelled.add(order.orderId);
         }
+      }
+
+      if (!allowNewExposure) {
+        this.options.logger.write({
+          level: 'info',
+          event: 'market-discovery',
+          marketId: market.id,
+          action: 'HOLD',
+          message:
+            'Graph did not select this market → owned-order maintenance complete → no new exposure',
+        });
+        continue;
       }
 
       const externalAsk = bestExternalOrder(
@@ -1334,7 +1505,7 @@ export class TraderAgent {
         );
       }
 
-      const remainingOwn = ownYesOrders.filter(
+      const remainingOwn = reservedOwnYesOrders.filter(
         ({ orderId }) => !cancelled.has(orderId),
       );
       for (const [side, price] of [
@@ -1367,7 +1538,7 @@ export class TraderAgent {
     }
 
     this.sessionSpendRaw = this.options.dryRun
-      ? this.sessionSpendRaw + actualSignalSpendThisCycle
+      ? this.sessionSpendRaw + risk.actualSignalSpendRaw
       : risk.spendRaw;
   }
 }
