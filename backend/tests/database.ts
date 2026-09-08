@@ -4,6 +4,8 @@ export const testPrisma = new PrismaClient();
 
 export async function resetDatabase(): Promise<void> {
   await testPrisma.$transaction([
+    testPrisma.agentkitTrialNonce.deleteMany(),
+    testPrisma.agentkitTrialUsage.deleteMany(),
     testPrisma.indexerGap.deleteMany(),
     testPrisma.indexerSubscriptionState.deleteMany(),
     testPrisma.settlementMatch.deleteMany(),

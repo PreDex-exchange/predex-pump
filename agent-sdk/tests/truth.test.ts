@@ -199,6 +199,7 @@ describe('truth.buy Circle x402 buyer', () => {
       paymentReceipt: {
         paid: true,
         amountRaw: 100n,
+        access: 'circle-x402',
         asset: ADDRESSES.usdc,
         network: REQUIREMENTS.network,
         transaction: 'batch-transfer-id',
@@ -259,8 +260,37 @@ describe('truth.buy Circle x402 buyer', () => {
       payment: { asset: ADDRESSES.usdc, maxAmountRaw: 100n },
     });
 
-    expect(result.paymentReceipt).toEqual({ paid: false, amountRaw: 0n });
+    expect(result.paymentReceipt).toEqual({
+      paid: false,
+      amountRaw: 0n,
+      access: 'public',
+    });
     expect(result.signal).toEqual(SIGNAL);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('reports a World AgentKit grant without claiming a Circle payment', async () => {
+    const client = createTruthClient({
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify(SIGNAL), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            'x-predex-truth-access': 'world-agentkit',
+          },
+        }),
+      ),
+    });
+
+    const result = await client.buy({
+      marketId: '1',
+      payment: { asset: ADDRESSES.usdc, maxAmountRaw: 100n },
+    });
+
+    expect(result.paymentReceipt).toEqual({
+      paid: false,
+      amountRaw: 0n,
+      access: 'world-agentkit',
+    });
   });
 });

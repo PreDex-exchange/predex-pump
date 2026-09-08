@@ -229,13 +229,16 @@ export class CircleTruthPaymentGate implements TruthPaymentGate {
     this.logger = options.logger ?? DEFAULT_LOGGER;
   }
 
-  paymentRequiredHeader(resourceUrl: string): string {
-    const paymentRequired: TruthPaymentRequired = {
+  paymentRequired(resourceUrl: string): TruthPaymentRequired {
+    return {
       x402Version: 2,
       resource: truthResource(resourceUrl),
       accepts: [this.requirements],
     };
-    return encodePaymentHeader(paymentRequired);
+  }
+
+  paymentRequiredHeader(resourceUrl: string): string {
+    return encodePaymentHeader(this.paymentRequired(resourceUrl));
   }
 
   async authorize(

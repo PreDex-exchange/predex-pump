@@ -449,6 +449,26 @@ model SiweNonce {
   @@index([expiresAt])
 }
 
+// Durable, privacy-minimized World AgentKit free-trial state. Both the
+// AgentBook human identifier and signed nonce are stored only as SHA-256 keys.
+model AgentkitTrialUsage {
+  scope     String
+  humanKey  String
+  uses      Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@id([scope, humanKey])
+}
+
+model AgentkitTrialNonce {
+  nonceKey String   @id
+  scope    String
+  humanKey String
+  usedAt   DateTime @default(now())
+
+  @@index([scope, humanKey])
+}
+
 model AuthSession {
   tokenHash      String      @id
   accountAddress String

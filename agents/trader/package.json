@@ -23,6 +23,7 @@
   "dependencies": {
     "@predex-pump/agent-sdk": "link:../../agent-sdk",
     "@predex-pump/shared": "link:../../shared",
+    "@worldcoin/agentkit": "0.2.1",
     "viem": "2.55.8"
   },
   "devDependencies": {

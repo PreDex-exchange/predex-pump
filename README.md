@@ -1,10 +1,12 @@
-# predex-pump
+# Continuity
 
 Standalone demo app for the predex on-chain prediction-market **incubator** on **Arc testnet**.
 The smart contracts (incubator + MiniCLOB order book) live in the separate **`predex-contract`** repo.
 This repo is the **application**: a non-custodial backend (indexer + API + WebSocket),
 a Next.js web app, and a Flutter mobile shell.
-Demo-only for the Encode x Arc "Programmable Money" hackathon; integrates with predex-sync/exchange later.
+The repository keeps its historical `predex-pump` name. Continuity is now extending the existing
+open-source product in the ETHOnline 2026 Continuity track; [ETHONLINE_2026.md](./ETHONLINE_2026.md)
+separates the pre-existing system from the sponsor features built during the event.
 
 ## Architecture (3 tiers)
 ```

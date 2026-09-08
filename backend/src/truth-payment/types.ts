@@ -18,12 +18,14 @@ export interface TruthPaymentRequirements {
 
 export interface TruthPaymentRequired {
   x402Version: 2;
+  error?: string;
   resource: {
     url: string;
     description: string;
     mimeType: 'application/json';
   };
   accepts: [TruthPaymentRequirements];
+  extensions?: Record<string, unknown>;
 }
 
 export interface TruthPaymentAuthorization {
@@ -37,11 +39,21 @@ export interface TruthPaymentAuthorization {
 /** Framework-neutral seam; production uses Circle and tests inject a fake facilitator. */
 export interface TruthPaymentGate {
   readonly requirements: TruthPaymentRequirements;
+  paymentRequired(resourceUrl: string): TruthPaymentRequired;
   paymentRequiredHeader(resourceUrl: string): string;
   authorize(
     paymentSignature: string,
     resourceUrl: string,
   ): Promise<TruthPaymentAuthorization>;
+}
+
+/** Optional World AgentKit trial layered before the existing Circle payment. */
+export interface TruthAgentTrialGate {
+  paymentRequiredExtensions(
+    resourcePath: string,
+    paymentRequired: TruthPaymentRequired,
+  ): Promise<Record<string, unknown>>;
+  authorize(header: string, resourcePath: string): Promise<boolean>;
 }
 
 export function encodePaymentHeader(value: unknown): string {

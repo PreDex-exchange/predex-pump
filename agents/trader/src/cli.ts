@@ -13,6 +13,7 @@ import type {
   TruthSignalReadResult,
 } from './agent.js';
 import { createArcTraderExecutor } from './arc-executor.js';
+import { createAgentkitTruthClient } from './agentkit-truth.js';
 import { loadTraderConfig } from './config.js';
 import { createGraphOpportunityDiscovery } from './graph-discovery.js';
 import { createArcHybridTraderExecutor } from './hybrid-executor.js';
@@ -28,6 +29,7 @@ function printHelp(): void {
       'The private key is read from PREDEX_PRIVATE_KEY only after send mode is selected.',
       'All quote sizes, thresholds, hard caps, polling, API, RPC, and address settings come from env.',
       'Set PREDEX_MARKET_DISCOVERY=graph-required plus PREDEX_GRAPH_QUERY_URL to gate new exposure through The Graph.',
+      'Set PREDEX_TRUTH_MODE=agentkit to try World human-backed access before the existing Circle x402 payment.',
     ].join('\n'),
   );
 }
@@ -73,6 +75,22 @@ async function main(): Promise<void> {
     );
   }
 
+  const truthAccount =
+    config.truthMode === 'paid' || config.truthMode === 'agentkit'
+      ? privateKeyAccountFromEnv('PREDEX_TRUTH_PRIVATE_KEY')
+      : undefined;
+  if (config.truthMode === 'agentkit' && truthAccount !== undefined) {
+    if (
+      traderAddress !== zeroAddress &&
+      traderAddress.toLowerCase() !== truthAccount.address.toLowerCase()
+    ) {
+      throw new Error(
+        'World AgentKit truth signer must match the configured trader address.',
+      );
+    }
+    traderAddress = truthAccount.address;
+  }
+
   logger.write({
     level: 'info',
     event: 'startup',
@@ -113,15 +131,19 @@ async function main(): Promise<void> {
     };
   } else {
     const paymentProvider =
-      config.truthMode === 'paid'
-        ? createCircleX402PaymentProvider(
-            privateKeyAccountFromEnv('PREDEX_TRUTH_PRIVATE_KEY'),
-          )
+      config.truthMode === 'paid' && truthAccount !== undefined
+        ? createCircleX402PaymentProvider(truthAccount)
         : undefined;
-    const truthClient = createTruthClient({
-      baseUrl: config.apiUrl,
-      ...(paymentProvider === undefined ? {} : { paymentProvider }),
-    });
+    const truthClient =
+      config.truthMode === 'agentkit' && truthAccount !== undefined
+        ? createAgentkitTruthClient({
+            account: truthAccount,
+            baseUrl: config.apiUrl,
+          })
+        : createTruthClient({
+            baseUrl: config.apiUrl,
+            ...(paymentProvider === undefined ? {} : { paymentProvider }),
+          });
     readSignal = async ({ marketId, maxPaymentRaw }) => {
       const paymentLimit =
         config.truthMaxPaymentRaw < maxPaymentRaw
@@ -145,10 +167,13 @@ async function main(): Promise<void> {
               txHash: result.paymentReceipt.transaction as `0x${string}`,
             }
           : {}),
-        message: result.paymentReceipt.paid
-          ? `truth read → Circle Gateway nanopayment authorized ` +
-            `amountRaw=${result.paymentReceipt.amountRaw} network=${result.paymentReceipt.network ?? 'unknown'}`
-          : 'truth read → unpaid dev endpoint → paidRaw=0',
+        message:
+          result.paymentReceipt.access === 'world-agentkit'
+            ? 'truth read → World AgentKit human-backed trial → paidRaw=0'
+            : result.paymentReceipt.paid
+              ? `truth read → Circle Gateway nanopayment authorized ` +
+                `amountRaw=${result.paymentReceipt.amountRaw} network=${result.paymentReceipt.network ?? 'unknown'}`
+              : 'truth read → no Circle payment required → paidRaw=0',
       });
       return {
         signal: result.signal,

@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import {
   routes,
+  TRUTH_ACCESS_HEADER,
   type AccountResponse,
   type ActivityResponse,
   type ConfigResponse,
@@ -15,6 +16,7 @@ import {
   type PublicEventsHealth,
   type TruthSignalResponse,
 } from '@predex-pump/shared';
+import { AGENTKIT } from '@worldcoin/agentkit';
 import type { FastifyInstance } from 'fastify';
 
 import {
@@ -33,6 +35,7 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
+  type TruthAgentTrialGate,
   type TruthPaymentGate,
 } from '../truth-payment/types.js';
 import { isListMarketsResponse } from './cache-validators.js';
@@ -149,6 +152,7 @@ export function registerRestRoutes(
   dedupChecker: DedupChecker,
   indexerStallMs = DEFAULT_INDEXER_STALL_MS,
   truthPaymentGate?: TruthPaymentGate,
+  truthAgentTrialGate?: TruthAgentTrialGate,
   dedupIndexHealthReader?: DedupIndexHealthReader,
   publicReadCache: PublicJsonReadCache = createDisabledPublicJsonReadCache(),
   marketListCacheTtlSeconds = DEFAULT_MARKETS_CACHE_TTL_SECONDS,
@@ -292,17 +296,74 @@ export function registerRestRoutes(
       const marketId = parseDecimalId('market id', request.params.marketId);
       const response = await getTruthSignal(prisma, marketId);
       if (response === null) throw notFound(`Market ${marketId} was not found`);
-      if (truthPaymentGate === undefined) return response;
+      if (truthPaymentGate === undefined) {
+        reply.header(TRUTH_ACCESS_HEADER, 'public');
+        return response;
+      }
 
-      const challenge = truthPaymentGate.paymentRequiredHeader(request.url);
+      const basePaymentRequired = truthPaymentGate.paymentRequired(request.url);
+      const sendPaymentRequired = async (
+        error: string,
+        reason?: string,
+      ) => {
+        let challenge = basePaymentRequired;
+        if (truthAgentTrialGate !== undefined) {
+          try {
+            challenge = {
+              ...basePaymentRequired,
+              error,
+              extensions:
+                await truthAgentTrialGate.paymentRequiredExtensions(
+                  request.url,
+                  basePaymentRequired,
+                ),
+            };
+          } catch {
+            request.log.warn(
+              'World AgentKit challenge unavailable; preserving Circle payment',
+            );
+          }
+        }
+        return reply
+          .header(PAYMENT_REQUIRED_HEADER, encodePaymentHeader(challenge))
+          .code(402)
+          .send(
+            challenge.extensions === undefined
+              ? { error, ...(reason === undefined ? {} : { reason }) }
+              : {
+                  ...challenge,
+                  error,
+                  ...(reason === undefined ? {} : { reason }),
+                },
+          );
+      };
+
+      const agentkitHeader = request.headers[AGENTKIT];
+      if (
+        truthAgentTrialGate !== undefined &&
+        typeof agentkitHeader === 'string' &&
+        agentkitHeader !== ''
+      ) {
+        let granted = false;
+        try {
+          granted = await truthAgentTrialGate.authorize(
+            agentkitHeader,
+            request.url,
+          );
+        } catch {
+          request.log.warn(
+            'World AgentKit verification unavailable; preserving Circle payment',
+          );
+        }
+        if (granted) {
+          reply.header(TRUTH_ACCESS_HEADER, 'world-agentkit');
+          return response;
+        }
+      }
+
       const paymentSignature = request.headers[PAYMENT_SIGNATURE_HEADER];
       if (typeof paymentSignature !== 'string' || paymentSignature === '') {
-        return reply
-          .header(PAYMENT_REQUIRED_HEADER, challenge)
-          .code(402)
-          .send({
-            error: 'Payment required for this truth signal.',
-          });
+        return sendPaymentRequired('Payment required for this truth signal.');
       }
 
       let authorization;
@@ -318,15 +379,13 @@ export function registerRestRoutes(
         });
       }
       if (!authorization.success) {
-        return reply
-          .header(PAYMENT_REQUIRED_HEADER, challenge)
-          .code(402)
-          .send({
-            error: 'Truth payment was rejected.',
-            reason: authorization.errorReason ?? 'Unknown payment failure.',
-          });
+        return sendPaymentRequired(
+          'Truth payment was rejected.',
+          authorization.errorReason ?? 'Unknown payment failure.',
+        );
       }
 
+      reply.header(TRUTH_ACCESS_HEADER, 'circle-x402');
       reply.header(
         PAYMENT_RESPONSE_HEADER,
         encodePaymentHeader({

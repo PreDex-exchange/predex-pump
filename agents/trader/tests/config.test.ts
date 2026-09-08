@@ -110,4 +110,13 @@ describe('loadTraderConfig', () => {
     expect(config.truthMaxPaymentRaw).toBe(77n);
     expect('privateKey' in config).toBe(false);
   });
+
+  it('accepts explicit World AgentKit truth mode and rejects aliases', () => {
+    expect(
+      loadTraderConfig({ PREDEX_TRUTH_MODE: 'agentkit' }, []).truthMode,
+    ).toBe('agentkit');
+    expect(() =>
+      loadTraderConfig({ PREDEX_TRUTH_MODE: 'world' }, []),
+    ).toThrow(/paid, agentkit, or skip/u);
+  });
 });

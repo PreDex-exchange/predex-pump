@@ -44,6 +44,11 @@ markets. The endpoint URL is intentionally omitted from logs.
 - `paid` reads `PREDEX_TRUTH_PRIVATE_KEY` at runtime, signs a Circle Gateway EIP-3009 authorization,
   and refuses any price above `PREDEX_TRUTH_MAX_PAYMENT_RAW` before signing. This can spend Gateway
   USDC even while trading itself is dry-run, so it requires this separate explicit opt-in.
+- `agentkit` uses that explicit truth key as the agent identity. It first signs the World AgentKit
+  CAIP-122 challenge; an AgentBook-registered, human-backed agent receives the server trial.
+  Unverified or exhausted agents fall through to the same bounded Circle payment. When
+  `PREDEX_TRADER_ADDRESS` is set, it must match this signer. An unverified wallet is reported as
+  unverified, never assumed to be a bot.
 - `skip` performs no signal-dependent action. The market loop remains alive.
 
 ## Dry-run demo

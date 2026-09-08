@@ -15,6 +15,12 @@ export interface TruthSellerConfig {
   facilitatorUrl: string;
 }
 
+export type WorldAgentkitMode = 'disabled' | 'free-trial';
+
+export type WorldAgentkitConfig =
+  | { mode: 'disabled' }
+  | { mode: 'free-trial'; publicApiOrigin: string };
+
 function sellerMode(value: string | undefined): TruthSellerMode {
   const normalized = value?.trim().toLowerCase();
   if (!normalized || normalized === 'disabled') return 'disabled';
@@ -45,6 +51,43 @@ function subCentAmount(value: string | undefined): bigint {
   return amount;
 }
 
+function worldAgentkitMode(value: string | undefined): WorldAgentkitMode {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || normalized === 'disabled') return 'disabled';
+  if (normalized === 'free-trial') return 'free-trial';
+  throw new Error(
+    'PREDEX_WORLD_AGENTKIT_MODE must be disabled or free-trial.',
+  );
+}
+
+function publicApiOrigin(value: string | undefined): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw new Error(
+      'PREDEX_PUBLIC_API_ORIGIN is required when World AgentKit is enabled.',
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error('PREDEX_PUBLIC_API_ORIGIN must be an HTTP(S) origin.');
+  }
+  if (
+    (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== ''
+  ) {
+    throw new Error(
+      'PREDEX_PUBLIC_API_ORIGIN must be an HTTP(S) origin without credentials, path, query, or fragment.',
+    );
+  }
+  return parsed.origin;
+}
+
 export function loadTruthSellerConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): TruthSellerConfig {
@@ -62,6 +105,23 @@ export function loadTruthSellerConfig(
     facilitatorUrl:
       environment.PREDEX_GATEWAY_FACILITATOR_URL?.trim() ||
       DEFAULT_GATEWAY_TESTNET_URL,
+  };
+}
+
+export function loadWorldAgentkitConfig(
+  truthSeller: TruthSellerConfig,
+  environment: NodeJS.ProcessEnv = process.env,
+): WorldAgentkitConfig {
+  const mode = worldAgentkitMode(environment.PREDEX_WORLD_AGENTKIT_MODE);
+  if (mode === 'disabled') return { mode };
+  if (truthSeller.mode !== 'circle') {
+    throw new Error(
+      'World AgentKit free-trial mode requires the Circle truth seller fallback.',
+    );
+  }
+  return {
+    mode,
+    publicApiOrigin: publicApiOrigin(environment.PREDEX_PUBLIC_API_ORIGIN),
   };
 }
 

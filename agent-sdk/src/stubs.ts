@@ -1,7 +1,9 @@
 import { BatchEvmScheme } from '@circle-fin/x402-batching/client';
 import {
   routes,
+  TRUTH_ACCESS_HEADER,
   type DedupCheckResponse,
+  type TruthAccessMode,
   type TruthSignalResponse,
 } from '@predex-pump/shared/rest';
 
@@ -59,10 +61,17 @@ export interface TruthBuyInput {
 export interface TruthPaymentReceipt {
   paid: boolean;
   amountRaw: bigint;
+  access: TruthAccessMode;
   asset?: string;
   network?: string;
   transaction?: string;
   payer?: string;
+}
+
+function unpaidAccessMode(response: Response): TruthAccessMode {
+  return response.headers.get(TRUTH_ACCESS_HEADER) === 'world-agentkit'
+    ? 'world-agentkit'
+    : 'public';
 }
 
 export interface TruthBuyResult {
@@ -234,7 +243,11 @@ export function createTruthClient(options: TruthClientOptions = {}): TruthClient
         return {
           signal: (await initial.json()) as TruthSignalResponse,
           sourceUrl,
-          paymentReceipt: { paid: false, amountRaw: 0n },
+          paymentReceipt: {
+            paid: false,
+            amountRaw: 0n,
+            access: unpaidAccessMode(initial),
+          },
         };
       }
       if (initial.status !== 402) {
@@ -284,6 +297,7 @@ export function createTruthClient(options: TruthClientOptions = {}): TruthClient
         paymentReceipt: {
           paid: true,
           amountRaw: BigInt(selected.amount),
+          access: 'circle-x402',
           asset: selected.asset,
           network: selected.network,
           ...(typeof receipt.transaction === 'string'

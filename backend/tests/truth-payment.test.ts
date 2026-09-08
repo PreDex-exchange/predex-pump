@@ -11,6 +11,7 @@ import {
 import {
   createTruthPaymentGate,
   loadTruthSellerConfig,
+  loadWorldAgentkitConfig,
 } from '../src/truth-payment/config.js';
 import {
   decodePaymentHeader,
@@ -354,11 +355,47 @@ describe('truth seller configuration degrade gate', () => {
 
     expect(config.mode).toBe('disabled');
     expect(createTruthPaymentGate(config)).toBeUndefined();
+    expect(loadWorldAgentkitConfig(config, {})).toEqual({ mode: 'disabled' });
   });
 
   it('requires a public seller address only when Circle mode is enabled', () => {
     expect(() =>
       loadTruthSellerConfig({ PREDEX_TRUTH_SELLER_MODE: 'circle' }),
     ).toThrow(/PREDEX_TRUTH_SELLER_ADDRESS/u);
+  });
+
+  it('requires Circle fallback and a strict API origin for AgentKit trials', () => {
+    const disabledSeller = loadTruthSellerConfig({});
+    expect(() =>
+      loadWorldAgentkitConfig(disabledSeller, {
+        PREDEX_WORLD_AGENTKIT_MODE: 'free-trial',
+        PREDEX_PUBLIC_API_ORIGIN: 'https://api.example',
+      }),
+    ).toThrow(/Circle truth seller fallback/u);
+
+    const circleSeller = loadTruthSellerConfig({
+      PREDEX_TRUTH_SELLER_MODE: 'circle',
+      PREDEX_TRUTH_SELLER_ADDRESS: SELLER,
+    });
+    expect(() =>
+      loadWorldAgentkitConfig(circleSeller, {
+        PREDEX_WORLD_AGENTKIT_MODE: 'free-trial',
+      }),
+    ).toThrow(/PREDEX_PUBLIC_API_ORIGIN/u);
+    expect(() =>
+      loadWorldAgentkitConfig(circleSeller, {
+        PREDEX_WORLD_AGENTKIT_MODE: 'free-trial',
+        PREDEX_PUBLIC_API_ORIGIN: 'https://user@example.test/path',
+      }),
+    ).toThrow(/without credentials, path, query, or fragment/u);
+    expect(
+      loadWorldAgentkitConfig(circleSeller, {
+        PREDEX_WORLD_AGENTKIT_MODE: 'free-trial',
+        PREDEX_PUBLIC_API_ORIGIN: 'http://127.0.0.1:3001/',
+      }),
+    ).toEqual({
+      mode: 'free-trial',
+      publicApiOrigin: 'http://127.0.0.1:3001',
+    });
   });
 });

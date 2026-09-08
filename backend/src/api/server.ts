@@ -9,7 +9,10 @@ import { unavailableDedupResponse } from '../dedup/service.js';
 import type { DedupChecker, DedupIndexHealthReader } from '../dedup/types.js';
 import type { ServerEventBus } from '../events/bus.js';
 import type { PublicEventHealthReader } from '../events/public-plane.js';
-import type { TruthPaymentGate } from '../truth-payment/types.js';
+import type {
+  TruthAgentTrialGate,
+  TruthPaymentGate,
+} from '../truth-payment/types.js';
 import {
   ViemOrderChainReader,
   type OrderChainReader,
@@ -32,6 +35,7 @@ export interface BuildServerOptions {
   indexerStallMs?: number;
   logger?: FastifyServerOptions['logger'];
   truthPaymentGate?: TruthPaymentGate;
+  truthAgentTrialGate?: TruthAgentTrialGate;
   accountLayerConfig?: AccountLayerConfig;
   siweVerifier?: SiweVerifier;
   gatewayBalanceReader?: GatewayBalanceReader;
@@ -64,6 +68,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     options.dedupChecker ?? { check: async () => unavailableDedupResponse() },
     options.indexerStallMs,
     options.truthPaymentGate,
+    options.truthAgentTrialGate,
     options.dedupIndexHealthReader,
     options.publicReadCache,
     options.marketListCacheTtlSeconds,

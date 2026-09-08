@@ -19,7 +19,7 @@ interface TraderBaseConfig {
   maxNotionalPerOrderRaw: bigint;
   maxOrdersInFlight: number;
   maxSessionSpendRaw: bigint;
-  truthMode: 'auto' | 'free' | 'paid' | 'skip';
+  truthMode: 'auto' | 'free' | 'paid' | 'agentkit' | 'skip';
   truthMaxPaymentRaw: bigint;
   dryRun: boolean;
 }
@@ -90,11 +90,14 @@ function truthMode(
     normalized === 'auto' ||
     normalized === 'free' ||
     normalized === 'paid' ||
+    normalized === 'agentkit' ||
     normalized === 'skip'
   ) {
     return normalized;
   }
-  throw new Error('PREDEX_TRUTH_MODE must be auto, free, paid, or skip.');
+  throw new Error(
+    'PREDEX_TRUTH_MODE must be auto, free, paid, agentkit, or skip.',
+  );
 }
 
 function positiveBigInt(

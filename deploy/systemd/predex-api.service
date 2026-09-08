@@ -21,6 +21,11 @@ Environment=PREDEX_WEB_ORIGIN=http://localhost:3002
 Environment=SIWE_DOMAIN=localhost:3002
 Environment=SIWE_URI=http://localhost:3002
 Environment=ACCOUNT_COOKIE_SECURE=false
+Environment=PREDEX_TRUTH_SELLER_MODE=circle
+Environment=PREDEX_TRUTH_SELLER_ADDRESS=0xfE4cc0643199d15a0e284E61088d4c9495D506aF
+Environment=PREDEX_TRUTH_PRICE_RAW=100
+Environment=PREDEX_WORLD_AGENTKIT_MODE=free-trial
+Environment=PREDEX_PUBLIC_API_ORIGIN=http://127.0.0.1:3001
 Environment=PATH=/users/span14/.local/predex-toolchain/node-v22.19.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/users/span14/predex-builds/predex-pump/source/backend
 ExecStartPre=/users/span14/predex-builds/predex-pump/runtime/bin/runtime-remote.sh unit-preflight api

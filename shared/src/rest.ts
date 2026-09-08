@@ -195,6 +195,8 @@ export interface PriceHistoryResponse {
 
 // GET /truth/:marketId → explainable estimate from the indexed read model
 export type TruthSignalResponse = TruthSignal;
+export const TRUTH_ACCESS_HEADER = 'x-predex-truth-access';
+export type TruthAccessMode = 'public' | 'world-agentkit' | 'circle-x402';
 
 // GET /config  → registry-level params + committee set (needed before a market exists)
 export type ConfigResponse = RegistryConfig;

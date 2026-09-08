@@ -152,6 +152,14 @@ requests are submitted through Circle Gateway's batched `settle` API. The backen
 ledger and never needs a wallet key. `PREDEX_TRUTH_PRICE_RAW` defaults to 100 ($0.0001) and must
 remain strictly below one cent.
 
+`PREDEX_WORLD_AGENTKIT_MODE=free-trial` adds World AgentKit ahead of that Circle gate. An agent
+registered through AgentBook can sign the advertised Arc CAIP-122 challenge and receive three
+total free truth reads across `GET /truth/:marketId`; exhausted, unverified, malformed, replayed,
+or unavailable AgentKit requests continue to the same Circle 402 response. Postgres atomically
+stores only hashed anonymous-human and nonce identifiers. Redis is never eligibility authority.
+Set `PREDEX_PUBLIC_API_ORIGIN` to the API origin the agent actually calls. A World or wallet login
+alone does not make an agent human-backed; AgentBook registration is the authority.
+
 WebSocket clients send:
 
 ```json

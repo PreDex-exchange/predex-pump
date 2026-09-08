@@ -15,7 +15,9 @@ import { runIndexer } from './indexer/runner.js';
 import {
   createTruthPaymentGate,
   loadTruthSellerConfig,
+  loadWorldAgentkitConfig,
 } from './truth-payment/config.js';
+import { WorldAgentkitTruthTrialGate } from './truth-payment/agentkit.js';
 
 async function main(): Promise<void> {
   const parsed = parseServerOptions(process.argv.slice(2));
@@ -27,6 +29,15 @@ async function main(): Promise<void> {
   const dedup = createDedupRuntime(config, new PrismaMarketCatalog(prisma));
   const truthSeller = loadTruthSellerConfig();
   const truthPaymentGate = createTruthPaymentGate(truthSeller);
+  const worldAgentkit = loadWorldAgentkitConfig(truthSeller);
+  const truthAgentTrialGate =
+    worldAgentkit.mode === 'free-trial'
+      ? new WorldAgentkitTruthTrialGate({
+          prisma,
+          publicApiOrigin: worldAgentkit.publicApiOrigin,
+          rpcUrl: config.rpcUrl,
+        })
+      : undefined;
   const eventBus = new ServerEventBus();
   const publicReadCache = createNodeRedisPublicJsonReadCache({
     url: config.redisUrl,
@@ -43,6 +54,7 @@ async function main(): Promise<void> {
       publicReadCache,
       marketListCacheTtlSeconds: config.marketsCacheTtlSeconds,
       ...(truthPaymentGate === undefined ? {} : { truthPaymentGate }),
+      ...(truthAgentTrialGate === undefined ? {} : { truthAgentTrialGate }),
     });
 
     try {
@@ -55,6 +67,7 @@ async function main(): Promise<void> {
       console.info(
         `[truth] seller=${truthSeller.mode} priceRaw=${truthSeller.amountRaw}`,
       );
+      console.info(`[world-agentkit] mode=${worldAgentkit.mode}`);
       await runIndexer(prisma, config, {
         once: false,
         ...(parsed.startPolicy === undefined
