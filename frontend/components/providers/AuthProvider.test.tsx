@@ -73,6 +73,7 @@ vi.mock('@/lib/api/rest-client', () => ({
 vi.mock('@/lib/chain/wallet-connectors', () => ({
   METAMASK_CONNECTOR_ID: 'metaMaskSDK',
   PREDEX_QA_CONNECTOR_ID: 'predexQa',
+  PRIVY_CONNECTOR_ID: 'privyEmbedded',
   hasPredexQaProvider: () => mocks.hasQaProvider,
 }));
 

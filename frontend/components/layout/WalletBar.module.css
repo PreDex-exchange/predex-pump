@@ -9,7 +9,9 @@
 .group {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-3);
   margin-left: auto;
 }
@@ -113,6 +115,10 @@
   color: var(--error);
 }
 
+.email {
+  border-style: dashed;
+}
+
 @keyframes pulse {
   0% {
     box-shadow: 0 0 0 0 var(--yes-55);
@@ -165,6 +171,10 @@
     overflow: hidden;
     box-shadow: none;
     text-overflow: ellipsis;
+  }
+
+  .email {
+    max-width: 118px;
   }
 }
 
