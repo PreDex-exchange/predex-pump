@@ -7,6 +7,12 @@ CLOUDLAB_REMOTE_ROOT="${CLOUDLAB_REMOTE_ROOT:-/users/span14/predex-builds/predex
 
 case "$CLOUDLAB_REMOTE_ROOT" in
   /users/span14/predex-builds/predex-pump) ;;
+  /users/span14/predex-builds/predex-pump-privy)
+    if [[ "$CLOUDLAB_HOST" != 'span14@pc63.cloudlab.umass.edu' ]]; then
+      printf 'Refusing isolated remote root on unexpected host: %s\n' "$CLOUDLAB_HOST" >&2
+      exit 1
+    fi
+    ;;
   *)
     printf 'Refusing unexpected remote root: %s\n' "$CLOUDLAB_REMOTE_ROOT" >&2
     exit 1
@@ -36,14 +42,15 @@ source_id="$(git -C "$repo_root" rev-parse --short=12 HEAD)-${source_hash:0:12}"
 ssh "${ssh_args[@]}" "$CLOUDLAB_HOST" bash -s -- "$source_dir" <<'REMOTE'
 set -euo pipefail
 source_dir="$1"
-runtime_active='/users/span14/predex-builds/predex-pump/runtime/active'
 case "$source_dir" in
   /users/span14/predex-builds/predex-pump/source) ;;
+  /users/span14/predex-builds/predex-pump-privy/source) ;;
   *)
     printf 'Refusing unexpected remote source: %s\n' "$source_dir" >&2
     exit 1
     ;;
 esac
+runtime_active="${source_dir%/source}/runtime/active"
 if [[ -e "$source_dir/.qa/active" ]]; then
   printf 'Refusing to sync over an active QA stack; run qa-stack.sh down first.\n' >&2
   exit 1
@@ -65,6 +72,9 @@ rsync -az --delete --delete-excluded \
   --exclude='.git' \
   --exclude='.env*' \
   --exclude='**/.env*' \
+  --exclude='.credentials' \
+  --exclude='.ssh/' \
+  --exclude='.gnupg/' \
   --exclude='**/node_modules/' \
   --exclude='**/.next/' \
   --exclude='**/.dart_tool/' \

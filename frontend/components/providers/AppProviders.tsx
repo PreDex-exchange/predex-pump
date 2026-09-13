@@ -8,6 +8,7 @@ import { BackendLiveSync } from '@/lib/api/live';
 import { getWagmiConfig } from '@/lib/chain/config';
 
 import { AuthProvider } from './AuthProvider';
+import { PrivyWalletProvider } from './PrivyWalletProvider';
 
 interface AppProvidersProps {
   children: ReactNode;
@@ -25,10 +26,12 @@ export function AppProviders({ children, initialState }: AppProvidersProps) {
       reconnectOnMount
     >
       <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <BackendLiveSync />
-          {children}
-        </AuthProvider>
+        <PrivyWalletProvider>
+          <AuthProvider>
+            <BackendLiveSync />
+            {children}
+          </AuthProvider>
+        </PrivyWalletProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );

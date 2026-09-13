@@ -7,6 +7,7 @@ import {
 import { injected, metaMask } from 'wagmi/connectors';
 
 import { arcTestnet } from './arc';
+import { privyEmbeddedConnector, privySettings } from './privy-wallet';
 import {
   PREDEX_QA_CONNECTOR_ID,
   type PredexQaProviderWindow,
@@ -49,6 +50,9 @@ function createWagmiConfig() {
               },
             }),
           ]),
+      // Appended last so MetaMask stays the first connector. Without a public
+      // Privy App ID the connector is absent and MetaMask flows are unchanged.
+      ...(privySettings ? [privyEmbeddedConnector()] : []),
     ],
     pollingInterval: CHAIN_POLLING_INTERVAL_MS,
     transports: {

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   profileLoading: false,
   sessionLoading: false,
   isConnected: false,
+  isEstablishingSession: false,
   authError: null as Error | null,
   ensureSession: vi.fn(),
 }));
@@ -40,8 +41,8 @@ vi.mock('@/components/providers/AuthProvider', () => ({
           expiresAt: '2033-01-01T00:00:00.000Z',
         }
       : { authenticated: false },
-    isLoading: mocks.sessionLoading,
-    isEstablishingSession: false,
+    isLoading: mocks.sessionLoading || mocks.isEstablishingSession,
+    isEstablishingSession: mocks.isEstablishingSession,
     error: mocks.authError,
     ensureSession: mocks.ensureSession,
   }),
@@ -78,6 +79,7 @@ beforeEach(() => {
   mocks.profileLoading = false;
   mocks.sessionLoading = false;
   mocks.isConnected = false;
+  mocks.isEstablishingSession = false;
   mocks.authError = null;
   mocks.ensureSession.mockReset().mockResolvedValue(false);
 });
@@ -89,6 +91,7 @@ describe('AccountScreen money states', () => {
     const rendered = renderScreen();
 
     expect(screen.getByText('Connect your wallet')).toBeTruthy();
+    expect(screen.getByText(/^Connect a wallet from the header/u)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /connect|sign in/iu })).toBeNull();
     expect(rendered.container.querySelector('svg')).toBeNull();
   });
@@ -107,13 +110,23 @@ describe('AccountScreen money states', () => {
     renderScreen();
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Sign in with MetaMask' }),
+      screen.getByRole('button', { name: 'Sign in with wallet' }),
     );
 
     expect(mocks.ensureSession).toHaveBeenCalledOnce();
     expect(
       screen.getByText(/trading remains wallet-only/iu),
     ).toBeTruthy();
+  });
+
+  it('shows the preparing state while the sign-in signature is requested', () => {
+    mocks.isConnected = true;
+    mocks.isEstablishingSession = true;
+    renderScreen();
+
+    expect(screen.getByText('Preparing your account…')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Sign in/u })).toBeNull();
+    expect(screen.queryByRole('button', { name: /MetaMask/u })).toBeNull();
   });
 
   it('does not render a backend code identifier as profile-error prose', () => {

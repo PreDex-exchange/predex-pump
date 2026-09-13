@@ -10,17 +10,31 @@ import {
 import type { ReactNode } from 'react';
 
 import { useAuth } from '@/components/providers/AuthProvider';
+import {
+  usePrivyWallet,
+  type PrivyWalletPhase,
+} from '@/components/providers/PrivyWalletProvider';
 import { arcAddresses, arcTestnet } from '@/lib/chain/arc';
 import { collateralErc20Abi } from '@/lib/chain/contracts';
 import {
   hasPredexQaProvider,
   METAMASK_CONNECTOR_ID,
   PREDEX_QA_CONNECTOR_ID,
+  PRIVY_CONNECTOR_ID,
 } from '@/lib/chain/wallet-connectors';
 import { formatUsdc, shortAddress } from '@/lib/format';
 import { publicWalletErrorMessage } from '@/lib/wallet-errors';
 
 import styles from './WalletBar.module.css';
+
+const PRIVY_PHASE_LABELS: Record<PrivyWalletPhase, string> = {
+  idle: 'Continue with email',
+  loading: 'Opening email login…',
+  authenticating: 'Finish email login…',
+  connecting: 'Connecting…',
+  restoring: 'Restoring email wallet…',
+  disconnecting: 'Signing out…',
+};
 
 function formatWalletBalance(balance?: bigint) {
   if (balance === undefined) return '—';
@@ -47,10 +61,11 @@ function WalletControls({
 }
 
 export function WalletBar() {
-  const { address, chainId, isConnected } = useAccount();
+  const { address, chainId, connector: activeConnector, isConnected } = useAccount();
   const { connect, connectors, error: connectError, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { error: authError, clearSession } = useAuth();
+  const privyWallet = usePrivyWallet();
   const {
     switchChain,
     error: switchError,
@@ -58,6 +73,7 @@ export function WalletBar() {
   } = useSwitchChain();
   const isWrongNetwork = isConnected && chainId !== arcTestnet.id;
   const authFeedback = authError?.message ?? null;
+  const privyFeedback = privyWallet.error?.message ?? null;
   const connectFeedback = connectError
     ? publicWalletErrorMessage(
         connectError,
@@ -89,15 +105,21 @@ export function WalletBar() {
     const connector =
       qaConnector ?? connectors.find(({ id }) => id === METAMASK_CONNECTOR_ID);
     return (
-      <WalletControls error={authFeedback ?? connectFeedback}>
+      <WalletControls error={authFeedback ?? privyFeedback ?? connectFeedback}>
         <span className={styles.network}>
           <span className={styles.dot} aria-hidden="true" />
           Arc
         </span>
         <button
           className={styles.wallet}
+          // A slow or stuck email flow must never block MetaMask. Choosing it
+          // cancels pending Privy work so a late result cannot attach.
           disabled={!connector || isConnecting}
-          onClick={() => connector && connect({ connector })}
+          onClick={() => {
+            if (!connector) return;
+            privyWallet.cancel();
+            connect({ connector });
+          }}
           title="Connect MetaMask"
           type="button"
         >
@@ -107,6 +129,17 @@ export function WalletBar() {
               ? 'Connect MetaMask'
               : 'MetaMask unavailable'}
         </button>
+        {privyWallet.enabled && (
+          <button
+            className={`${styles.wallet} ${styles.email}`}
+            disabled={isConnecting || privyWallet.phase !== 'idle'}
+            onClick={privyWallet.login}
+            title="Continue with email"
+            type="button"
+          >
+            {PRIVY_PHASE_LABELS[privyWallet.phase]}
+          </button>
+        )}
       </WalletControls>
     );
   }
@@ -132,7 +165,7 @@ export function WalletBar() {
   }
 
   return (
-    <WalletControls error={authFeedback}>
+    <WalletControls error={authFeedback ?? privyFeedback}>
       <span className={styles.network}>
         <span className={styles.dot} aria-hidden="true" />
         Arc
@@ -143,7 +176,13 @@ export function WalletBar() {
         }`}
         className={styles.wallet}
         onClick={() => {
-          disconnect();
+          // Email-wallet disconnect also signs out of Privy; MetaMask
+          // disconnect stays independent of any Privy session.
+          if (activeConnector?.id === PRIVY_CONNECTOR_ID) {
+            void privyWallet.disconnect();
+          } else {
+            disconnect();
+          }
           void clearSession();
         }}
         title="Disconnect wallet"

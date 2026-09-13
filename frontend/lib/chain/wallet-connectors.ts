@@ -2,6 +2,7 @@ import type { EIP1193Provider } from 'viem';
 
 export const METAMASK_CONNECTOR_ID = 'metaMaskSDK';
 export const PREDEX_QA_CONNECTOR_ID = 'predexQa';
+export const PRIVY_CONNECTOR_ID = 'privyEmbedded';
 
 export type PredexQaProviderWindow = Window & {
   ethereum?: EIP1193Provider & {
