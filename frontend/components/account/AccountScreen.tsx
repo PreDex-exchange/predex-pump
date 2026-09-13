@@ -116,7 +116,7 @@ export function AccountScreen() {
         <span className={styles.kicker}>Optional account layer</span>
         <h1>Your name and your on-chain trail.</h1>
         <p>
-          Connect MetaMask for on-chain actions. Sign in separately only when you
+          Connect a wallet for on-chain actions. Sign in separately only when you
           want profile, watchlist, and recent-view features.
         </p>
       </div>
@@ -154,8 +154,8 @@ export function AccountScreen() {
                   variant="coral"
                 >
                   {isEstablishingSession
-                    ? 'Check MetaMask…'
-                    : 'Sign in with MetaMask'}
+                    ? 'Check your wallet…'
+                    : 'Sign in with wallet'}
                 </Button>
               )}
               <Link className={buttonClassName('neutral')} href="/">
@@ -167,7 +167,7 @@ export function AccountScreen() {
             authError?.message ??
             (isConnected
               ? 'Your wallet is connected. Sign in only if you want optional saved account features; trading remains wallet-only.'
-              : 'Connect MetaMask from the header for on-chain actions. Optional account features require a separate sign-in.')
+              : 'Connect a wallet from the header for on-chain actions. Optional account features require a separate sign-in.')
           }
           showMascot={false}
           state={authError ? 'error' : 'empty'}
