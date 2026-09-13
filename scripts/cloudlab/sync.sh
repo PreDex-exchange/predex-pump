@@ -7,7 +7,7 @@ CLOUDLAB_REMOTE_ROOT="${CLOUDLAB_REMOTE_ROOT:-/users/span14/predex-builds/predex
 
 case "$CLOUDLAB_REMOTE_ROOT" in
   /users/span14/predex-builds/predex-pump) ;;
-  /users/span14/predex-builds/predex-pump-privy)
+  /users/span14/predex-builds/predex-pump-privy|/users/span14/predex-builds/predex-pump-vercel)
     if [[ "$CLOUDLAB_HOST" != 'span14@pc63.cloudlab.umass.edu' ]]; then
       printf 'Refusing isolated remote root on unexpected host: %s\n' "$CLOUDLAB_HOST" >&2
       exit 1
@@ -45,6 +45,7 @@ source_dir="$1"
 case "$source_dir" in
   /users/span14/predex-builds/predex-pump/source) ;;
   /users/span14/predex-builds/predex-pump-privy/source) ;;
+  /users/span14/predex-builds/predex-pump-vercel/source) ;;
   *)
     printf 'Refusing unexpected remote source: %s\n' "$source_dir" >&2
     exit 1

@@ -7,6 +7,8 @@ CANONICAL_ROOT='/users/span14/predex-builds/predex-pump'
 CANONICAL_HOST='span14@c220g1-031117.wisc.cloudlab.us'
 PRIVY_ROOT='/users/span14/predex-builds/predex-pump-privy'
 PRIVY_HOST='span14@pc63.cloudlab.umass.edu'
+VERCEL_ROOT='/users/span14/predex-builds/predex-pump-vercel'
+EXPECTED_NODE_VERSION="${PREDEX_NODE_VERSION:-22.19.0}"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/predex-cloudlab-root-test.XXXXXX")"
 FAKE_BIN="$TEST_ROOT/bin"
 output=''
@@ -91,36 +93,52 @@ host_message='Refusing isolated remote root on unexpected host'
 root_message='Refusing unexpected remote root'
 for script in sync.sh verify.sh; do
   bash -n "$CLOUDLAB_DIR/$script"
-  expect_refused "$script" '' "$PRIVY_ROOT" "$host_message"
-  expect_refused "$script" "$CANONICAL_HOST" "$PRIVY_ROOT" "$host_message"
-  expect_refused "$script" 'pc63.cloudlab.umass.edu' "$PRIVY_ROOT" "$host_message"
-  expect_refused "$script" "$PRIVY_HOST.example" "$PRIVY_ROOT" "$host_message"
-  expect_refused "$script" "$PRIVY_HOST" "$PRIVY_ROOT/" "$root_message"
-  expect_refused "$script" "$PRIVY_HOST" "$PRIVY_ROOT/../predex-pump" "$root_message"
-  expect_refused "$script" "$PRIVY_HOST" "${PRIVY_ROOT}2" "$root_message"
-  expect_refused "$script" "$PRIVY_HOST" '/tmp/predex-pump-privy' "$root_message"
+  for root in "$PRIVY_ROOT" "$VERCEL_ROOT"; do
+    expect_refused "$script" '' "$root" "$host_message"
+    expect_refused "$script" "$CANONICAL_HOST" "$root" "$host_message"
+    expect_refused "$script" 'pc63.cloudlab.umass.edu' "$root" "$host_message"
+    expect_refused "$script" "$PRIVY_HOST.example" "$root" "$host_message"
+    expect_refused "$script" "$PRIVY_HOST" "$root/" "$root_message"
+    expect_refused "$script" "$PRIVY_HOST" "$root/../predex-pump" "$root_message"
+    expect_refused "$script" "$PRIVY_HOST" "${root}2" "$root_message"
+    expect_refused "$script" "$PRIVY_HOST" "/tmp/${root##*/}" "$root_message"
+  done
 done
 
-for marker in "$PRIVY_ROOT/runtime/active" "$PRIVY_ROOT/source/.qa/active"; do
-  [[ ! -e "$marker" ]] || fail "isolated root must not host an active stack: $marker"
-done
-run_script sync.sh "$PRIVY_HOST" "$PRIVY_ROOT" 1
-[[ "$status" -eq 0 ]] || fail "sync.sh refused the isolated root: $output"
-ssh_log="$(< "$TEST_ROOT/ssh.log")"
-rsync_log="$(< "$TEST_ROOT/rsync.log")"
-[[ "$ssh_log" == *"$PRIVY_HOST bash -s -- $PRIVY_ROOT/source"* ]] ||
-  fail 'sync.sh preflight did not target the isolated source'
-[[ "$ssh_log" == *"$PRIVY_HOST mkdir -p $PRIVY_ROOT/source"* ]] ||
-  fail 'sync.sh did not create the isolated source'
-[[ "$ssh_log" == *"$PRIVY_ROOT/source/.predex-source-id"* ]] ||
-  fail 'sync.sh did not record the isolated source id'
-[[ "$ssh_log$rsync_log" != *"$CANONICAL_ROOT/"* ]] ||
-  fail 'sync.sh referenced the canonical root for the isolated target'
-grep -Fxq -- "$PRIVY_HOST:$PRIVY_ROOT/source/" "$TEST_ROOT/rsync.log" ||
-  fail 'sync.sh rsync destination is not the isolated source'
-for exclude in .git '.env*' '**/.env*' .credentials .ssh/ .gnupg/ runtime/ '**/node_modules/'; do
-  grep -Fxq -- "--exclude=$exclude" "$TEST_ROOT/rsync.log" ||
-    fail "sync.sh lost exclusion $exclude"
+# Isolated roots may host a live stack (the Privy demo) that must stay up. Its
+# real read-only preflight must refuse before any transfer; transport shape is
+# then checked with recorders only, never by creating or removing markers.
+for root in "$PRIVY_ROOT" "$VERCEL_ROOT"; do
+  if [[ -e "$root/runtime/active" || -e "$root/source/.qa/active" ]]; then
+    run_script sync.sh "$PRIVY_HOST" "$root" 1
+    [[ "$status" -ne 0 && "$output" == *'Refusing to sync over'* ]] ||
+      fail "sync.sh did not refuse the active isolated root $root: $output"
+    [[ "$(< "$TEST_ROOT/ssh.log")" != *'mkdir -p'* && ! -s "$TEST_ROOT/rsync.log" ]] ||
+      fail "sync.sh continued past the active isolated root refusal for $root"
+    printf 'active isolated root refusal checked for %s\n' "$root"
+    run_script sync.sh "$PRIVY_HOST" "$root" 0
+  else
+    run_script sync.sh "$PRIVY_HOST" "$root" 1
+  fi
+  [[ "$status" -eq 0 ]] || fail "sync.sh refused the isolated root $root: $output"
+  ssh_log="$(< "$TEST_ROOT/ssh.log")"
+  rsync_log="$(< "$TEST_ROOT/rsync.log")"
+  [[ "$ssh_log" == *"$PRIVY_HOST bash -s -- $root/source"* ]] ||
+    fail "sync.sh preflight did not target $root/source"
+  [[ "$ssh_log" == *"$PRIVY_HOST mkdir -p $root/source"* ]] ||
+    fail "sync.sh did not create $root/source"
+  [[ "$ssh_log" == *"$root/source/.predex-source-id"* ]] ||
+    fail "sync.sh did not record the source id for $root"
+  for other_root in "$CANONICAL_ROOT" "$PRIVY_ROOT" "$VERCEL_ROOT"; do
+    [[ "$other_root" == "$root" || "$ssh_log$rsync_log" != *"$other_root/"* ]] ||
+      fail "sync.sh referenced $other_root for the isolated target $root"
+  done
+  grep -Fxq -- "$PRIVY_HOST:$root/source/" "$TEST_ROOT/rsync.log" ||
+    fail "sync.sh rsync destination is not $root/source"
+  for exclude in .git '.env*' '**/.env*' .credentials .ssh/ .gnupg/ runtime/ '**/node_modules/'; do
+    grep -Fxq -- "--exclude=$exclude" "$TEST_ROOT/rsync.log" ||
+      fail "sync.sh lost exclusion $exclude"
+  done
 done
 
 if [[ -e "$CANONICAL_ROOT/runtime/active" && ! -e "$CANONICAL_ROOT/source/.qa/active" ]]; then
@@ -134,13 +152,15 @@ else
   printf 'canonical runtime marker absent; live refusal check skipped\n'
 fi
 
-run_script verify.sh "$PRIVY_HOST" "$PRIVY_ROOT"
-[[ "$status" -eq 0 ]] || fail "verify.sh refused the isolated root: $output"
-[[ "$(< "$TEST_ROOT/ssh.log")" == *"$PRIVY_HOST bash -s -- $PRIVY_ROOT 22.19.0"* ]] ||
-  fail 'verify.sh did not target the isolated root'
+for root in "$PRIVY_ROOT" "$VERCEL_ROOT"; do
+  run_script verify.sh "$PRIVY_HOST" "$root"
+  [[ "$status" -eq 0 ]] || fail "verify.sh refused the isolated root $root: $output"
+  [[ "$(< "$TEST_ROOT/ssh.log")" == *"$PRIVY_HOST bash -s -- $root $EXPECTED_NODE_VERSION"* ]] ||
+    fail "verify.sh did not target $root"
+done
 run_script verify.sh '' "$CANONICAL_ROOT"
 [[ "$status" -eq 0 ]] || fail "verify.sh refused the canonical defaults: $output"
-[[ "$(< "$TEST_ROOT/ssh.log")" == *"$CANONICAL_HOST bash -s -- $CANONICAL_ROOT 22.19.0"* ]] ||
+[[ "$(< "$TEST_ROOT/ssh.log")" == *"$CANONICAL_HOST bash -s -- $CANONICAL_ROOT $EXPECTED_NODE_VERSION"* ]] ||
   fail 'verify.sh canonical defaults changed'
 
 HELPER="$CLOUDLAB_DIR/resolve-frontend-lock.sh"

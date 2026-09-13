@@ -21,29 +21,50 @@ async function filesUnder(directory) {
   return nested.flat();
 }
 
+function assertQaScriptUrlDisabled(config) {
+  if (config === null || typeof config !== 'object') {
+    throw new Error(
+      'Production build metadata has no Next config; refusing the build.',
+    );
+  }
+  if (Object.hasOwn(config, 'env')) {
+    if (config.env?.PREDEX_QA_WALLET_SCRIPT_URL !== '') {
+      throw new Error(
+        'Production build retained a QA wallet script URL; refusing the build.',
+      );
+    }
+    return;
+  }
+  // Vercel builds auto-enable experimental.runtimeServerDeploymentId, and Next
+  // then serializes a filtered runtime config without `env`. Accept only that
+  // known omission; the artifact scans below still catch an inlined URL.
+  if (config.experimental?.runtimeServerDeploymentId !== true) {
+    throw new Error(
+      'Production build metadata omitted the QA wallet script URL; refusing the build.',
+    );
+  }
+}
+
 export async function assertQaProductionBuild({
   runtimeKey,
   qaScriptUrl,
+  buildRoot = BUILD_ROOT,
 } = {}) {
   const requiredServerFiles = JSON.parse(
-    await readFile(path.join(BUILD_ROOT, 'required-server-files.json'), 'utf8'),
+    await readFile(path.join(buildRoot, 'required-server-files.json'), 'utf8'),
   );
-  if (requiredServerFiles.config?.env?.PREDEX_QA_WALLET_SCRIPT_URL !== '') {
-    throw new Error(
-      'Production build retained a QA wallet script URL; refusing the build.',
-    );
-  }
+  assertQaScriptUrlDisabled(requiredServerFiles?.config);
 
-  const buildEntries = await readdir(BUILD_ROOT, { withFileTypes: true });
+  const buildEntries = await readdir(buildRoot, { withFileTypes: true });
   const topLevelFiles = buildEntries
     .filter((entry) => entry.isFile())
-    .map((entry) => path.join(BUILD_ROOT, entry.name));
+    .map((entry) => path.join(buildRoot, entry.name));
   const deployDirectories = new Set(['server', 'static', 'standalone']);
   const roots = buildEntries
     .filter(
       (entry) => entry.isDirectory() && deployDirectories.has(entry.name),
     )
-    .map((entry) => path.join(BUILD_ROOT, entry.name));
+    .map((entry) => path.join(buildRoot, entry.name));
   const files = [
     ...topLevelFiles,
     ...(await Promise.all(roots.map(filesUnder))).flat(),

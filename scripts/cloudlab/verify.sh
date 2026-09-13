@@ -8,7 +8,7 @@ PREDEX_NODE_VERSION="${PREDEX_NODE_VERSION:-22.19.0}"
 
 case "$CLOUDLAB_REMOTE_ROOT" in
   /users/span14/predex-builds/predex-pump) ;;
-  /users/span14/predex-builds/predex-pump-privy)
+  /users/span14/predex-builds/predex-pump-privy|/users/span14/predex-builds/predex-pump-vercel)
     if [[ "$CLOUDLAB_HOST" != 'span14@pc63.cloudlab.umass.edu' ]]; then
       printf 'Refusing isolated remote root on unexpected host: %s\n' "$CLOUDLAB_HOST" >&2
       exit 1
@@ -56,7 +56,8 @@ bash -n "$source_dir/scripts/cloudlab/bootstrap-browse.sh"
 bash -n "$source_dir/scripts/cloudlab/privy-preview.sh"
 printf 'cloudlab_script_syntax=pass\n' >> "$evidence_dir/manifest.txt"
 
-if [[ "$remote_root" == /users/span14/predex-builds/predex-pump-privy ]]; then
+if [[ "$remote_root" == /users/span14/predex-builds/predex-pump-privy ||
+  "$remote_root" == /users/span14/predex-builds/predex-pump-vercel ]]; then
   printf '\n== cloudlab_isolated_root_guard ==\n'
   bash "$source_dir/scripts/tests/cloudlab-isolated-root.test.sh" < /dev/null
   printf 'cloudlab_isolated_root_guard=pass\n' >> "$evidence_dir/manifest.txt"
@@ -165,6 +166,29 @@ trap - EXIT
 run frontend_lint frontend lint
 run frontend_typecheck frontend typecheck
 run frontend_test frontend test
+
+if [[ "$remote_root" == /users/span14/predex-builds/predex-pump-vercel ]]; then
+  # Rehearse Vercel's build: NOW_BUILDER plus a deployment ID makes Next enable
+  # runtimeServerDeploymentId and omit env from required-server-files.json.
+  printf '\n== frontend_vercel_build ==\n'
+  (
+    cd "$source_dir/frontend"
+    NOW_BUILDER=1 NEXT_DEPLOYMENT_ID=dpl_predex_production_gate_check \
+      pnpm run build < /dev/null
+    node -e '
+      const { config } = require(process.argv[1]);
+      const filtered = config.experimental?.runtimeServerDeploymentId === true;
+      process.exit(filtered && !Object.hasOwn(config, "env") ? 0 : 1);
+    ' "$source_dir/frontend/.next/required-server-files.json" || {
+      printf 'Vercel rehearsal did not produce the filtered runtime config.\n' >&2
+      exit 1
+    }
+  )
+  printf 'frontend_vercel_build=pass\n' >> "$evidence_dir/manifest.txt"
+  # The normal build below must produce the final local-runtime .next.
+  rm -rf "$source_dir/frontend/.next"
+fi
+
 run frontend_build frontend build
 
 printf 'finished_at=%s\n' \
