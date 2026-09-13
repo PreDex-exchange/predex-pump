@@ -8,6 +8,12 @@ PREDEX_NODE_VERSION="${PREDEX_NODE_VERSION:-22.19.0}"
 
 case "$CLOUDLAB_REMOTE_ROOT" in
   /users/span14/predex-builds/predex-pump) ;;
+  /users/span14/predex-builds/predex-pump-privy)
+    if [[ "$CLOUDLAB_HOST" != 'span14@pc63.cloudlab.umass.edu' ]]; then
+      printf 'Refusing isolated remote root on unexpected host: %s\n' "$CLOUDLAB_HOST" >&2
+      exit 1
+    fi
+    ;;
   *)
     printf 'Refusing unexpected remote root: %s\n' "$CLOUDLAB_REMOTE_ROOT" >&2
     exit 1
@@ -44,7 +50,19 @@ printf 'source_id=%s\nhost=%s\nstarted_at=%s\nnode=%s\npnpm=%s\n' \
 printf '\n== cloudlab_script_syntax ==\n'
 bash -n "$source_dir/scripts/cloudlab/deploy-subgraph.sh"
 bash -n "$source_dir/scripts/cloudlab/deploy-subgraph-remote.sh"
+bash -n "$source_dir/scripts/cloudlab/resolve-frontend-lock.sh"
+bash -n "$source_dir/scripts/cloudlab/bootstrap-test-deps.sh"
+bash -n "$source_dir/scripts/cloudlab/bootstrap-browse.sh"
+bash -n "$source_dir/scripts/cloudlab/privy-preview.sh"
 printf 'cloudlab_script_syntax=pass\n' >> "$evidence_dir/manifest.txt"
+
+if [[ "$remote_root" == /users/span14/predex-builds/predex-pump-privy ]]; then
+  printf '\n== cloudlab_isolated_root_guard ==\n'
+  bash "$source_dir/scripts/tests/cloudlab-isolated-root.test.sh" < /dev/null
+  printf 'cloudlab_isolated_root_guard=pass\n' >> "$evidence_dir/manifest.txt"
+  bash "$source_dir/scripts/tests/cloudlab-browse-wrappers.test.sh" < /dev/null
+  printf 'cloudlab_browse_wrappers=pass\n' >> "$evidence_dir/manifest.txt"
+fi
 
 printf '\n== subgraph_deploy_safety ==\n'
 bash "$source_dir/scripts/tests/subgraph-deploy.test.sh"
